@@ -39,23 +39,11 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 - **CNPJ** — `POST https://n8n.sejaap.com.br/webhook/brasilapi-cnpj` → `{ cnpj, cnpj_formatado }`
 - **CEP** — `POST https://n8n.sejaap.com.br/webhook/busca-cep` → `{ cep, cep_formatado }`
 - **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
-- **Pix (entrada)** — o front chama `/api/pix` (proxy, ver abaixo), que repassa para
-  `https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:
+- **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:
   - `{ acao: "gerar", valor, valor_centavos, cnpj, razao_social, email, telefone, endereco{…} }` → responde **na hora** com `{ orderId|txid, pix_copia_cola | qr_base64 | qr_url }` (sem segurar a conexão).
   - `{ acao: "status", orderId|txid }` → `{ status: "pendente" }` … `{ status: "pago" }`.
 
-> Os webhooks de CNPJ/CEP/Cadastro precisam responder com cabeçalhos **CORS** para
-> a chamada do navegador funcionar.
-
-### Proxy Pix (`/api/pix`) e o segredo `EASYFLOW_KEY`
-
-O webhook Pix exige o header de autenticação **`easyflow-key`**, que **não pode** ir
-pelo navegador (ficaria público). Por isso o front chama `/api/pix` — uma
-**Cloudflare Pages Function** (`functions/api/pix.js`) que injeta esse header no
-**servidor**, a partir de um segredo, e repassa ao n8n.
-
-Configurar o segredo (uma vez): **Cloudflare → Pages → (projeto) → Settings →
-Variables and secrets → Add**, tipo **Secret**, Name `EASYFLOW_KEY`, Value = a chave.
+> Os webhooks precisam responder com cabeçalhos **CORS** para a chamada do navegador funcionar.
 
 ## Personalização rápida
 
