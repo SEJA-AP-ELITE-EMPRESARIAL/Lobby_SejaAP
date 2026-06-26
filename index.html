@@ -136,8 +136,10 @@ const { useState, useEffect, useMemo, useRef } = React;
 const CNPJ_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/brasilapi-cnpj';
 const CEP_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/busca-cep';
 const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite';
-// Cobrança Pix da entrada: gera o QR e, por polling no mesmo webhook, confirma o pagamento.
-const PIX_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/907bbfb8-b366-4f1e-9871-9cc4ba98c5e8';
+// Cobrança Pix da entrada. NÃO chamamos o n8n direto: o webhook exige o header
+// `easyflow-key`, que não pode ir pelo navegador. Chamamos o proxy do Cloudflare
+// Pages (mesma origem), que injeta a chave no servidor — ver functions/api/pix.js.
+const PIX_WEBHOOK_URL  = '/api/pix';
 
 // ===== Máscaras =====
 const maskCNPJ = (v) => {
@@ -410,7 +412,7 @@ function normalizePixResponse(raw) {
   const base64 = pixGet(raw, ['qr_base64', 'qrcode_base64', 'qr_code_base64', 'imagemqrcode', 'imagem_qrcode', 'qr_image_base64', 'qrcodebase64', 'imagem', 'base64']);
   const url = pixGet(raw, ['qr_url', 'qrcode_url', 'qr_code_url', 'qr_image_url', 'image_url', 'url_qrcode', 'qrimage']);
   const generic = pixGet(raw, ['qrcode', 'qr_code', 'qr', 'qr_image']);
-  const txid = pixGet(raw, ['txid', 'tx_id', 'transaction_id', 'transactionid', 'identificador', 'reference', 'referencia', 'correlationid', 'e2eid', 'cobranca_id', 'charge_id', 'id']);
+  const txid = pixGet(raw, ['txid', 'tx_id', 'orderid', 'order_id', 'pedido_id', 'transaction_id', 'transactionid', 'identificador', 'reference', 'referencia', 'correlationid', 'e2eid', 'cobranca_id', 'charge_id', 'id']);
 
   const statusRaw = pixGet(raw, ['status', 'situacao', 'situação', 'payment_status', 'state', 'resultado', 'evento', 'event', 'message', 'mensagem']).toLowerCase();
   const paidBool = /^(true|1|sim|yes|paid|pago)$/i.test(pixGet(raw, ['pago', 'paid', 'success', 'sucesso', 'confirmado', 'is_paid', 'ispaid']));
@@ -811,7 +813,7 @@ function App() {
   const pollPix = async () => {
     if (pixStop.current) return;
     try {
-      const n = await postPix({ acao: 'status', txid: pixTxidRef.current });
+      const n = await postPix({ acao: 'status', txid: pixTxidRef.current, orderId: pixTxidRef.current, order_id: pixTxidRef.current });
       if (pixStop.current) return;
       if (n.paid) { stopPixPolling(); patch({ pixState: 'paid' }); return; }
     } catch (e) { /* erro transitório — segue tentando */ }
