@@ -38,7 +38,7 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 
 - **CNPJ** — `POST https://n8n.sejaap.com.br/webhook/brasilapi-cnpj` → `{ cnpj, cnpj_formatado }`
 - **CEP** — `POST https://n8n.sejaap.com.br/webhook/busca-cep` → `{ cep, cep_formatado }`
-- **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/cadastro-cliente-elite` → payload com `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
+- **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
 
 > Os webhooks precisam responder com cabeçalhos **CORS** para a chamada do
 > navegador funcionar.
