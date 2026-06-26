@@ -136,8 +136,11 @@ const { useState, useEffect, useMemo, useRef } = React;
 const CNPJ_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/brasilapi-cnpj';
 const CEP_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/busca-cep';
 const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite';
-// Cobrança Pix da entrada: gera o QR e, por polling (acao:status), confirma o pagamento.
-const PIX_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/907bbfb8-b366-4f1e-9871-9cc4ba98c5e8';
+// Cobrança Pix da entrada (EasyFlow), em 2 endpoints:
+//  - CRIAR  : POST PIX_CREATE_URL  -> { orderId, ... }
+//  - STATUS : GET  PIX_STATUS_URL + orderId  -> { status: pending|qr_ready|paid, qrCodeBase64, copyAndPasteCode, expireAt }
+const PIX_CREATE_URL = 'https://n8n.sejaap.com.br/webhook/907bbfb8-b366-4f1e-9871-9cc4ba98c5e8';
+const PIX_STATUS_URL = 'https://n8n.sejaap.com.br/webhook/easyflow-status/';
 
 // ===== Máscaras =====
 const maskCNPJ = (v) => {
@@ -426,8 +429,9 @@ function normalizePixResponse(raw) {
     else if (/^[A-Za-z0-9+/=\s]+$/.test(val) && val.length > 120 && !/^0002/.test(val)) qrImg = 'data:image/png;base64,' + val.replace(/\s+/g, '');
     else if (!copiaCola) copiaCola = val;
   };
+  const expireAt = pixGet(raw, ['expire_at', 'expireat', 'expires_at', 'expiresat', 'expiration', 'expira_em', 'validade', 'vencimento_qr']);
   decide(base64); decide(url); decide(generic);
-  return { qrImg, copiaCola, txid, paid };
+  return { qrImg, copiaCola, txid, paid, expireAt };
 }
 
 /* ============================================================================
@@ -566,6 +570,35 @@ function EditToggle({ on, onToggle, label }) {
   );
 }
 
+/* ===== Contagem regressiva de validade do Pix (baseada em expireAt) ===== */
+function PixCountdown({ expireAt, onRegenerate }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const end = expireAt ? new Date(expireAt).getTime() : 0;
+  if (!end || isNaN(end)) return null;
+  const rem = Math.max(0, end - now);
+  if (rem <= 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '500 13px var(--font-secondary)', color: 'var(--warning)' }}>
+        <span className="ms-icon" style={{ fontSize: 17 }}>timer_off</span>
+        QR expirado.
+        <button onClick={onRegenerate} className="linkbtn">Gerar novo</button>
+      </div>
+    );
+  }
+  const mm = String(Math.floor(rem / 60000)).padStart(2, '0');
+  const ss = String(Math.floor((rem % 60000) / 1000)).padStart(2, '0');
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: '500 13px var(--font-secondary)', color: 'var(--text-muted)' }}>
+      <span className="ms-icon" style={{ fontSize: 16 }}>schedule</span>
+      Expira em <strong style={{ color: 'var(--text-secondary)' }}>{mm}:{ss}</strong>
+    </div>
+  );
+}
+
 /* ===================================================================== */
 /* ===========================  APP  =================================== */
 /* ===================================================================== */
@@ -578,7 +611,7 @@ function App() {
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
-    pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '', pixCopied: false,
+    pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   });
   const patch = (o) => setS((prev) => ({ ...prev, ...(typeof o === 'function' ? o(prev) : o) }));
   const scrollRef = useRef(null);
@@ -770,7 +803,7 @@ function App() {
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
-    pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '', pixCopied: false,
+    pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
 
   // ===== Fluxo de cobrança Pix da entrada =====
@@ -798,49 +831,56 @@ function App() {
       estado: (s.estado || '').toUpperCase(),
     },
   });
-  const postPix = async (extra) => {
-    const res = await fetch(PIX_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ ...(pixBase.current || buildPixPayload()), ...extra }),
-      mode: 'cors',
-    });
-    let raw = null; try { raw = await res.json(); } catch { raw = null; }
-    if (!res.ok && !raw) throw new Error('HTTP ' + res.status);
-    return normalizePixResponse(raw);
-  };
   const stopPixPolling = () => { pixStop.current = true; if (pixTimer.current) { clearTimeout(pixTimer.current); pixTimer.current = null; } };
+  // Polling no endpoint de STATUS (GET /easyflow-status/{orderId}). O QR aparece
+  // quando o status vira "qr_ready"; encerra quando "paid".
   const pollPix = async () => {
     if (pixStop.current) return;
+    const orderId = pixTxidRef.current;
     try {
-      const n = await postPix({ acao: 'status', txid: pixTxidRef.current, orderId: pixTxidRef.current, order_id: pixTxidRef.current });
+      const res = await fetch(PIX_STATUS_URL + encodeURIComponent(orderId), { method: 'GET', headers: { 'Accept': 'application/json' }, mode: 'cors' });
+      let raw = null; try { raw = await res.json(); } catch { raw = null; }
       if (pixStop.current) return;
+      const n = normalizePixResponse(raw);
       if (n.paid) { stopPixPolling(); patch({ pixState: 'paid' }); return; }
+      if (n.qrImg || n.copiaCola) {
+        const qrImg = n.qrImg || emvToDataUrl(n.copiaCola);
+        patch((d) => ({
+          pixQrImg: d.pixQrImg || qrImg,
+          pixCopiaCola: d.pixCopiaCola || n.copiaCola,
+          pixExpireAt: d.pixExpireAt || n.expireAt || '',
+        }));
+      }
     } catch (e) { /* erro transitório — segue tentando */ }
-    if (!pixStop.current) pixTimer.current = setTimeout(pollPix, 4000);
+    if (!pixStop.current) pixTimer.current = setTimeout(pollPix, 2000);
   };
+  // Cria a cobrança (POST). Devolve o orderId; o QR vem depois, via polling do status.
   const generatePix = async () => {
     if (s.pixState === 'generating') return;
     stopPixPolling();
     pixStop.current = false;
     pixBase.current = buildPixPayload();
     pixTxidRef.current = '';
-    patch({ pixState: 'generating', pixErr: '', pixQrImg: '', pixCopiaCola: '', pixTxid: '' });
+    patch({ pixState: 'generating', pixErr: '', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '' });
     try {
-      const n = await postPix({ acao: 'gerar' });
+      const res = await fetch(PIX_CREATE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify({ ...pixBase.current, acao: 'gerar' }), mode: 'cors' });
+      let raw = null; try { raw = await res.json(); } catch { raw = null; }
+      if (!res.ok) throw new Error('Falha ao criar a cobrança (HTTP ' + res.status + ')');
+      const n = normalizePixResponse(raw);
       if (n.paid) { patch({ pixState: 'paid' }); return; }
-      if (!n.qrImg && !n.copiaCola) throw new Error('O webhook não retornou o QR Code.');
-      const qrImg = n.qrImg || emvToDataUrl(n.copiaCola);
-      pixTxidRef.current = n.txid || '';
-      patch({ pixState: 'awaiting', pixQrImg: qrImg, pixCopiaCola: n.copiaCola, pixTxid: n.txid });
+      if (!n.txid) throw new Error('A criação da cobrança não retornou um identificador (orderId).');
+      pixTxidRef.current = n.txid;
+      // Alguns fluxos já trazem o QR na criação — aproveita se vier; senão, vem no polling.
+      const qrImg0 = n.qrImg || (n.copiaCola ? emvToDataUrl(n.copiaCola) : '');
+      patch({ pixState: 'awaiting', pixTxid: n.txid, pixQrImg: qrImg0, pixCopiaCola: n.copiaCola, pixExpireAt: n.expireAt || '' });
       pixStop.current = false;
-      pixTimer.current = setTimeout(pollPix, 4000);
+      pixTimer.current = setTimeout(pollPix, 1500);
     } catch (e) {
       patch({ pixState: 'error', pixErr: (e && e.message) ? e.message : 'Erro ao gerar o Pix' });
     }
   };
   const checkPixNow = () => { if (pixTimer.current) { clearTimeout(pixTimer.current); pixTimer.current = null; } pixStop.current = false; pollPix(); };
-  const cancelPix = () => { stopPixPolling(); patch({ pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '' }); };
+  const cancelPix = () => { stopPixPolling(); patch({ pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '' }); };
   const copyPix = () => {
     const t = s.pixCopiaCola; if (!t) return;
     const done = () => { patch({ pixCopied: true }); setTimeout(() => patch({ pixCopied: false }), 1800); };
@@ -849,7 +889,7 @@ function App() {
   // Cancela/zera o Pix se a entrada (valor ou forma) mudar; e ao desmontar.
   useEffect(() => {
     stopPixPolling();
-    patch((d) => (d.pixState !== 'idle' ? { pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '' } : {}));
+    patch((d) => (d.pixState !== 'idle' ? { pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '' } : {}));
   }, [s.entradaValor, s.entradaForma]);
   useEffect(() => () => stopPixPolling(), []);
 
@@ -1232,20 +1272,30 @@ function App() {
 
               {s.pixState === 'awaiting' && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-                  {s.pixQrImg ? (
-                    <div style={{ background: '#fff', padding: 12, borderRadius: 12, lineHeight: 0 }}>
-                      <img src={s.pixQrImg} alt="QR Code Pix" style={{ width: 210, height: 210, display: 'block' }} />
-                    </div>
+                  {(s.pixQrImg || s.pixCopiaCola) ? (
+                    <>
+                      {s.pixQrImg ? (
+                        <div style={{ background: '#fff', padding: 12, borderRadius: 12, lineHeight: 0 }}>
+                          <img src={s.pixQrImg} alt="QR Code Pix" style={{ width: 210, height: 210, display: 'block' }} />
+                        </div>
+                      ) : (
+                        <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>Use o código copia e cola abaixo.</div>
+                      )}
+                      <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', textAlign: 'center' }}>Abra o app do banco, escolha <strong style={{ color: 'var(--text-secondary)' }}>Pix &gt; Pagar com QR Code</strong>, ou use o copia e cola.</div>
+                      {s.pixCopiaCola && (
+                        <div style={{ width: '100%', display: 'flex', gap: 8, alignItems: 'stretch' }}>
+                          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: "400 12px 'Roboto'", color: 'var(--text-secondary)', background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', borderRadius: 8, padding: '0 12px', lineHeight: '40px' }}>{s.pixCopiaCola}</div>
+                          <button onClick={copyPix} className="btn-ghost" style={{ height: 40, padding: '0 14px' }}>
+                            <span className="ms-icon" style={{ fontSize: 17 }}>{s.pixCopied ? 'check' : 'content_copy'}</span>{s.pixCopied ? 'Copiado' : 'Copiar'}
+                          </button>
+                        </div>
+                      )}
+                      {s.pixExpireAt && <PixCountdown expireAt={s.pixExpireAt} onRegenerate={generatePix} />}
+                    </>
                   ) : (
-                    <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>Use o código copia e cola abaixo.</div>
-                  )}
-                  <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', textAlign: 'center' }}>Abra o app do banco, escolha <strong style={{ color: 'var(--text-secondary)' }}>Pix &gt; Pagar com QR Code</strong>, ou use o copia e cola.</div>
-                  {s.pixCopiaCola && (
-                    <div style={{ width: '100%', display: 'flex', gap: 8, alignItems: 'stretch' }}>
-                      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: "400 12px 'Roboto'", color: 'var(--text-secondary)', background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', borderRadius: 8, padding: '0 12px', lineHeight: '40px' }}>{s.pixCopiaCola}</div>
-                      <button onClick={copyPix} className="btn-ghost" style={{ height: 40, padding: '0 14px' }}>
-                        <span className="ms-icon" style={{ fontSize: 17 }}>{s.pixCopied ? 'check' : 'content_copy'}</span>{s.pixCopied ? 'Copiado' : 'Copiar'}
-                      </button>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '20px 0' }}>
+                      <span style={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(199,164,68,.3)', borderTopColor: 'var(--primary)', display: 'inline-block', animation: 'spin .8s linear infinite' }} />
+                      <span style={{ font: '500 14px var(--font-secondary)', color: 'var(--text-secondary)' }}>Gerando QR Code…</span>
                     </div>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
