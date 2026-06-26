@@ -12,7 +12,7 @@ reais da página de pré-contrato.
 
 | Arquivo | Descrição |
 |---|---|
-| **`Lobby de Produtos.html`** | **Página funcional** — é o que vai para produção. Autossuficiente (React 18 + Babel via CDN, tokens e logo embutidos). |
+| **`index.html`** | **Página funcional** — é o que vai para produção (servida na raiz). Autossuficiente (React 18 + Babel via CDN, tokens e logo embutidos). |
 | `Lobby de Produtos.dc.html` | Fonte de design (protótipo no framework DC). Apenas referência visual. |
 | `_ds/` | Design system Conecta AP (tokens de cor/tipografia). Referência. |
 | `assets/logo-sejaap.svg` | Logo (também já embutido inline na página funcional). |
@@ -25,7 +25,7 @@ A página é um único HTML estático. Basta servir a pasta e abrir o arquivo:
 ```bash
 # qualquer servidor estático serve; ex.:
 npx serve .
-# depois abra "Lobby de Produtos.html"
+# abra http://localhost:3000 — index.html é servido na raiz
 ```
 
 Abrir via `file://` também funciona, mas servir por HTTP é recomendado para
@@ -34,7 +34,7 @@ evitar bloqueios de CORS/cache do navegador.
 ## Integrações (webhooks n8n)
 
 A página reutiliza, sem alterar o contrato, os webhooks da página de
-pré-contrato (constantes no topo do `<script>` em `Lobby de Produtos.html`):
+pré-contrato (constantes no topo do `<script>` em `index.html`):
 
 - **CNPJ** — `POST https://n8n.sejaap.com.br/webhook/brasilapi-cnpj` → `{ cnpj, cnpj_formatado }`
 - **CEP** — `POST https://n8n.sejaap.com.br/webhook/busca-cep` → `{ cep, cep_formatado }`
@@ -57,6 +57,9 @@ pré-contrato (constantes no topo do `<script>` em `Lobby de Produtos.html`):
 
 ## Deploy
 
-A página de pré-contrato roda no Cloudflare Worker `pre-registro`
-(`pre-registro.seja-alta-performance.workers.dev`). Este lobby pode ser servido
-pelo mesmo worker (ex.: rota `/lobby`) ou por qualquer hospedagem estática.
+Publicado via **Cloudflare Pages** conectado a este repositório:
+
+- Build command: *(vazio)* · Output directory: `/`
+- Cada `push` na branch `main` gera um deploy automático.
+- Domínio de produção: **https://lobby.sejaap.com.br** (custom domain no Pages;
+  DNS + SSL gerenciados pelo Cloudflare, já que `sejaap.com.br` está na conta).
