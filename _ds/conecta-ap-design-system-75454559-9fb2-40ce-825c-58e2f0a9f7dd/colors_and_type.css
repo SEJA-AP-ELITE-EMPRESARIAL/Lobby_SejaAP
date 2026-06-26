@@ -1,0 +1,237 @@
+/**
+ * CONECTA AP — Design Tokens (Colors & Typography)
+ * Ported from frontend-homologacao/frontend/src/styles/tokens.css
+ * Theme: "Ouro Premium on Deep Black" — gold primary on charcoal.
+ */
+
+/* Fonts — self-host via assets/fonts or use Google Fonts CDN */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
+
+:root {
+  /* ========= PRIMARY — Ouro Premium ========= */
+  --primary:        #C7A444;
+  --primary-light:  #E8B84B;
+  --primary-dark:   #9C7C21;
+  --primary-hover:  #C8A654;
+  --primary-subtle: rgba(199, 164, 68, 0.08);
+
+  /* ========= SECONDARY — Cinza Antracite ===== */
+  --secondary:       #4A4A49;
+  --secondary-light: #6C6C6B;
+  --secondary-dark:  #3C3C3B;
+
+  --accent:       rgba(42, 42, 40, 0.6);
+  --accent-solid: #3C3C3B;
+
+  /* ========= SURFACES (Dark — default) ======= */
+  --background:       #141412;
+  --surface:          #1E1E1C;
+  --surface-light:    #282826;
+  --surface-elevated: #323230;
+  --surface-alt:      #1A1A18;
+
+  /* ========= TEXT ============================ */
+  --text:           #F0F0F0;
+  --text-secondary: #D0D0D0;
+  --text-muted:     #A0A0A0;
+
+  /* ========= BORDERS ========================= */
+  --border:       rgba(175, 144, 61, 0.3);
+  --border-light: rgba(255, 255, 255, 0.1);
+
+  /* ========= STATUS ========================== */
+  --success: #28A745;
+  --warning: #FFC107;
+  --danger:  #DC3545;
+  --info:    #17A2B8;
+
+  /* ========= GRADIENTS & GLOW ================ */
+  --gradient-primary: linear-gradient(135deg, #C7A444 0%, #9C7C21 100%);
+  --gradient-primary-hover: linear-gradient(135deg, #E8B84B 0%, #C7A444 100%);
+  --gradient-surface: linear-gradient(180deg, var(--surface) 0%, var(--background) 100%);
+  --glow-primary: 0 0 20px rgba(199, 164, 68, 0.25);
+
+  /* ========= TYPOGRAPHY ====================== */
+  --font-primary:   'Montserrat', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  --font-secondary: 'Roboto', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+  --font-light:    300;
+  --font-normal:   400;
+  --font-medium:   500;
+  --font-semibold: 600;
+  --font-bold:     700;
+
+  --font-xs:   0.75rem;   /* 12px */
+  --font-sm:   0.8125rem; /* 13px */
+  --font-base: 0.875rem;  /* 14px */
+  --font-lg:   1rem;      /* 16px */
+  --font-xl:   1.125rem;  /* 18px */
+  --font-2xl:  clamp(1.375rem, 2vw, 1.75rem);
+  --font-3xl:  clamp(1.75rem, 3vw, 2.5rem);
+
+  /* ========= SPACING ========================= */
+  --spacing-xxs: 0.125rem;
+  --spacing-xs:  0.25rem;
+  --spacing-sm:  0.5rem;
+  --spacing-md:  0.75rem;
+  --spacing-lg:  1rem;
+  --spacing-xl:  clamp(1.5rem, 2vw, 2.5rem);
+  --spacing-2xl: clamp(2rem, 3vw, 3.5rem);
+
+  /* ========= ELEVATION ======================= */
+  --elevation-0: none;
+  --elevation-1: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+  --elevation-2: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
+  --elevation-3: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+  --elevation-4: 0 14px 28px rgba(0,0,0,0.25), 0 10px 10px rgba(0,0,0,0.22);
+  --elevation-5: 0 19px 38px rgba(0,0,0,0.30), 0 15px 12px rgba(0,0,0,0.22);
+
+  /* ========= MOTION ========================== */
+  --duration-instant: 100ms;
+  --duration-fast:    200ms;
+  --duration-normal:  300ms;
+  --duration-slow:    500ms;
+
+  --ease-standard:   cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+  --ease-sharp:      cubic-bezier(0.4, 0, 0.6, 1);
+
+  --transition-fast:   200ms var(--ease-standard);
+  --transition-normal: 300ms var(--ease-standard);
+  --transition-slow:   500ms var(--ease-decelerate);
+
+  /* ========= RADIUS ========================== */
+  --border-radius-sm: 0.25rem; /* 4px */
+  --border-radius:    0.5rem;  /* 8px  — inputs, buttons, icons */
+  --border-radius-lg: 0.75rem; /* 12px — cards, modals, drawers */
+
+  /* ========= INPUTS / MISC =================== */
+  --input-height-sm: 2.25rem; /* 36px */
+  --input-height-md: 2.75rem; /* 44px — WCAG hit target */
+  --focus-ring: 0 0 0 3px rgba(199, 164, 68, 0.32);
+
+  --opacity-disabled:  0.38;
+  --opacity-inactive:  0.60;
+  --opacity-hover:     0.08;
+  --opacity-focus:     0.12;
+  --opacity-selected:  0.15;
+  --opacity-activated: 0.24;
+}
+
+/* ========= LIGHT THEME ===================== */
+.light-theme {
+  --primary:        #B8952E;
+  --primary-light:  #D4A833;
+  --primary-dark:   #8A6A10;
+  --primary-hover:  #A6851F;
+  --primary-subtle: rgba(184, 149, 46, 0.10);
+
+  --gradient-primary: linear-gradient(135deg, #B8952E 0%, #8A6A10 100%);
+  --glow-primary: 0 0 20px rgba(184, 149, 46, 0.18);
+
+  --secondary:       #5F5F5E;
+  --secondary-light: #8A8A89;
+  --secondary-dark:  #4A4A49;
+
+  --accent:       rgba(184, 149, 46, 0.08);
+  --accent-solid: #F5F0E0;
+
+  --background:       #EFEDE8;
+  --surface:          #F7F6F2;
+  --surface-light:    #EAE8E3;
+  --surface-elevated: #FFFFFF;
+  --surface-alt:      #E8E6E1;
+
+  --text:           #1C1C1A;
+  --text-secondary: #4A4A46;
+  --text-muted:     #76766E;
+
+  --border:       rgba(0, 0, 0, 0.14);
+  --border-light: rgba(0, 0, 0, 0.09);
+
+  --success: #1E8E3E;
+  --warning: #E6A800;
+  --danger:  #C62828;
+  --info:    #0D8FA8;
+
+  --focus-ring: 0 0 0 3px rgba(184, 149, 46, 0.28);
+}
+
+/* ========= SEMANTIC ELEMENT STYLES ========= */
+body {
+  font-family: var(--font-secondary);
+  font-weight: var(--font-normal);
+  color: var(--text);
+  background-color: var(--background);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6,
+.h1, .h2, .h3, .h4, .h5, .h6 {
+  font-family: var(--font-primary);
+  font-weight: var(--font-semibold);
+  color: var(--text);
+  line-height: 1.2;
+  margin: 0 0 var(--spacing-md);
+  letter-spacing: -0.01em;
+}
+
+h1, .h1 { font-size: var(--font-3xl); letter-spacing: -0.015em; }
+h2, .h2 { font-size: var(--font-2xl); }
+h3, .h3 { font-size: var(--font-xl); }
+h4, .h4 { font-size: var(--font-lg); }
+h5, .h5 { font-size: var(--font-base); }
+h6, .h6 { font-size: var(--font-sm); }
+
+.overline {
+  font-family: var(--font-primary);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+}
+
+p, .body {
+  font-family: var(--font-secondary);
+  font-size: var(--font-base);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 var(--spacing-md);
+}
+
+.body-lg  { font-size: var(--font-lg);  }
+.body-sm  { font-size: var(--font-sm);  }
+.caption  { font-size: var(--font-xs);  color: var(--text-muted); }
+
+.label {
+  font-family: var(--font-primary);
+  font-weight: var(--font-medium);
+  font-size: var(--font-sm);
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+code, .mono {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  font-size: 0.875em;
+  background: var(--surface-light);
+  padding: 0.125em 0.375em;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-light);
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+a:hover { color: var(--primary-hover); }
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--border-radius-sm);
+}

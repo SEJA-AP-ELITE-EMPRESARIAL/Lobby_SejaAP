@@ -1,0 +1,1181 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141412">
+<meta name="robots" content="noindex, nofollow">
+<title>Lobby de Produtos · Conecta AP · Seja AP</title>
+<link rel="icon" href="data:,">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
+
+<!-- React + Babel (mesmas versões usadas na página de negociação que está no ar) -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
+
+/* ===== Tokens do design system Conecta AP (Ouro Premium on Deep Black) ===== */
+:root{
+  --primary:#C7A444; --primary-light:#E8B84B; --primary-dark:#9C7C21; --primary-hover:#C8A654;
+  --primary-subtle:rgba(199,164,68,0.08);
+  --background:#141412; --surface:#1E1E1C; --surface-light:#282826; --surface-elevated:#323230; --surface-alt:#1A1A18;
+  --text:#F0F0F0; --text-secondary:#D0D0D0; --text-muted:#A0A0A0;
+  --border:rgba(175,144,61,0.3); --border-light:rgba(255,255,255,0.1);
+  --success:#28A745; --warning:#FFC107; --danger:#DC3545; --info:#17A2B8;
+  --gradient-primary:linear-gradient(135deg,#C7A444 0%,#9C7C21 100%);
+  --gradient-primary-hover:linear-gradient(135deg,#E8B84B 0%,#C7A444 100%);
+  --glow-primary:0 0 20px rgba(199,164,68,0.25);
+  --font-primary:'Montserrat','Segoe UI',Tahoma,sans-serif;
+  --font-secondary:'Roboto','Segoe UI',Tahoma,sans-serif;
+  --elevation-2:0 3px 6px rgba(0,0,0,0.16),0 3px 6px rgba(0,0,0,0.23);
+  --elevation-3:0 10px 20px rgba(0,0,0,0.19),0 6px 6px rgba(0,0,0,0.23);
+  --focus-ring:0 0 0 3px rgba(199,164,68,0.32);
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;}
+body{background:var(--background);color:var(--text);font-family:var(--font-secondary);-webkit-font-smoothing:antialiased;}
+input,select,button,textarea{font-family:'Roboto',sans-serif;}
+input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7) sepia(1) saturate(3) hue-rotate(5deg);cursor:pointer;}
+button{font-family:var(--font-primary);}
+
+.ms-icon{
+  font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;font-size:24px;line-height:1;
+  letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;
+  -webkit-font-feature-settings:'liga';-webkit-font-smoothing:antialiased;
+  font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24;
+}
+
+@keyframes slideUpFade{from{opacity:0;transform:translateY(20px);}to{opacity:1;transform:translateY(0);}}
+@keyframes popIn{from{opacity:0;transform:scale(0.85);}to{opacity:1;transform:scale(1);}}
+@keyframes spin{to{transform:rotate(360deg);}}
+.spin{width:18px;height:18px;border-radius:50%;border:2px solid rgba(26,26,24,0.35);border-top-color:#1A1A18;animation:spin .8s linear infinite;display:inline-block;}
+.ms-icon.rot{animation:spin .9s linear infinite;}
+
+/* Scrollbar */
+*::-webkit-scrollbar{width:10px;height:10px;}
+*::-webkit-scrollbar-track{background:transparent;}
+*::-webkit-scrollbar-thumb{background:var(--surface-light);border-radius:10px;border:2px solid var(--background);}
+*::-webkit-scrollbar-thumb:hover{background:#3a3a37;}
+
+/* ===== Reutilizáveis ===== */
+.inp{width:100%;height:44px;padding:0 12px;border-radius:8px;background:var(--surface-elevated);border:1px solid var(--border-light);color:var(--text);font:400 14px 'Roboto';outline:none;transition:border-color .15s,box-shadow .15s;}
+.inp:focus{border-color:var(--primary);box-shadow:var(--focus-ring);}
+.inp:disabled{opacity:.55;cursor:not-allowed;}
+.inp.lg{height:46px;font:500 15px 'Roboto';letter-spacing:.02em;}
+select.inp{cursor:pointer;}
+select.inp option{background:#1E1E1C;color:var(--text);}
+.lbl{display:block;font:500 12px var(--font-primary);color:var(--text-secondary);margin-bottom:6px;}
+.lbl.sm{font-size:11px;color:var(--text-muted);}
+.card{background:var(--surface);border:1px solid var(--border-light);border-radius:14px;padding:22px;}
+.sec-title{font:600 13px var(--font-primary);letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);}
+
+/* Botões */
+.btn-prim{display:flex;align-items:center;gap:8px;height:46px;padding:0 28px;border-radius:10px;border:none;cursor:pointer;background:var(--gradient-primary);color:#1A1A18;font:700 14px var(--font-primary);letter-spacing:.03em;box-shadow:0 4px 14px rgba(199,164,68,.3);transition:transform .2s,box-shadow .2s,opacity .2s;}
+.btn-prim:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 22px rgba(199,164,68,.4);}
+.btn-prim:disabled{background:var(--surface-light);color:var(--text-muted);cursor:not-allowed;opacity:.6;box-shadow:none;}
+.btn-ghost{display:flex;align-items:center;gap:7px;height:46px;padding:0 20px;border-radius:10px;border:1px solid var(--border-light);background:transparent;color:var(--text-secondary);font:600 13.5px var(--font-primary);cursor:pointer;transition:border-color .2s,color .2s;}
+.btn-ghost:hover:not(:disabled){border-color:var(--primary);color:var(--primary);}
+.btn-ghost:disabled{opacity:.5;cursor:not-allowed;}
+
+/* Top bar */
+.topbtn{display:flex;align-items:center;gap:7px;height:38px;padding:0 14px;border-radius:9px;border:1px solid var(--border-light);background:transparent;color:var(--text-secondary);font:600 12.5px var(--font-primary);cursor:pointer;transition:border-color .2s,color .2s;}
+.topbtn:hover{border-color:var(--primary);color:var(--primary);}
+
+/* Cards do lobby */
+.cat-card{position:relative;overflow:hidden;text-align:left;cursor:pointer;padding:26px;border-radius:16px;background:var(--surface-elevated);border:1px solid var(--border-light);transition:transform .28s cubic-bezier(.4,0,.2,1),border-color .28s,box-shadow .28s;animation:slideUpFade .5s both;}
+.cat-card:hover{transform:translateY(-5px);border-color:rgba(199,164,68,.5);box-shadow:var(--elevation-3);}
+.cat-card.locked{cursor:not-allowed;opacity:.45;filter:grayscale(.75);animation:slideUpFade .5s both;}
+.cat-card.locked:hover{transform:none;border-color:var(--border-light);box-shadow:none;}
+
+/* Linhas de produto */
+.prod-row{text-align:left;cursor:pointer;display:grid;grid-template-columns:auto 1fr auto;gap:18px;align-items:center;padding:20px 22px;border-radius:14px;background:var(--surface-elevated);border:1.5px solid var(--border-light);transition:border-color .22s,transform .22s,box-shadow .22s;width:100%;}
+.prod-row:hover{transform:translateY(-2px);box-shadow:var(--elevation-2);}
+.prod-row.sel{border-color:var(--primary);}
+
+.chip{display:inline-flex;align-items:center;gap:5px;font:600 11.5px var(--font-primary);letter-spacing:.03em;color:var(--primary);background:var(--primary-subtle);border:1px solid rgba(199,164,68,.35);padding:4px 10px;border-radius:7px;}
+
+.linkbtn{font:600 11px var(--font-primary);letter-spacing:.06em;text-transform:uppercase;color:var(--primary);background:none;border:none;cursor:pointer;}
+.linkbtn:hover{text-decoration:underline;}
+
+/* Layout */
+.scrollarea{flex:1;overflow-y:auto;}
+.flow-grid{max-width:1240px;margin:0 auto;padding:32px 28px 48px;display:grid;grid-template-columns:minmax(0,1fr) 372px;gap:28px;align-items:start;}
+.sticky{position:sticky;top:24px;}
+
+@media (max-width:980px){
+  .flow-grid{grid-template-columns:1fr;}
+  .sticky{position:static;}
+  .lobby-grid{grid-template-columns:1fr !important;}
+}
+@media (max-width:560px){
+  .topbar{padding:0 16px !important;gap:12px !important;}
+  .who{display:none !important;}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useMemo, useRef } = React;
+
+/* ============================================================================
+ * INTEGRAÇÕES REAIS — copiadas da página de pré-contrato (shared.jsx) que está
+ * no ar em pre-registro.seja-alta-performance.workers.dev. São EXATAMENTE os
+ * mesmos webhooks n8n (CNPJ, CEP e cadastro de cliente), com o mesmo contrato de
+ * payload, para que o backend continue funcionando sem ajustes.
+ * ========================================================================== */
+
+// ===== Webhooks (n8n) =====
+const CNPJ_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/brasilapi-cnpj';
+const CEP_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/busca-cep';
+const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/cadastro-cliente-elite';
+
+// ===== Máscaras =====
+const maskCNPJ = (v) => {
+  v = v.replace(/\D/g, '').slice(0, 14);
+  return v
+    .replace(/^(\d{2})(\d)/, '$1.$2')
+    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1/$2')
+    .replace(/(\d{4})(\d)/, '$1-$2');
+};
+const maskCPF = (v) => {
+  v = v.replace(/\D/g, '').slice(0, 11);
+  return v
+    .replace(/^(\d{3})(\d)/, '$1.$2')
+    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1-$2');
+};
+const maskCEP = (v) => { v = v.replace(/\D/g, '').slice(0, 8); return v.replace(/^(\d{5})(\d)/, '$1-$2'); };
+const maskPhone = (v) => {
+  v = v.replace(/\D/g, '').slice(0, 11);
+  if (v.length <= 10) return v.replace(/^(\d{2})(\d{4})(\d)/, '($1) $2-$3').replace(/^(\d{2})(\d)/, '($1) $2');
+  return v.replace(/^(\d{2})(\d{5})(\d)/, '($1) $2-$3').replace(/^(\d{2})(\d)/, '($1) $2');
+};
+const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
+
+// ===== Validadores =====
+function isCPF(v) {
+  const d = onlyDigits(v);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const n = d.split('').map(Number);
+  let s = 0; for (let i = 0; i < 9; i++) s += n[i] * (10 - i);
+  let f = 11 - (s % 11); if (f >= 10) f = 0; if (f !== n[9]) return false;
+  s = 0; for (let i = 0; i < 10; i++) s += n[i] * (11 - i);
+  let g = 11 - (s % 11); if (g >= 10) g = 0; return g === n[10];
+}
+function isCNPJ(v) {
+  const d = onlyDigits(v);
+  if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
+  const n = d.split('').map(Number);
+  const w1 = [5,4,3,2,9,8,7,6,5,4,3,2]; let s = 0;
+  for (let i = 0; i < 12; i++) s += n[i] * w1[i];
+  let f = s % 11; f = f < 2 ? 0 : 11 - f; if (f !== n[12]) return false;
+  const w2 = [6,5,4,3,2,9,8,7,6,5,4,3,2]; s = 0;
+  for (let i = 0; i < 13; i++) s += n[i] * w2[i];
+  let g = s % 11; g = g < 2 ? 0 : 11 - g; return g === n[13];
+}
+const isCEP = (v) => onlyDigits(v).length === 8;
+const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v || '').trim());
+const isPhone = (v) => { const n = onlyDigits(v); return n.length === 10 || n.length === 11; };
+const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+const isUF = (v) => UFS.includes(String(v || '').toUpperCase());
+const maskUF = (v) => String(v || '').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 2);
+
+function composeEndereco(d) {
+  if (!d) return '';
+  const head = [d.endereco, d.numero].map((s) => String(s || '').trim()).filter(Boolean).join(', ');
+  const cidadeUf = [d.cidade, d.estado].map((s) => String(s || '').trim()).filter(Boolean).join('/');
+  return [head, d.complemento, d.bairro, cidadeUf].map((s) => String(s || '').trim()).filter(Boolean).join(' - ');
+}
+
+// ===== Moeda / números =====
+const fmtBRL = (n) => 'R$ ' + Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtMoneyPlain = (n) => Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+function parseMoney(v) {
+  if (typeof v === 'number') return v;
+  let s = String(v == null ? '' : v).trim().replace(/[^\d.,-]/g, '');
+  if (!s) return NaN;
+  const hasComma = s.indexOf(',') > -1, hasDot = s.indexOf('.') > -1;
+  if (hasComma && hasDot) s = s.replace(/\./g, '').replace(',', '.');
+  else if (hasComma) s = s.replace(',', '.');
+  return Number(s);
+}
+
+// ===== Datas =====
+const pad2 = (n) => String(n).padStart(2, '0');
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+function addMonthsISO(iso, n) {
+  const p = String(iso || todayISO()).split('-').map(Number);
+  const dt = new Date(p[0], (p[1] - 1) + n, 1);
+  const last = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+  dt.setDate(Math.min(p[2], last));
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+}
+
+// ===== Formas de pagamento =====
+const PAYMENT_METHODS = [
+  { id: 'pix',            label: 'Pix' },
+  { id: 'cartao_credito', label: 'Cartão de crédito' },
+  { id: 'cartao_debito',  label: 'Cartão de débito' },
+  { id: 'boleto',         label: 'Boleto' },
+  { id: 'permuta',        label: 'Permuta' },
+  { id: 'link_pagamento', label: 'Link de pagamento' },
+  { id: 'recorrencia',    label: 'Recorrência' },
+];
+const paymentLabel = (id) => { const m = PAYMENT_METHODS.find((x) => x.id === id); return m ? m.label : '—'; };
+
+// ===== Cronograma (total âncora + redistribuição automática) =====
+function redistributeSchedule(parcelas, total, entrada) {
+  const arr = (parcelas || []).map((p) => Object.assign({}, p));
+  const freeIdx = arr.map((p, i) => (p.manual ? -1 : i)).filter((i) => i >= 0);
+  if (freeIdx.length === 0) return arr;
+  const manualSum = arr.filter((p) => p.manual).reduce((s, p) => s + (Number(p.valor) || 0), 0);
+  const residual = round2((Number(total) || 0) - (Number(entrada) || 0) - manualSum);
+  const per = round2(residual / freeIdx.length);
+  let acc = 0;
+  freeIdx.forEach((idx, k) => {
+    if (k < freeIdx.length - 1) { arr[idx].valor = per; acc = round2(acc + per); }
+    else { arr[idx].valor = round2(residual - acc); }
+  });
+  return arr;
+}
+function buildSchedule(count, total, entrada, startISO) {
+  const n = Math.max(1, Math.round(Number(count) || 1));
+  const start = startISO || todayISO();
+  const arr = Array.from({ length: n }, (_, i) => ({ valor: 0, data: addMonthsISO(start, i + 1), forma: 'pix', manual: false }));
+  return redistributeSchedule(arr, total, entrada);
+}
+function scheduleTotal(entrada, parcelas) {
+  const sum = (parcelas || []).reduce((s, p) => s + (Number(p.valor) || 0), 0);
+  return round2((Number(entrada) || 0) + sum);
+}
+
+// ===== Normalização das respostas dos webhooks de CNPJ / CEP =====
+const UF_BY_NAME = {
+  'acre':'AC','alagoas':'AL','amapa':'AP','amazonas':'AM','bahia':'BA','ceara':'CE','distrito federal':'DF',
+  'espirito santo':'ES','goias':'GO','maranhao':'MA','mato grosso':'MT','mato grosso do sul':'MS','minas gerais':'MG',
+  'para':'PA','paraiba':'PB','parana':'PR','pernambuco':'PE','piaui':'PI','rio de janeiro':'RJ','rio grande do norte':'RN',
+  'rio grande do sul':'RS','rondonia':'RO','roraima':'RR','santa catarina':'SC','sao paulo':'SP','sergipe':'SE','tocantins':'TO',
+};
+const stripAccents = (s) => String(s || '').normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '');
+function pickStr(v, prefer) {
+  if (v == null) return '';
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    const keys = (prefer || []).concat(['sigla','nome','descricao','descrição','text','name','value','label']);
+    for (const k of keys) { const inner = v[k]; if (inner != null && typeof inner !== 'object' && String(inner).trim() !== '') return String(inner).trim(); }
+    return '';
+  }
+  return String(v).trim();
+}
+function normalizeCnpjResponse(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw)) raw = raw[0] || {};
+  if (typeof raw !== 'object') return null;
+  const sources = []; const push = (o) => { if (o && typeof o === 'object' && !Array.isArray(o)) sources.push(o); };
+  push(raw);
+  ['data','result','empresa','estabelecimento','endereco','address'].forEach((k) => push(raw[k]));
+  ['estabelecimento','endereco','address'].forEach((k) => { push(raw.data && raw.data[k]); push(raw.empresa && raw.empresa[k]); push(raw.estabelecimento && raw.estabelecimento[k]); });
+  const get = (keys, prefer) => { for (const src of sources) for (const k of keys) if (src[k] != null) { const s = pickStr(src[k], prefer); if (s) return s; } return ''; };
+  const razaoSocial = get(['razao_social','razaoSocial','razão_social','razao social','nome','nome_empresarial','company']);
+  let inscricaoEstadual = get(['inscricao_estadual','inscricaoEstadual','ie']); if (/^isento$/i.test(inscricaoEstadual)) inscricaoEstadual = 'ISENTO';
+  const cepRaw = onlyDigits(get(['cep','CEP','codigo_postal']));
+  const cep = cepRaw.length === 8 ? cepRaw.replace(/^(\d{5})(\d{3})$/, '$1-$2') : '';
+  let logradouro = get(['logradouro','rua','street','tipo_logradouro_logradouro']);
+  const numero = get(['endereco_numero','numero_endereco','numero','número','number','nro','num','numero_fachada']);
+  const complemento = get(['complemento','complement']);
+  const bairro = get(['bairro','neighborhood','distrito']);
+  const cidade = get(['municipio','município','cidade','city','localidade'], ['nome']);
+  let estado = get(['uf','estado','state','sigla_uf'], ['sigla']);
+  if (estado.length > 2) { const m = UF_BY_NAME[stripAccents(estado).toLowerCase().trim()]; if (m) estado = m; }
+  if (estado.length === 2) estado = estado.toUpperCase();
+  if (!logradouro) logradouro = get(['endereco','endereço','endereco_completo','logradouro_completo']);
+  return { razaoSocial, inscricaoEstadual, logradouro, numero, complemento, bairro, cidade, estado, cep };
+}
+async function fetchCnpj(cnpjMasked) {
+  const cnpj = onlyDigits(cnpjMasked);
+  if (cnpj.length !== 14) throw new Error('CNPJ inválido');
+  let res;
+  try {
+    res = await fetch(CNPJ_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify({ cnpj, cnpj_formatado: cnpjMasked }), mode: 'cors' });
+  } catch (e) { throw new Error('Não foi possível consultar o CNPJ'); }
+  if (!res.ok) throw new Error('Não foi possível consultar o CNPJ');
+  let raw = null; try { raw = await res.json(); } catch { raw = null; }
+  const data = normalizeCnpjResponse(raw);
+  if (!data || !data.razaoSocial) throw new Error('CNPJ não encontrado');
+  return data;
+}
+function normalizeCepResponse(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw)) raw = raw[0] || {};
+  if (typeof raw !== 'object') return null;
+  const sources = []; const push = (o) => { if (o && typeof o === 'object' && !Array.isArray(o)) sources.push(o); };
+  push(raw); ['data','result','endereco','address'].forEach((k) => push(raw[k]));
+  const get = (keys, prefer) => {
+    for (const src of sources) {
+      const lowerMap = {};
+      for (const realKey of Object.keys(src)) { const lk = realKey.toLowerCase(); if (!(lk in lowerMap)) lowerMap[lk] = src[realKey]; }
+      for (const k of keys) { const cand = lowerMap[k.toLowerCase()]; if (cand != null) { const s = pickStr(cand, prefer); if (s) return s; } }
+    } return '';
+  };
+  const erro = get(['erro','error']); if (erro && erro !== 'false') return null;
+  const logradouro = get(['logradouro','rua','street','endereco','endereço']);
+  const complemento = get(['complemento','complement']);
+  const bairro = get(['bairro','neighborhood','distrito']);
+  const cidade = get(['localidade','municipio','município','cidade','city'], ['nome']);
+  let estado = get(['uf','estado','state','sigla_uf'], ['sigla']);
+  if (estado.length > 2) { const m = UF_BY_NAME[stripAccents(estado).toLowerCase().trim()]; if (m) estado = m; }
+  if (estado.length === 2) estado = estado.toUpperCase();
+  const cepRaw = onlyDigits(get(['cep','CEP','codigo_postal']));
+  const cep = cepRaw.length === 8 ? cepRaw.replace(/^(\d{5})(\d{3})$/, '$1-$2') : '';
+  return { logradouro, complemento, bairro, cidade, estado, cep };
+}
+async function fetchCep(cepMasked) {
+  const cep = onlyDigits(cepMasked);
+  if (cep.length !== 8) throw new Error('CEP inválido');
+  let res;
+  try {
+    res = await fetch(CEP_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify({ cep, cep_formatado: cepMasked }), mode: 'cors' });
+  } catch (e) { throw new Error('Não foi possível consultar o CEP'); }
+  if (!res.ok) throw new Error('Não foi possível consultar o CEP');
+  let raw = null; try { raw = await res.json(); } catch { raw = null; }
+  const data = normalizeCepResponse(raw);
+  if (!data || (!data.cidade && !data.logradouro)) throw new Error('CEP não encontrado');
+  return data;
+}
+function extractWebhookError(body) {
+  if (!body) return null;
+  const item = Array.isArray(body) ? body[0] : body;
+  if (!item || typeof item !== 'object') return null;
+  if (item.faultstring || item.error_type) return { message: item.faultstring || 'Não foi possível concluir o envio.', errorType: item.error_type || null };
+  return null;
+}
+async function sendPreContrato(payload) {
+  let res;
+  try {
+    res = await fetch(SEND_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(payload), mode: 'cors' });
+  } catch (e) { throw new Error('Falha de conexão ao enviar o cadastro'); }
+  let body = null; try { body = await res.json(); } catch { body = null; }
+  const errInfo = extractWebhookError(body);
+  if (errInfo) { const err = new Error(errInfo.message); err.handled = true; err.errorType = errInfo.errorType; throw err; }
+  if (!res.ok) throw new Error(`Erro ao enviar (HTTP ${res.status})`);
+  return body || {};
+}
+
+/* ============================================================================
+ * CATÁLOGO — categorias e produtos do lobby.
+ *  - "elite" usa os produtos REAIS da página que está no ar (mensalidade × 12).
+ *  - As demais categorias seguem o catálogo do design comp (valor à vista).
+ * Edite livremente esta lista para adicionar/ajustar produtos e preços.
+ *  campos: { id, name, desc, duration, price (TOTAL do contrato), icon,
+ *            recurring?, monthly?, vigencia? }
+ * ========================================================================== */
+const CATS = [
+  // Elite é a única categoria ativa hoje. As demais ficam "Em implementação" (locked).
+  { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
+    desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
+    products: [
+      { id: 'pro',    name: 'ELITE PRO',    desc: 'O plano da Estrutura', duration: '12 meses', monthly: 12997, price: 12997 * 12, recurring: true, vigencia: 12, icon: 'workspace_premium' },
+      { id: 'gestao', name: 'ELITE GESTÃO', desc: 'O plano da Escala',    duration: '12 meses', monthly: 19997, price: 19997 * 12, recurring: true, vigencia: 12, icon: 'insights' },
+      { id: 'evo',    name: 'ELITE EVO',    desc: 'O plano do Legado',    duration: '12 meses', monthly: 29997, price: 29997 * 12, recurring: true, vigencia: 12, icon: 'diamond' },
+    ] },
+  { id: 'treinamentos', name: 'Treinamentos', icon: 'school', color: 'gold', locked: true,
+    desc: 'Imersões e trilhas de desenvolvimento de líderes e equipes comerciais.',
+    products: [
+      { id: 't1', name: 'Imersão Gestão 360',          desc: 'Imersão presencial de 3 dias',       duration: '3 dias',   price: 18000, icon: 'groups' },
+      { id: 't2', name: 'Trilha Líder Elite',          desc: 'Programa de formação de líderes',     duration: '6 meses',  price: 24000, icon: 'military_tech' },
+      { id: 't3', name: 'Vendas de Alta Performance',  desc: 'Treinamento intensivo de vendas',     duration: '2 meses',  price: 12000, icon: 'trending_up' },
+    ] },
+  { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', locked: true,
+    desc: 'Aceleração de Performance de Negócios com acompanhamento contínuo.',
+    products: [
+      { id: 'a1', name: 'APN Starter', desc: 'Aceleração para pequenos negócios',  duration: '12 meses', price: 24000, icon: 'flight_takeoff' },
+      { id: 'a2', name: 'APN Pro',     desc: 'Aceleração com consultoria dedicada', duration: '12 meses', price: 48000, icon: 'speed' },
+      { id: 'a3', name: 'APN Black',   desc: 'Aceleração premium full-service',     duration: '12 meses', price: 96000, icon: 'workspace_premium' },
+    ] },
+  { id: 'palestras', name: 'Palestras', icon: 'campaign', color: 'green', locked: true,
+    desc: 'Palestras in company e eventos de alto impacto.',
+    products: [
+      { id: 'pl1', name: 'Palestra In Company',     desc: 'Palestra exclusiva na empresa',  duration: '1 evento',  price: 15000, icon: 'record_voice_over' },
+      { id: 'pl2', name: 'Palestra Magna',          desc: 'Palestra para grandes públicos', duration: '1 evento',  price: 25000, icon: 'stadium' },
+      { id: 'pl3', name: 'Ciclo de Palestras Anual', desc: 'Programa anual de palestras',    duration: '12 meses', price: 80000, icon: 'event' },
+    ] },
+];
+const COLORS = {
+  gold:   { iconBg: 'rgba(199,164,68,0.12)', iconFg: '#E8B84B', orb: '#C7A444' },
+  blue:   { iconBg: 'rgba(33,150,243,0.12)', iconFg: '#64B5F6', orb: '#2196F3' },
+  green:  { iconBg: 'rgba(76,175,80,0.12)',  iconFg: '#81C784', orb: '#4CAF50' },
+  purple: { iconBg: 'rgba(124,58,237,0.12)', iconFg: '#A78BFA', orb: '#7C3AED' },
+};
+const getCat = (id) => CATS.find((c) => c.id === id) || null;
+const STEPS = ['Produto', 'Empresa', 'Pagamento', 'Resumo'];
+
+const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
+
+// Monta o cronograma padrão de um produto (entrada + 11 parcelas, total = price).
+function initPayment(product) {
+  const total = product.price;
+  const entrada = product.recurring ? product.monthly : round2(total / 12);
+  const parcelas = buildSchedule(11, total, entrada, todayISO());
+  return { entradaForma: 'pix', entradaValor: entrada, entradaData: todayISO(), parcelas, editMode: false };
+}
+
+/* ===== Logo ===== */
+function Logo() {
+  return (
+    <svg viewBox="0 0 337.9 69.96" style={{ height: 22, width: 'auto' }} role="img" aria-label="SEJA AP">
+      <defs>
+        <linearGradient id="lg-gold" x1="322.32" y1="-.21" x2="341.69" y2="10.97" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#edd677" /><stop offset=".47" stopColor="#dbb44e" /><stop offset="1" stopColor="#5b451e" />
+        </linearGradient>
+      </defs>
+      <g fill="#F0F0F0">
+        <path fill="url(#lg-gold)" d="M322.17.04c10.49,1.75,14.63,8.64,15.73,17.48V.04h-15.73Z" />
+        <path d="M261.37,0h-22.42l-25.93,68.91h20.14l3.41-9.92h27.17l3.41,9.92h20.14L261.37,0ZM241.43,43.49l8.79-25.93,8.67,25.93h-17.46Z" />
+        <path d="M335.32,21.02c-.79-11.09-8.43-20.14-21.88-20.96-.66-.04-1.32-.06-2-.06h-50.06l25.93,68.91,7.4-.03v-23.13h16.73c15.48,0,23.95-10.43,23.95-22.82,0-.65-.03-1.28-.07-1.91ZM308.74,30.26h-14.04v-14.77h14.04c1.74,0,3.35.36,4.69,1.05,1.81.92,3.15,2.43,3.65,4.47.15.59.23,1.23.23,1.91,0,4.64-3.82,7.33-8.57,7.33ZM10.64,19.35c0-6.26,5.77-10.54,13.62-10.54,7.26,0,14.22,2.39,19.19,7.95l4.97-6.07C42.86,4.83,35,1.35,24.96,1.35,11.83,1.35,2.09,8.9,2.09,19.84c0,23.67,39.28,14.12,39.28,31.22,0,5.17-3.78,11.53-15.61,11.53-9.35,0-16.51-4.57-20.78-9.55l-4.97,6.36c5.47,6.16,14.02,10.54,25.46,10.54,17.9,0,24.46-9.94,24.46-19.49,0-24.76-39.28-16.21-39.28-31.12ZM55.19,68.76h43.45v-7.36h-35.2v-22.87h34.5v-7.36h-34.5V9.8h35.2V2.44h-43.45v66.32ZM131.65,48.68c0,8.25-5.17,13.92-13.32,13.92-5.77,0-9.65-3.08-12.43-6.56l-4.38,6.26c4.57,5.37,10.34,7.66,17.3,7.66,11.83,0,21.08-6.86,21.08-21.18V2.44h-8.25v46.24ZM168.34,2.44l-26.75,66.32h9.45l5.87-14.82h33.01l5.87,14.82h9.45L178.58,2.44h-10.24ZM159.39,46.69l14.02-35.8,14.12,35.8h-28.14Z" />
+      </g>
+    </svg>
+  );
+}
+
+/* ===== Input de dinheiro (mesmo comportamento da negociação) ===== */
+function MoneyInput({ value, onChangeNumber, disabled, placeholder, className }) {
+  const [focused, setFocused] = useState(false);
+  const [buf, setBuf] = useState('');
+  const num = Number(value);
+  const hasNum = Number.isFinite(num);
+  const display = focused ? buf : (hasNum ? fmtMoneyPlain(num) : '');
+  return (
+    <input
+      className={className || 'inp'} type="text" inputMode="decimal" disabled={disabled} placeholder={placeholder}
+      value={display}
+      onFocus={() => { setFocused(true); setBuf(hasNum ? fmtMoneyPlain(num) : ''); }}
+      onBlur={() => setFocused(false)}
+      onChange={(e) => { const t = e.target.value; setBuf(t); const p = parseMoney(t); onChangeNumber(Number.isFinite(p) ? p : NaN, t); }}
+    />
+  );
+}
+
+/* ===== Campo de texto estruturado ===== */
+function Field({ label, value, onChange, placeholder, mask, type, inputMode, required, optional, disabled, span, action }) {
+  return (
+    <div style={{ gridColumn: span ? `span ${span}` : undefined }}>
+      <label className="lbl">
+        {label}{required && <span style={{ color: 'var(--primary)' }}> *</span>}
+        {optional && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> (opcional)</span>}
+      </label>
+      <div style={{ position: 'relative' }}>
+        <input
+          className="inp" type={type || 'text'} inputMode={inputMode} placeholder={placeholder} value={value || ''} disabled={disabled}
+          autoComplete="off"
+          style={action ? { paddingRight: 44 } : undefined}
+          onChange={(e) => onChange(mask ? mask(e.target.value) : e.target.value)}
+          onKeyDown={action ? (e) => { if (e.key === 'Enter' && !action.disabled) { e.preventDefault(); action.onClick(); } } : undefined}
+        />
+        {action && (
+          <button type="button" onClick={action.onClick} disabled={action.disabled} title={action.label} aria-label={action.label}
+            style={{ position: 'absolute', right: 6, top: 6, width: 32, height: 32, borderRadius: 7, border: 'none', cursor: action.disabled ? 'not-allowed' : 'pointer', background: 'var(--primary-subtle)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {action.loading ? <span className="ms-icon rot" style={{ fontSize: 18 }}>progress_activity</span> : <span className="ms-icon" style={{ fontSize: 18 }}>{action.icon}</span>}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===== Toggle de edição (cadeado lock/unlock) — usado em Produto e Pagamento ===== */
+function EditToggle({ on, onToggle, label }) {
+  return (
+    <label style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderRadius: 10, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface)', border: '1px solid ' + (on ? 'rgba(199,164,68,.4)' : 'var(--border-light)') }}>
+      <span className="ms-icon" style={{ fontSize: 18, color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{on ? 'lock_open' : 'lock'}</span>
+      <span style={{ font: '600 12.5px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{label}</span>
+      <input type="checkbox" checked={on} onChange={onToggle} style={{ width: 0, height: 0, opacity: 0, position: 'absolute' }} />
+      <div style={{ width: 34, height: 18, borderRadius: 999, background: on ? 'var(--primary)' : 'var(--surface-light)', position: 'relative', transition: 'background .2s' }}>
+        <div style={{ position: 'absolute', top: 2, left: on ? 18 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
+      </div>
+    </label>
+  );
+}
+
+/* ===================================================================== */
+/* ===========================  APP  =================================== */
+/* ===================================================================== */
+function App() {
+  const [s, setS] = useState({
+    screen: 'lobby', step: 0, catId: null, product: null,
+    cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
+    razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
+    repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
+    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
+    omie: true, conecta: true,
+    sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
+  });
+  const patch = (o) => setS((prev) => ({ ...prev, ...(typeof o === 'function' ? o(prev) : o) }));
+  const scrollRef = useRef(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' }); }, [s.step, s.screen]);
+
+  // Espelha o endereço da empresa no representante quando "mesmo endereço".
+  useEffect(() => {
+    if (s.repMesmoEndereco) patch((d) => ({ repEndereco: composeEndereco(d) }));
+  }, [s.repMesmoEndereco, s.endereco, s.numero, s.complemento, s.bairro, s.cidade, s.estado]);
+
+  const cat = getCat(s.catId);
+  const colors = cat ? COLORS[cat.color] : COLORS.gold;
+  const product = s.product;
+
+  // ----- Navegação -----
+  const goLobby = () => patch({ screen: 'lobby' });
+  const onCategory = (id) => patch({ screen: 'flow', step: 0, catId: id, product: null });
+  const onProduct = (p) => patch({ product: p, priceEdit: false, unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) });
+  const next = () => patch((d) => ({ step: Math.min(3, d.step + 1) }));
+  const back = () => { if (s.step === 0) patch({ screen: 'lobby' }); else patch((d) => ({ step: d.step - 1 })); };
+  const goStep = (i) => patch({ step: i });
+
+  // ----- Campos -----
+  const onField = (k, v) => {
+    if (k === 'cnpj') v = maskCNPJ(v);
+    else if (k === 'repCpf') v = maskCPF(v);
+    else if (k === 'repTelefone') v = maskPhone(v);
+    else if (k === 'cep') v = maskCEP(v);
+    else if (k === 'estado') v = maskUF(v);
+    const extra = {};
+    if (k === 'cnpj') { extra.cnpjStatus = 'idle'; extra.cnpjErr = ''; }
+    if (k === 'cep') extra.cepStatus = 'idle';
+    patch({ [k]: v, ...extra });
+  };
+
+  // ----- CNPJ (webhook real) -----
+  const validateCnpj = async () => {
+    if (!isCNPJ(s.cnpj) || s.cnpjStatus === 'loading') { if (!isCNPJ(s.cnpj)) patch({ cnpjStatus: 'error', cnpjErr: 'CNPJ inválido' }); return; }
+    patch({ cnpjStatus: 'loading', cnpjErr: '' });
+    try {
+      const r = await fetchCnpj(s.cnpj);
+      patch((d) => ({
+        cnpjStatus: 'done',
+        razaoSocial: r.razaoSocial || d.razaoSocial,
+        inscricaoEstadual: r.inscricaoEstadual || d.inscricaoEstadual,
+        endereco: r.logradouro || d.endereco, numero: r.numero || d.numero, complemento: r.complemento || d.complemento,
+        bairro: r.bairro || d.bairro, cidade: r.cidade || d.cidade, estado: r.estado || d.estado, cep: r.cep || d.cep,
+      }));
+    } catch (e) {
+      // Permite preenchimento manual mesmo se a consulta falhar.
+      patch({ cnpjStatus: 'manual', cnpjErr: 'Não foi possível consultar. Preencha manualmente.' });
+    }
+  };
+
+  // ----- CEP (webhook real) -----
+  const validateCep = async () => {
+    if (!isCEP(s.cep) || s.cepStatus === 'loading') return;
+    patch({ cepStatus: 'loading' });
+    try {
+      const r = await fetchCep(s.cep);
+      patch((d) => ({ cepStatus: 'done', endereco: r.logradouro || d.endereco, complemento: r.complemento || d.complemento, bairro: r.bairro || d.bairro, cidade: r.cidade || d.cidade, estado: r.estado || d.estado, cep: r.cep || d.cep }));
+    } catch (e) { patch({ cepStatus: 'error' }); }
+  };
+
+  // ----- Pagamento (total âncora derivado do valor EDITÁVEL do produto) -----
+  // unitValue = mensalidade (produtos recorrentes) ou valor à vista (eventos).
+  const unitValue = Number(s.unitValue) || 0;
+  const total = product ? (product.recurring ? round2(unitValue * (product.vigencia || 12)) : unitValue) : 0;
+  const setEntradaValor = (n) => patch((d) => ({ entradaValor: Number.isFinite(n) ? n : 0, parcelas: redistributeSchedule(d.parcelas, total, Number.isFinite(n) ? n : 0) }));
+  const setEntradaForma = (v) => patch({ entradaForma: v });
+  const setEntradaData = (v) => patch({ entradaData: v });
+  const setCount = (raw) => patch((d) => {
+    const n = Math.max(1, Math.min(60, Math.round(Number(raw) || 1)));
+    const start = todayISO();
+    const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: addMonthsISO(start, i + 1), forma: 'pix', manual: false });
+    return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) };
+  });
+  const incParcela = () => { if (s.editMode) setCount(s.parcelas.length + 1); };
+  const decParcela = () => { if (s.editMode) setCount(s.parcelas.length - 1); };
+  const setParcelaValor = (idx, n) => patch((d) => { const arr = d.parcelas.map((p, i) => i === idx ? { ...p, valor: Number.isFinite(n) ? n : 0, manual: true } : { ...p }); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
+  const setParcelaData = (idx, iso) => patch((d) => ({ parcelas: d.parcelas.map((p, i) => i === idx ? { ...p, data: iso } : p) }));
+  const setParcelaForma = (idx, forma) => patch((d) => ({ parcelas: d.parcelas.map((p, i) => i === idx ? { ...p, forma } : p) }));
+  const unlockParcela = (idx) => patch((d) => { const arr = d.parcelas.map((p, i) => i === idx ? { ...p, manual: false } : { ...p }); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
+  const resetSchedule = () => patch((d) => { const arr = d.parcelas.map((p) => ({ ...p, manual: false })); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
+  const toggleEdit = () => { if (s.editMode) patch({ editMode: false, ...initPayment(product) }); else patch({ editMode: true }); };
+
+  // ----- Edição do VALOR do produto (mensalidade / valor à vista) -----
+  // Ao alterar o valor, o cronograma volta ao padrão (entrada + 11 parcelas) sobre o novo total.
+  const rebuildDefault = (newTotal) => {
+    const entrada = product.recurring ? round2(newTotal / (product.vigencia || 12)) : round2(newTotal / 12);
+    return { entradaValor: entrada, parcelas: buildSchedule(11, newTotal, entrada, todayISO()), editMode: false };
+  };
+  const setUnitValue = (n) => patch(() => {
+    const val = Number.isFinite(n) ? n : 0;
+    const newTotal = product.recurring ? round2(val * (product.vigencia || 12)) : val;
+    return { unitValue: val, ...rebuildDefault(newTotal) };
+  });
+  const togglePriceEdit = () => patch((d) => {
+    if (d.priceEdit) { // desligar: volta ao valor de tabela do produto
+      const unit = product.recurring ? product.monthly : product.price;
+      return { priceEdit: false, unitValue: unit, ...rebuildDefault(product.price) };
+    }
+    return { priceEdit: true };
+  });
+  const valorTabela = product ? (product.recurring ? product.monthly : product.price) : 0;
+
+  // Conferência da soma
+  const parcelasSum = s.parcelas.reduce((a, p) => a + (Number(p.valor) || 0), 0);
+  const soma = round2((Number(s.entradaValor) || 0) + parcelasSum);
+  const diff = round2(total - soma);
+  const balanced = Math.abs(diff) < 0.01;
+  const parcelasUniformes = s.parcelas.length > 0 && s.parcelas.every((p) => Math.abs((Number(p.valor) || 0) - (Number(s.parcelas[0].valor) || 0)) < 0.005);
+
+  // ----- Gating -----
+  const empresaValid = (
+    isCNPJ(s.cnpj) &&
+    (s.razaoSocial || '').trim().length > 3 &&
+    (s.endereco || '').trim().length > 2 &&
+    (s.numero || '').trim().length > 0 &&
+    (s.bairro || '').trim().length > 1 &&
+    (s.cidade || '').trim().length > 1 &&
+    isUF(s.estado) && isCEP(s.cep) &&
+    (s.repNome || '').trim().length > 3 &&
+    (!(s.repCpf || '').trim() || isCPF(s.repCpf)) &&
+    (s.repMesmoEndereco || (s.repEndereco || '').trim().length > 5) &&
+    isPhone(s.repTelefone) && isEmail(s.repEmail)
+  );
+  const pagamentoValid = (s.omie || s.conecta) && balanced;
+
+  // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
+  const buildPayload = () => {
+    const nowIso = new Date().toISOString();
+    const formas = Array.from(new Set([s.entradaForma].concat(s.parcelas.map((p) => p.forma))));
+    return {
+      origem: 'lobby_conecta_ap',
+      etapa: 'envio_pre_contrato',
+      empresa: {
+        cnpj: s.cnpj || '', cnpj_limpo: onlyDigits(s.cnpj), razao_social: (s.razaoSocial || '').trim(),
+        inscricao_estadual: (s.inscricaoEstadual || '').trim() || null, endereco: composeEndereco(s),
+        logradouro: (s.endereco || '').trim(), numero: (s.numero || '').trim(), complemento: (s.complemento || '').trim() || null,
+        bairro: (s.bairro || '').trim(), cidade: (s.cidade || '').trim(), estado: (s.estado || '').toUpperCase(), cep: s.cep || '',
+      },
+      representante: {
+        nome: (s.repNome || '').trim(), nascimento: s.repNascimento || null, cpf: s.repCpf || '', cpf_limpo: onlyDigits(s.repCpf),
+        endereco: (s.repEndereco || '').trim(), mesmo_endereco_empresa: !!s.repMesmoEndereco,
+        telefone: s.repTelefone || '', telefone_limpo: onlyDigits(s.repTelefone), email: (s.repEmail || '').trim(),
+      },
+      produto: {
+        id: product ? product.id : '', nome: product ? product.name : '',
+        categoria_id: cat ? cat.id : '', categoria: cat ? cat.name : '',
+        valor_mensal: product && product.recurring ? round2(Number(s.unitValue) || 0) : (parcelasUniformes && s.parcelas[0] ? round2(s.parcelas[0].valor) : null),
+        valor_tabela: product ? (product.recurring ? product.monthly : product.price) : null,
+        valor_editado: product ? (round2(Number(s.unitValue) || 0) !== round2(product.recurring ? product.monthly : product.price)) : false,
+        entrada: round2(Number(s.entradaValor) || 0), parcelas: s.parcelas.length,
+        vigencia_meses: product && product.vigencia ? product.vigencia : 12,
+        valor_total: soma, valores_negociados: !!(s.editMode || s.priceEdit),
+        entrada_detalhe: { valor: round2(Number(s.entradaValor) || 0), forma: s.entradaForma, forma_label: paymentLabel(s.entradaForma), data: s.entradaData || null },
+        cronograma: s.parcelas.map((p, i) => ({ numero: i + 1, valor: round2(Number(p.valor) || 0), vencimento: p.data || null, forma: p.forma, forma_label: paymentLabel(p.forma) })),
+      },
+      pagamento: { forma: 'personalizado', formas },
+      destino: { omie: !!s.omie, conecta: !!s.conecta, sistemas: [s.omie ? 'omie' : null, s.conecta ? 'conecta' : null].filter(Boolean) },
+      aceites: { pre_contrato: true, lgpd: true, aceito_em: nowIso },
+      metadata: { user_agent: navigator.userAgent, url: location.href, enviado_em: nowIso, canal: 'lobby_conecta_ap' },
+    };
+  };
+
+  const finalize = async () => {
+    if (!pagamentoValid || s.sendState === 'sending') return;
+    patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
+    try {
+      const response = await sendPreContrato(buildPayload());
+      const r = response || {};
+      const fromApi = r.protocolo || r.protocol || r.id || r.protocolo_id || r.protocoloId;
+      const proto = fromApi ? String(fromApi) : ('CAP-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 899999));
+      patch({ screen: 'success', response: r, protocol: proto, sendState: 'idle' });
+    } catch (e) {
+      patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
+    }
+  };
+
+  const restart = () => patch({
+    screen: 'lobby', step: 0, catId: null, product: null,
+    cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
+    razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
+    repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
+    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
+    omie: true, conecta: true, sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
+  });
+
+  const destinoChips = [s.omie ? 'Omie' : null, s.conecta ? 'Conecta' : null].filter(Boolean);
+  const destinoText = s.omie && s.conecta ? 'Omie e Conecta' : s.omie ? 'Omie' : s.conecta ? 'Conecta' : 'nenhum sistema';
+  const sending = s.sendState === 'sending';
+
+  /* ======================= RENDER HELPERS ======================= */
+
+  const renderStepper = () => (
+    <div style={{ flexShrink: 0, padding: '18px 28px', borderBottom: '1px solid var(--border-light)', background: 'var(--surface-alt)' }}>
+      <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', alignItems: 'center' }}>
+        {STEPS.map((label, i) => {
+          const state = i < s.step ? 'done' : i === s.step ? 'active' : 'todo';
+          const circle = state === 'active'
+            ? { background: 'var(--gradient-primary)', color: '#1A1A18', borderColor: 'transparent', boxShadow: '0 4px 12px rgba(199,164,68,.35)' }
+            : state === 'done' ? { background: 'rgba(199,164,68,.15)', color: 'var(--primary)', borderColor: 'var(--primary)' }
+            : { background: 'var(--surface-light)', color: 'var(--text-muted)', borderColor: 'var(--border-light)' };
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', flex: i === 0 ? '0 0 auto' : 1 }}>
+              {i !== 0 && <div style={{ flex: 1, height: 2, borderRadius: 2, margin: '0 6px 20px', background: i <= s.step ? 'var(--primary)' : 'var(--border-light)' }} />}
+              <button onClick={() => i < s.step && goStep(i)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: i < s.step ? 'pointer' : 'default', minWidth: 88 }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '700 14px var(--font-primary)', border: '1.5px solid', transition: 'all .25s', ...circle }}>
+                  {state === 'done' ? <span className="ms-icon" style={{ fontSize: 19 }}>check</span> : i + 1}
+                </div>
+                <div style={{ font: '600 11.5px var(--font-primary)', letterSpacing: '.03em', whiteSpace: 'nowrap', color: state === 'todo' ? 'var(--text-muted)' : 'var(--text)' }}>{label}</div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const renderLobby = () => (
+    <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 28px' }}>
+      <div className="lobby-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 20, width: '100%', maxWidth: 1040 }}>
+        {CATS.map((c, i) => {
+          const col = COLORS[c.color];
+          const locked = !!c.locked;
+          return (
+            <button key={c.id} className={`cat-card ${locked ? 'locked' : ''}`} style={{ animationDelay: (i * 80) + 'ms' }}
+              onClick={() => { if (!locked) onCategory(c.id); }} disabled={locked} aria-disabled={locked}>
+              {!locked && <div style={{ position: 'absolute', right: -34, bottom: -34, width: 150, height: 150, borderRadius: '50%', opacity: .08, background: col.orb }} />}
+              {!locked && <div style={{ position: 'absolute', top: 0, left: '10%', right: '10%', height: 1, background: 'linear-gradient(90deg,transparent,rgba(199,164,68,.45),transparent)' }} />}
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 22 }}>
+                <div style={{ width: 54, height: 54, borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: locked ? 'var(--surface-light)' : col.iconBg, color: locked ? 'var(--text-muted)' : col.iconFg }}>
+                  <span className="ms-icon" style={{ fontSize: 28 }}>{c.icon}</span>
+                </div>
+                {!locked && <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.04em', color: 'var(--text-muted)', border: '1px solid var(--border-light)', padding: '5px 9px', borderRadius: 7 }}>{c.products.length} produtos</span>}
+              </div>
+              <div style={{ font: '700 20px var(--font-primary)', letterSpacing: '-.01em', color: 'var(--text)', marginBottom: 7 }}>{c.name}</div>
+              <div style={{ font: '400 13.5px/1.55 var(--font-secondary)', color: 'var(--text-secondary)', marginBottom: 20, minHeight: 42 }}>{c.desc}</div>
+              {locked ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, font: '600 12px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                  <span className="ms-icon" style={{ fontSize: 18 }}>lock</span> Em implementação
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, font: '600 12px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--primary)' }}>
+                  Ver produtos <span className="ms-icon" style={{ fontSize: 18 }}>arrow_forward</span>
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const renderProduto = () => (
+    <>
+      <div style={{ marginBottom: 24 }}>
+        <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: colors.iconFg }}>{cat.name}</span>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '6px 0 6px', color: 'var(--text)' }}>Selecione o produto a contratar</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Escolha o item desta categoria que será vendido ao cliente.</p>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {cat.products.map((p) => {
+          const sel = product && product.id === p.id;
+          const effTotal = sel ? total : p.price;
+          const effMonthly = sel && p.recurring ? unitValue : p.monthly;
+          return (
+            <button key={p.id} className={`prod-row ${sel ? 'sel' : ''}`} onClick={() => onProduct(p)}>
+              <div style={{ width: 46, height: 46, borderRadius: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--primary-subtle)', color: 'var(--primary)' }}>
+                <span className="ms-icon" style={{ fontSize: 24 }}>{p.icon}</span>
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ font: '600 16px var(--font-primary)', color: 'var(--text)' }}>{p.name}</span>
+                  {sel && <span className="chip"><span className="ms-icon" style={{ fontSize: 13 }}>check</span>Selecionado</span>}
+                </div>
+                <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 4 }}>{p.desc} · {p.duration}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ font: '700 18px var(--font-primary)', color: 'var(--primary)', letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>{fmt(effTotal)}</div>
+                <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{p.recurring ? `${fmt(effMonthly)}/mês` : 'à vista'}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Editor do valor do produto — varia por evento/negociação */}
+      {product && (
+        <div className="card" style={{ marginTop: 16, padding: '18px 22px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span className="ms-icon" style={{ fontSize: 20, color: 'var(--primary)' }}>sell</span>
+              <div>
+                <div className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>{product.recurring ? 'Valor da mensalidade' : 'Valor do produto'}</div>
+                <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>O valor pode variar por evento/negociação — habilite para ajustar.</div>
+              </div>
+            </div>
+            <EditToggle on={s.priceEdit} onToggle={togglePriceEdit} label="Editar valor" />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 18, marginTop: 16, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 200 }}>
+              <label className="lbl sm">{product.recurring ? 'Mensalidade (R$)' : 'Valor à vista (R$)'}</label>
+              <div style={{ display: 'flex', alignItems: 'center', height: 44, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid ' + (s.priceEdit ? 'rgba(199,164,68,.45)' : 'var(--border-light)'), padding: '0 12px', gap: 6, opacity: s.priceEdit ? 1 : .7 }}>
+                <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+                <MoneyInput className="" value={s.unitValue} onChangeNumber={setUnitValue} disabled={!s.priceEdit} placeholder="0,00" />
+              </div>
+            </div>
+            <div style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)', paddingBottom: 11 }}>
+              {product.recurring
+                ? <>× {product.vigencia || 12} meses = <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong></>
+                : <>Total do contrato = <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong></>}
+            </div>
+          </div>
+          {round2(unitValue) !== round2(valorTabela) && (
+            <div style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6, font: '500 11.5px var(--font-secondary)', color: 'var(--primary)' }}>
+              <span className="ms-icon" style={{ fontSize: 15 }}>edit</span>
+              Valor ajustado · tabela: {fmt(valorTabela)}{product.recurring ? '/mês' : ''}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  const renderEmpresa = () => {
+    const cnpjBtnLabel = s.cnpjStatus === 'loading' ? 'Buscando…' : s.cnpjStatus === 'done' ? 'Revalidar' : 'Validar CNPJ';
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Dados do cliente</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Informe o CNPJ para buscar os dados da empresa automaticamente.</p>
+        </div>
+
+        {/* CNPJ */}
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="sec-title" style={{ marginBottom: 14 }}>Identificação</div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <label className="lbl">CNPJ</label>
+              <input className="inp lg" value={s.cnpj} placeholder="00.000.000/0000-00" inputMode="numeric"
+                onChange={(e) => onField('cnpj', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') validateCnpj(); }} />
+            </div>
+            <button className="btn-prim" onClick={validateCnpj} disabled={s.cnpjStatus === 'loading'} style={{ height: 46 }}>
+              {s.cnpjStatus === 'loading' ? <span className="spin" /> : <span className="ms-icon" style={{ fontSize: 18 }}>search</span>}
+              {cnpjBtnLabel}
+            </button>
+          </div>
+          {s.cnpjStatus === 'done' && (
+            <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: '#4ADE80', background: 'rgba(40,167,69,.12)', border: '1px solid rgba(40,167,69,.3)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>verified</span>Dados encontrados na Receita Federal e preenchidos abaixo.
+            </div>
+          )}
+          {(s.cnpjStatus === 'manual' || s.cnpjStatus === 'error') && (
+            <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>error</span>{s.cnpjErr}
+            </div>
+          )}
+        </div>
+
+        {/* Empresa */}
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="sec-title" style={{ marginBottom: 16 }}>Dados da empresa</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+            <Field span={2} label="Razão social" required value={s.razaoSocial} onChange={(v) => onField('razaoSocial', v)} placeholder="Nome registrado da empresa" />
+            <Field label="Inscrição estadual" optional value={s.inscricaoEstadual} onChange={(v) => onField('inscricaoEstadual', v)} placeholder="Número ou ISENTO" />
+            <Field label="CEP" required value={s.cep} onChange={(v) => onField('cep', v)} mask={maskCEP} placeholder="00000-000" inputMode="numeric"
+              action={{ icon: 'search', label: 'Buscar endereço pelo CEP', onClick: validateCep, loading: s.cepStatus === 'loading', disabled: !isCEP(s.cep) || s.cepStatus === 'loading' }} />
+            <Field span={2} label="Endereço (logradouro)" required value={s.endereco} onChange={(v) => onField('endereco', v)} placeholder="Rua, avenida, etc." />
+            <Field label="Número" required value={s.numero} onChange={(v) => onField('numero', v)} placeholder="123" inputMode="numeric" />
+            <Field label="Complemento" optional value={s.complemento} onChange={(v) => onField('complemento', v)} placeholder="Sala, andar…" />
+            <Field label="Bairro" required value={s.bairro} onChange={(v) => onField('bairro', v)} placeholder="Bairro" />
+            <Field label="Cidade" required value={s.cidade} onChange={(v) => onField('cidade', v)} placeholder="Cidade" />
+            <Field label="Estado (UF)" required value={s.estado} onChange={(v) => onField('estado', v)} mask={maskUF} placeholder="SP" />
+          </div>
+        </div>
+
+        {/* Representante */}
+        <div className="card">
+          <div className="sec-title" style={{ marginBottom: 16 }}>Representante</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+            <Field span={2} label="Nome completo" required value={s.repNome} onChange={(v) => onField('repNome', v)} placeholder="Nome do representante" />
+            <Field label="Data de nascimento" type="date" value={s.repNascimento} onChange={(v) => onField('repNascimento', v)} />
+            <Field label="CPF" optional value={s.repCpf} onChange={(v) => onField('repCpf', v)} mask={maskCPF} placeholder="000.000.000-00" inputMode="numeric" />
+            <Field label="E-mail" required type="email" value={s.repEmail} onChange={(v) => onField('repEmail', v)} placeholder="email@empresa.com.br" />
+            <Field label="Telefone" required value={s.repTelefone} onChange={(v) => onField('repTelefone', v)} mask={maskPhone} placeholder="(00) 00000-0000" inputMode="tel" />
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, cursor: 'pointer', font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            <input type="checkbox" checked={s.repMesmoEndereco} onChange={(e) => patch({ repMesmoEndereco: e.target.checked })} style={{ width: 18, height: 18, accentColor: 'var(--primary)', cursor: 'pointer' }} />
+            Endereço do representante é o mesmo da empresa
+          </label>
+          {!s.repMesmoEndereco && (
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border-light)' }}>
+              <Field label="Endereço do representante" required value={s.repEndereco} onChange={(v) => onField('repEndereco', v)} placeholder="Rua, número, bairro, cidade — UF" />
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  const renderPagamento = () => {
+    const notEdit = !s.editMode;
+    return (
+      <>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
+          <div>
+            <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Configuração de pagamento</h2>
+            <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada + 11 parcelas iguais. Habilite a edição para personalizar.</p>
+          </div>
+          <EditToggle on={s.editMode} onToggle={toggleEdit} label="Editar valores" />
+        </div>
+
+        {/* Entrada */}
+        <div className="card" style={{ padding: '20px 22px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>south_east</span>
+            <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Entrada</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: 12 }}>
+            <div>
+              <label className="lbl sm">Valor</label>
+              <div style={{ display: 'flex', alignItems: 'center', height: 44, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', padding: '0 12px', gap: 6, opacity: s.editMode ? 1 : .7 }}>
+                <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+                <MoneyInput className="" value={s.entradaValor} onChangeNumber={setEntradaValor} disabled={notEdit} placeholder="0,00" />
+              </div>
+            </div>
+            <div>
+              <label className="lbl sm">Forma de pagamento</label>
+              <select className="inp" value={s.entradaForma} onChange={(e) => setEntradaForma(e.target.value)}>
+                {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="lbl sm">Data de pagamento</label>
+              <input className="inp" type="date" value={s.entradaData} onChange={(e) => setEntradaData(e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        {/* Parcelas */}
+        <div className="card" style={{ padding: '20px 22px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>event_repeat</span>
+              <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Parcelas</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ font: '500 12px var(--font-secondary)', color: 'var(--text-muted)' }}>Quantidade</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', borderRadius: 9, padding: 3 }}>
+                <button onClick={decParcela} disabled={notEdit} style={{ width: 30, height: 30, borderRadius: 7, border: 'none', background: 'transparent', color: s.editMode ? 'var(--primary)' : 'var(--text-muted)', cursor: s.editMode ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span className="ms-icon" style={{ fontSize: 18 }}>remove</span></button>
+                <span style={{ minWidth: 30, textAlign: 'center', font: '700 15px var(--font-primary)', color: 'var(--text)' }}>{s.parcelas.length}</span>
+                <button onClick={incParcela} disabled={notEdit} style={{ width: 30, height: 30, borderRadius: 7, border: 'none', background: 'transparent', color: s.editMode ? 'var(--primary)' : 'var(--text-muted)', cursor: s.editMode ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span className="ms-icon" style={{ fontSize: 18 }}>add</span></button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '46px 1.2fr 1fr 1fr 40px', gap: 10, padding: '0 4px 8px', font: '600 10.5px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-light)' }}>
+            <div>Nº</div><div>Valor</div><div>Forma</div><div>Vencimento</div><div></div>
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto', marginTop: 6 }}>
+            {s.parcelas.map((p, i) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '46px 1.2fr 1fr 1fr 40px', gap: 10, alignItems: 'center', padding: '6px 4px', borderBottom: '1px solid rgba(255,255,255,.04)' }}>
+                <div style={{ font: '700 13px var(--font-primary)', color: 'var(--primary)', textAlign: 'center' }}>{i + 1}</div>
+                <div style={{ display: 'flex', alignItems: 'center', height: 40, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid ' + (p.manual ? 'rgba(199,164,68,.45)' : 'var(--border-light)'), padding: '0 10px', gap: 5, opacity: s.editMode ? 1 : .7 }}>
+                  <span style={{ font: "600 12px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+                  <MoneyInput className="" value={p.valor} onChangeNumber={(n) => setParcelaValor(i, n)} disabled={notEdit} placeholder="0,00" />
+                </div>
+                <select className="inp" style={{ height: 40 }} value={p.forma} onChange={(e) => setParcelaForma(i, e.target.value)} disabled={notEdit}>
+                  {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+                <input className="inp" style={{ height: 40 }} type="date" value={p.data || ''} onChange={(e) => setParcelaData(i, e.target.value)} disabled={notEdit} />
+                <button onClick={() => p.manual && unlockParcela(i)} disabled={notEdit || !p.manual} title={p.manual ? 'Valor fixado — clique para voltar ao automático' : 'Valor automático'} style={{ width: 34, height: 34, borderRadius: 8, border: 'none', background: 'transparent', color: p.manual ? 'var(--primary)' : 'var(--text-muted)', cursor: (notEdit || !p.manual) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span className="ms-icon" style={{ fontSize: 18 }}>{p.manual ? 'lock' : 'auto_mode'}</span>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* balance */}
+          <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: balanced ? 'rgba(40,167,69,.1)' : 'rgba(255,193,7,.1)', border: '1px solid ' + (balanced ? 'rgba(40,167,69,.3)' : 'rgba(255,193,7,.35)') }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '500 12.5px var(--font-secondary)', color: balanced ? '#4ADE80' : 'var(--warning)' }}>
+              <span className="ms-icon" style={{ fontSize: 17 }}>{balanced ? 'task_alt' : 'error'}</span>
+              {balanced ? 'Valores conferem com o total' : ('Diferença de ' + fmt(Math.abs(diff)) + ' em relação ao total')}
+              {!balanced && s.editMode && <button className="linkbtn" style={{ marginLeft: 8 }} onClick={resetSchedule}>Redistribuir</button>}
+            </div>
+            <div style={{ font: "700 14px 'Roboto'", color: balanced ? '#4ADE80' : 'var(--warning)' }}>{fmt(soma)}</div>
+          </div>
+        </div>
+
+        {/* Destino */}
+        <div className="card" style={{ padding: '20px 22px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>hub</span>
+            <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Destino do cadastro</span>
+          </div>
+          <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 14px' }}>Selecione em quais sistemas este cliente será cadastrado.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {[{ k: 'omie', t: 'Omie', d: 'ERP financeiro e fiscal' }, { k: 'conecta', t: 'Conecta', d: 'Plataforma de gestão' }].map((o) => (
+              <label key={o.k} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 16, borderRadius: 12, cursor: 'pointer', background: s[o.k] ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (s[o.k] ? 'rgba(199,164,68,.4)' : 'var(--border-light)') }}>
+                <input type="checkbox" checked={s[o.k]} onChange={(e) => patch({ [o.k]: e.target.checked })} style={{ width: 20, height: 20, accentColor: 'var(--primary)', cursor: 'pointer' }} />
+                <div>
+                  <div style={{ font: '600 15px var(--font-primary)', color: 'var(--text)' }}>{o.t}</div>
+                  <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)' }}>{o.d}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const renderResumo = () => {
+    const parcelasLabel = s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Confirme o pedido</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Revise as informações antes de finalizar o cadastro.</p>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Produto</span><button className="linkbtn" onClick={() => goStep(0)}>Editar</button></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div><div style={{ font: '600 16px var(--font-primary)', color: 'var(--text)' }}>{product.name}</div><div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{cat.name} · {product.duration}</div></div>
+              <div style={{ font: '700 17px var(--font-primary)', color: 'var(--primary)' }}>{fmt(total)}</div>
+            </div>
+          </div>
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Empresa & Representante</span><button className="linkbtn" onClick={() => goStep(1)}>Editar</button></div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
+              {[['Razão social', s.razaoSocial], ['CNPJ', s.cnpj], ['Representante', s.repNome || '—'], ['Contato', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]].map(([k, v]) => (
+                <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
+              ))}
+            </div>
+          </div>
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Pagamento</span><button className="linkbtn" onClick={() => goStep(2)}>Editar</button></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}><span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Entrada · {paymentLabel(s.entradaForma)}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{fmt(s.entradaValor)}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}><span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>{parcelasLabel}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{fmt(parcelasSum)}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0 0' }}><span style={{ font: '600 14px var(--font-primary)', color: 'var(--text)' }}>Total</span><span style={{ font: '700 16px var(--font-primary)', color: 'var(--primary)' }}>{fmt(soma)}</span></div>
+          </div>
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span className="sec-title" style={{ fontSize: 12 }}>Destino do cadastro</span><div style={{ display: 'flex', gap: 8 }}>{destinoChips.map((c) => <span key={c} className="chip"><span className="ms-icon" style={{ fontSize: 13 }}>check</span>{c}</span>)}</div></div>
+          </div>
+
+          {s.sendState === 'error' && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(220,53,69,.1)', border: '1px solid rgba(220,53,69,.35)' }} role="alert">
+              <span className="ms-icon" style={{ fontSize: 20, color: 'var(--danger)' }}>error</span>
+              <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text)', display: 'block' }}>{s.sendErrHandled ? 'Não foi possível enviar.' : 'Não conseguimos enviar.'}</strong>
+                {s.sendErrHandled ? s.sendErr : `${s.sendErr} Verifique a conexão e tente novamente.`}
+              </div>
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  const renderSummary = () => (
+    <div className="sticky">
+      <div style={{ background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', borderRadius: 16, overflow: 'hidden', position: 'relative' }}>
+        <div style={{ position: 'absolute', top: 0, left: '10%', right: '10%', height: 1, background: 'linear-gradient(90deg,transparent,rgba(199,164,68,.45),transparent)' }} />
+        <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-light)' }}>
+          <div style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--primary)' }}>Resumo do pedido</div>
+        </div>
+        <div style={{ padding: 20 }}>
+          {product ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{product.icon}</span></div>
+                <div style={{ minWidth: 0 }}><div style={{ font: '600 14.5px var(--font-primary)', color: 'var(--text)', lineHeight: 1.3 }}>{product.name}</div><div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3 }}>{cat.name}</div></div>
+              </div>
+              {[['Valor total', fmt(soma)], ['Entrada', fmt(s.entradaValor)], ['Parcelas', s.parcelas.length + (parcelasUniformes ? '× ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0) : ' (variadas)')]].map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{v}</span></div>
+              ))}
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+                <div style={{ font: '400 11px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Destino</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{destinoChips.length ? destinoChips.map((c) => <span key={c} className="chip"><span className="ms-icon" style={{ fontSize: 13 }}>check</span>{c}</span>) : <span style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)' }}>—</span>}</div>
+              </div>
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '24px 8px' }}>
+              <span className="ms-icon" style={{ fontSize: 38, color: 'var(--text-muted)', opacity: .5 }}>shopping_bag</span>
+              <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 10 }}>Selecione um produto para montar o pedido.</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ----- Botão primário por etapa -----
+  let primaryLabel = 'Continuar', primaryIcon = 'arrow_forward', primaryAction = next, enabled = true;
+  if (s.step === 0) enabled = !!product;
+  else if (s.step === 1) enabled = empresaValid;
+  else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; }
+  else { primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && !sending; }
+
+  /* ======================= RENDER ======================= */
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--background)', color: 'var(--text)' }}>
+      {/* Sem header em nenhuma tela — navegação pelo stepper e pelos botões de Voltar. */}
+
+      {/* STEPPER */}
+      {s.screen === 'flow' && renderStepper()}
+
+      {/* SCROLL AREA */}
+      <div className="scrollarea" ref={scrollRef}>
+        {s.screen === 'lobby' && renderLobby()}
+
+        {s.screen === 'flow' && (
+          <div className="flow-grid">
+            <div style={{ minWidth: 0 }}>
+              {s.step === 0 && renderProduto()}
+              {s.step === 1 && renderEmpresa()}
+              {s.step === 2 && renderPagamento()}
+              {s.step === 3 && renderResumo()}
+
+              {/* NAV */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 26 }}>
+                <button className="btn-ghost" onClick={back} disabled={sending}><span className="ms-icon" style={{ fontSize: 18 }}>arrow_back</span>{s.step === 0 ? 'Voltar ao lobby' : 'Voltar'}</button>
+                <button className="btn-prim" onClick={primaryAction} disabled={!enabled}>
+                  {sending && s.step === 3 ? <span className="spin" /> : null}
+                  {primaryLabel}{!(sending && s.step === 3) && <span className="ms-icon" style={{ fontSize: 18 }}>{primaryIcon}</span>}
+                </button>
+              </div>
+            </div>
+            {renderSummary()}
+          </div>
+        )}
+
+        {s.screen === 'success' && (
+          <div style={{ maxWidth: 600, margin: '0 auto', padding: '64px 28px', textAlign: 'center' }}>
+            <div style={{ width: 88, height: 88, borderRadius: '50%', margin: '0 auto 28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(40,167,69,.12)', border: '1.5px solid rgba(40,167,69,.4)', animation: 'popIn .4s both' }}>
+              <span className="ms-icon" style={{ fontSize: 48, color: '#4ADE80' }}>check_circle</span>
+            </div>
+            <h1 style={{ font: '700 30px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 10px', color: 'var(--text)' }}>Cadastro enviado!</h1>
+            <p style={{ font: '400 15px/1.6 var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 28px' }}>
+              {product ? product.name : ''} contratado para <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
+              O cliente foi enviado para {destinoText}.
+            </p>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '12px 20px', borderRadius: 12, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', marginBottom: 32 }}>
+              <span style={{ font: '400 12px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Protocolo</span>
+              <span style={{ font: "700 15px 'Roboto'", color: 'var(--primary)', letterSpacing: '.04em' }}>{s.protocol}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button className="btn-prim" onClick={restart}>Novo cadastro<span className="ms-icon" style={{ fontSize: 18 }}>add</span></button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

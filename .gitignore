@@ -1,0 +1,11 @@
+# Artefato de thumbnail gerado pela ferramenta de design
+.thumbnail
+
+# Sistema operacional / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+
+# Dependências (não usadas em runtime — a página roda via CDN)
+node_modules/

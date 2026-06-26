@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/conecta-ap-design-system-75454559-9fb2-40ce-825c-58e2f0a9f7dd/colors_and_type.css">
+<link rel="stylesheet" href="_ds/conecta-ap-design-system-75454559-9fb2-40ce-825c-58e2f0a9f7dd/preview/_shared.css">
+<link rel="stylesheet" href="_ds/conecta-ap-design-system-75454559-9fb2-40ce-825c-58e2f0a9f7dd/ui_kits/conecta-ap/tokens.css">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
+<script src="_ds/conecta-ap-design-system-75454559-9fb2-40ce-825c-58e2f0a9f7dd/_ds_bundle.js"></script>
+<style>
+  html, body { overflow: hidden; height: 100%; }
+  input, select, button { font-family: 'Roboto', sans-serif; }
+  input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7) sepia(1) saturate(3) hue-rotate(5deg); cursor: pointer; }
+  @keyframes slideUpFade { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes popIn { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: scale(1); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.8s linear infinite; }
+</style>
+</helmet>
+<div style="height:100vh; display:flex; flex-direction:column; background:var(--background); color:var(--text); font-family:var(--font-secondary);">
+
+  <!-- ===== TOP BAR ===== -->
+  <header style="height:64px; flex-shrink:0; display:flex; align-items:center; gap:18px; padding:0 28px; border-bottom:1px solid var(--border); background:rgba(18,18,18,0.95); backdrop-filter:blur(20px); z-index:30;">
+    <img src="assets/logo-sejaap.svg" alt="SEJA AP" style="height:22px; width:auto;" />
+    <div style="width:1px; height:24px; background:var(--border-light);"></div>
+    <div style="font:600 14px/1 var(--font-primary); letter-spacing:-0.01em; color:var(--text);">Conecta AP</div>
+    <div style="font:500 11px/1 var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--primary); border:1px solid rgba(199,164,68,0.3); background:var(--primary-subtle); padding:5px 10px; border-radius:6px;">Nova venda</div>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+      <button onClick="{{ goLobby }}" style="display:flex; align-items:center; gap:7px; height:38px; padding:0 14px; border-radius:9px; border:1px solid var(--border-light); background:transparent; color:var(--text-secondary); font:600 12.5px var(--font-primary); cursor:pointer;" style-hover="border-color:var(--primary); color:var(--primary);">
+        <span class="ms-icon" style="font-size:18px;">grid_view</span>Lobby
+      </button>
+      <div style="display:flex; align-items:center; gap:10px; padding:5px 12px 5px 5px; border-radius:16px; border:1px solid var(--border-light);">
+        <div style="width:30px; height:30px; border-radius:50%; background:var(--gradient-primary); color:#1A1A18; font:700 11px var(--font-primary); display:flex; align-items:center; justify-content:center;">GA</div>
+        <div style="display:flex; flex-direction:column; line-height:1.15;">
+          <span style="font:600 12px var(--font-primary); color:var(--text);">Gabriel Alvarez</span>
+          <span style="font:400 10px var(--font-secondary); color:var(--text-muted);">Consultor SEJA AP</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== STEPPER (flow only) ===== -->
+  <sc-if value="{{ isFlow }}" hint-placeholder-val="{{ true }}">
+    <div style="flex-shrink:0; padding:18px 28px; border-bottom:1px solid var(--border-light); background:var(--surface-alt);">
+      <div style="max-width:760px; margin:0 auto; display:flex; align-items:center;">
+        <sc-for list="{{ stepper }}" as="s" hint-placeholder-count="4">
+          <div style="display:flex; align-items:center; flex:{{ s.flex }};">
+            <sc-if value="{{ s.showLine }}" hint-placeholder-val="{{ true }}">
+              <div style="flex:1; height:2px; border-radius:2px; margin:0 6px 20px; background:{{ s.lineColor }};"></div>
+            </sc-if>
+            <button onClick="{{ s.onClick }}" style="display:flex; flex-direction:column; align-items:center; gap:8px; background:none; border:none; cursor:{{ s.cursor }}; min-width:88px;">
+              <div style="width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font:700 14px var(--font-primary); border:1.5px solid; transition:all 250ms cubic-bezier(0.4,0,0.2,1); {{ s.circleStyle }}">{{ s.circleContent }}</div>
+              <div style="font:600 11.5px var(--font-primary); letter-spacing:0.03em; white-space:nowrap; color:{{ s.labelColor }};">{{ s.label }}</div>
+            </button>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ===== SCROLL AREA ===== -->
+  <div style="flex:1; overflow-y:auto;">
+
+    <!-- ========== LOBBY ========== -->
+    <sc-if value="{{ isLobby }}" hint-placeholder-val="{{ true }}">
+      <div style="max-width:1140px; margin:0 auto; padding:56px 28px 64px;">
+        <div style="font:600 12px var(--font-primary); letter-spacing:0.14em; text-transform:uppercase; color:var(--primary); margin-bottom:14px;">Sistema de Evolução Empresarial</div>
+        <h1 style="font:700 clamp(28px,3.4vw,42px)/1.1 var(--font-primary); letter-spacing:-0.025em; margin:0 0 12px; color:var(--text);">{{ greeting }}, Gabriel.</h1>
+        <p style="font:400 16px/1.6 var(--font-secondary); color:var(--text-secondary); margin:0 0 40px; max-width:560px;">Selecione uma categoria de produto para iniciar um novo cadastro e contratação.</p>
+
+        <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:20px;">
+          <sc-for list="{{ categories }}" as="cat" hint-placeholder-count="4">
+            <button onClick="{{ onCategory }}" data-id="{{ cat.id }}" style="position:relative; overflow:hidden; text-align:left; cursor:pointer; padding:26px; border-radius:16px; background:var(--surface-elevated); border:1px solid var(--border-light); transition:transform 280ms cubic-bezier(0.4,0,0.2,1), border-color 280ms, box-shadow 280ms;" style-hover="transform:translateY(-5px); border-color:rgba(199,164,68,0.5); box-shadow:var(--elevation-3);">
+              <div style="position:absolute; right:-34px; bottom:-34px; width:150px; height:150px; border-radius:50%; opacity:0.08; background:{{ cat.orb }};"></div>
+              <div style="position:absolute; top:0; left:10%; right:10%; height:1px; background:linear-gradient(90deg,transparent,rgba(199,164,68,0.45),transparent);"></div>
+              <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:22px;">
+                <div style="width:54px; height:54px; border-radius:16px; display:flex; align-items:center; justify-content:center; background:{{ cat.iconBg }}; color:{{ cat.iconFg }};">
+                  <span class="ms-icon" style="font-size:28px;">{{ cat.icon }}</span>
+                </div>
+                <span style="font:600 11px var(--font-primary); letter-spacing:0.04em; color:var(--text-muted); border:1px solid var(--border-light); padding:5px 9px; border-radius:7px;">{{ cat.countLabel }}</span>
+              </div>
+              <div style="font:700 20px var(--font-primary); letter-spacing:-0.01em; color:var(--text); margin-bottom:7px;">{{ cat.name }}</div>
+              <div style="font:400 13.5px/1.55 var(--font-secondary); color:var(--text-secondary); margin-bottom:20px; min-height:42px;">{{ cat.desc }}</div>
+              <div style="display:flex; align-items:center; gap:6px; font:600 12px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--primary);">
+                Ver produtos <span class="ms-icon" style="font-size:18px;">arrow_forward</span>
+              </div>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ========== FLOW ========== -->
+    <sc-if value="{{ isFlow }}" hint-placeholder-val="{{ true }}">
+      <div style="max-width:1240px; margin:0 auto; padding:32px 28px 48px; display:grid; grid-template-columns:minmax(0,1fr) 372px; gap:28px; align-items:start;">
+
+        <!-- ---- MAIN COLUMN ---- -->
+        <div style="min-width:0;">
+
+          <!-- STEP: PRODUTO -->
+          <sc-if value="{{ stepProduto }}" hint-placeholder-val="{{ true }}">
+            <div style="margin-bottom:24px;">
+              <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+                <span style="font:600 11px var(--font-primary); letter-spacing:0.1em; text-transform:uppercase; color:{{ category.iconFg }};">{{ category.name }}</span>
+              </div>
+              <h2 style="font:700 26px var(--font-primary); letter-spacing:-0.02em; margin:0 0 6px; color:var(--text);">Selecione o produto a contratar</h2>
+              <p style="font:400 14px var(--font-secondary); color:var(--text-muted); margin:0;">Escolha o item desta categoria que será vendido ao cliente.</p>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <sc-for list="{{ currentProducts }}" as="p" hint-placeholder-count="3">
+                <button onClick="{{ onProduct }}" data-id="{{ p.id }}" style="text-align:left; cursor:pointer; display:grid; grid-template-columns:auto 1fr auto; gap:18px; align-items:center; padding:20px 22px; border-radius:14px; background:var(--surface-elevated); border:1.5px solid {{ p.borderColor }}; transition:border-color 220ms, transform 220ms, box-shadow 220ms;" style-hover="transform:translateY(-2px); box-shadow:var(--elevation-2);">
+                  <div style="width:46px; height:46px; border-radius:13px; display:flex; align-items:center; justify-content:center; background:var(--primary-subtle); color:var(--primary);">
+                    <span class="ms-icon" style="font-size:24px;">{{ p.icon }}</span>
+                  </div>
+                  <div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                      <span style="font:600 16px var(--font-primary); color:var(--text);">{{ p.name }}</span>
+                      <sc-if value="{{ p.selected }}" hint-placeholder-val="{{ false }}">
+                        <span style="display:inline-flex; align-items:center; gap:4px; font:600 10.5px var(--font-primary); letter-spacing:0.04em; color:var(--primary); background:var(--primary-subtle); border:1px solid rgba(199,164,68,0.35); padding:3px 8px; border-radius:6px;"><span class="ms-icon" style="font-size:13px;">check</span>Selecionado</span>
+                      </sc-if>
+                    </div>
+                    <div style="font:400 13px var(--font-secondary); color:var(--text-muted); margin-top:4px;">{{ p.desc }} · {{ p.duration }}</div>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="font:700 18px var(--font-primary); color:var(--primary); letter-spacing:-0.01em; white-space:nowrap;">{{ p.priceFmt }}</div>
+                    <div style="font:400 11px var(--font-secondary); color:var(--text-muted); margin-top:2px;">à vista</div>
+                  </div>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <!-- STEP: EMPRESA -->
+          <sc-if value="{{ stepEmpresa }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-bottom:22px;">
+              <h2 style="font:700 26px var(--font-primary); letter-spacing:-0.02em; margin:0 0 6px; color:var(--text);">Dados do cliente</h2>
+              <p style="font:400 14px var(--font-secondary); color:var(--text-muted); margin:0;">Informe o CNPJ para buscar os dados da empresa automaticamente.</p>
+            </div>
+
+            <!-- CNPJ + webhook -->
+            <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:22px; margin-bottom:18px;">
+              <div style="font:600 13px var(--font-primary); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-secondary); margin-bottom:14px;">Identificação</div>
+              <div style="display:flex; gap:12px; align-items:flex-end;">
+                <div style="flex:1;">
+                  <label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:7px;">CNPJ</label>
+                  <input value="{{ cnpj }}" data-field="cnpj" onChange="{{ onField }}" placeholder="00.000.000/0000-00" style="width:100%; height:46px; padding:0 14px; border-radius:9px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:500 15px 'Roboto'; outline:none; letter-spacing:0.02em;" />
+                </div>
+                <button onClick="{{ validateCnpj }}" disabled="{{ cnpjLoading }}" style="height:46px; padding:0 22px; border-radius:9px; border:none; cursor:pointer; background:var(--gradient-primary); color:#1A1A18; font:700 13px var(--font-primary); letter-spacing:0.04em; display:flex; align-items:center; gap:8px; box-shadow:0 4px 14px rgba(199,164,68,0.3);">
+                  <span class="ms-icon {{ cnpjSpin }}" style="font-size:18px;">{{ cnpjIcon }}</span>{{ cnpjBtnLabel }}
+                </button>
+              </div>
+              <sc-if value="{{ cnpjDone }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:14px; display:inline-flex; align-items:center; gap:7px; font:500 12.5px var(--font-secondary); color:#4ADE80; background:rgba(40,167,69,0.12); border:1px solid rgba(40,167,69,0.3); padding:7px 12px; border-radius:8px;">
+                  <span class="ms-icon" style="font-size:16px;">verified</span>Dados encontrados na Receita Federal e preenchidos abaixo.
+                </div>
+              </sc-if>
+            </div>
+
+            <!-- Empresa data (revealed) -->
+            <sc-if value="{{ cnpjDone }}" hint-placeholder-val="{{ false }}">
+              <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:22px; margin-bottom:18px;">
+                <div style="font:600 13px var(--font-primary); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-secondary); margin-bottom:16px;">Dados da empresa</div>
+                <div style="display:grid; grid-template-columns:2fr 1fr; gap:14px;">
+                  <div style="grid-column:span 2;"><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Razão social</label><input value="{{ razaoSocial }}" data-field="razaoSocial" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Inscrição estadual</label><input value="{{ inscricaoEstadual }}" data-field="inscricaoEstadual" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">CEP</label><input value="{{ cep }}" data-field="cep" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div style="grid-column:span 2;"><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Endereço</label><input value="{{ endereco }}" data-field="endereco" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Número</label><input value="{{ numero }}" data-field="numero" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Complemento</label><input value="{{ complemento }}" data-field="complemento" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Bairro</label><input value="{{ bairro }}" data-field="bairro" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Cidade</label><input value="{{ cidade }}" data-field="cidade" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Estado</label><input value="{{ estado }}" data-field="estado" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                </div>
+              </div>
+
+              <!-- Representante -->
+              <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:22px;">
+                <div style="font:600 13px var(--font-primary); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-secondary); margin-bottom:16px;">Representante</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;">
+                  <div style="grid-column:span 2;"><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Nome completo</label><input value="{{ repNome }}" data-field="repNome" onChange="{{ onField }}" placeholder="Nome do representante" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Data de nascimento</label><input type="date" value="{{ repNascimento }}" data-field="repNascimento" onChange="{{ onField }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">CPF</label><input value="{{ repCpf }}" data-field="repCpf" onChange="{{ onField }}" placeholder="000.000.000-00" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">E-mail</label><input value="{{ repEmail }}" data-field="repEmail" onChange="{{ onField }}" placeholder="email@empresa.com.br" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                  <div><label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Telefone</label><input value="{{ repTelefone }}" data-field="repTelefone" onChange="{{ onField }}" placeholder="(00) 00000-0000" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" /></div>
+                </div>
+                <label style="display:flex; align-items:center; gap:10px; margin-top:16px; cursor:pointer; font:400 13px var(--font-secondary); color:var(--text-secondary);">
+                  <input type="checkbox" checked="{{ repMesmoEndereco }}" data-field="repMesmoEndereco" onChange="{{ onToggle }}" style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;" />
+                  Endereço do representante é o mesmo da empresa
+                </label>
+                <sc-if value="{{ repEnderecoDiff }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border-light);">
+                    <label style="display:block; font:500 12px var(--font-primary); color:var(--text-secondary); margin-bottom:6px;">Endereço do representante</label>
+                    <input value="{{ repEndereco }}" data-field="repEndereco" onChange="{{ onField }}" placeholder="Rua, número, bairro, cidade — UF" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" />
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </sc-if>
+
+          <!-- STEP: PAGAMENTO -->
+          <sc-if value="{{ stepPagamento }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:22px;">
+              <div>
+                <h2 style="font:700 26px var(--font-primary); letter-spacing:-0.02em; margin:0 0 6px; color:var(--text);">Configuração de pagamento</h2>
+                <p style="font:400 14px var(--font-secondary); color:var(--text-muted); margin:0;">Padrão: entrada + 11 parcelas iguais. Habilite a edição para personalizar.</p>
+              </div>
+              <label style="flex-shrink:0; display:flex; align-items:center; gap:10px; padding:9px 14px; border-radius:10px; cursor:pointer; background:{{ editBg }}; border:1px solid {{ editBorder }}; transition:all 200ms;">
+                <span class="ms-icon" style="font-size:18px; color:{{ editFg }};">{{ editIcon }}</span>
+                <span style="font:600 12.5px var(--font-primary); color:{{ editFg }};">Editar valores</span>
+                <input type="checkbox" checked="{{ editMode }}" onChange="{{ toggleEdit }}" style="width:0; height:0; opacity:0; position:absolute;" />
+                <div style="width:34px; height:18px; border-radius:999px; background:{{ editTrack }}; position:relative; transition:background 200ms;">
+                  <div style="position:absolute; top:2px; left:{{ editKnob }}; width:14px; height:14px; border-radius:50%; background:#fff; transition:left 200ms;"></div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Entrada -->
+            <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:20px 22px; margin-bottom:16px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+                <span class="ms-icon" style="font-size:18px; color:var(--primary);">south_east</span>
+                <span style="font:600 13px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--text-secondary);">Entrada</span>
+              </div>
+              <div style="display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:12px;">
+                <div>
+                  <label style="display:block; font:500 11px var(--font-primary); color:var(--text-muted); margin-bottom:6px;">Valor</label>
+                  <div style="display:flex; align-items:center; height:44px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); padding:0 12px; gap:6px; opacity:{{ entradaOpacity }};">
+                    <span style="font:600 13px 'Roboto'; color:var(--text-muted);">R$</span>
+                    <input type="number" step="0.01" value="{{ entradaValor }}" onChange="{{ onEntradaValor }}" disabled="{{ notEdit }}" style="flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--text); font:600 15px 'Roboto';" />
+                  </div>
+                </div>
+                <div>
+                  <label style="display:block; font:500 11px var(--font-primary); color:var(--text-muted); margin-bottom:6px;">Forma de pagamento</label>
+                  <select value="{{ entradaForma }}" onChange="{{ onEntradaForma }}" style="width:100%; height:44px; padding:0 10px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none; cursor:pointer;">
+                    <option style="background:#1E1E1C;">Pix</option>
+                    <option style="background:#1E1E1C;">Boleto</option>
+                    <option style="background:#1E1E1C;">Crédito</option>
+                    <option style="background:#1E1E1C;">Débito</option>
+                    <option style="background:#1E1E1C;">Recorrência</option>
+                    <option style="background:#1E1E1C;">Permuta</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="display:block; font:500 11px var(--font-primary); color:var(--text-muted); margin-bottom:6px;">Data de pagamento</label>
+                  <input type="date" value="{{ entradaData }}" onChange="{{ onEntradaData }}" style="width:100%; height:44px; padding:0 12px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 14px 'Roboto'; outline:none;" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Parcelas -->
+            <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:20px 22px; margin-bottom:16px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="ms-icon" style="font-size:18px; color:var(--primary);">event_repeat</span>
+                  <span style="font:600 13px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--text-secondary);">Parcelas</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <span style="font:500 12px var(--font-secondary); color:var(--text-muted);">Quantidade</span>
+                  <div style="display:flex; align-items:center; gap:2px; background:var(--surface-elevated); border:1px solid var(--border-light); border-radius:9px; padding:3px;">
+                    <button onClick="{{ decParcela }}" disabled="{{ notEdit }}" style="width:30px; height:30px; border-radius:7px; border:none; background:transparent; color:{{ stepperFg }}; font-size:18px; cursor:{{ stepperCursor }}; display:flex; align-items:center; justify-content:center;"><span class="ms-icon" style="font-size:18px;">remove</span></button>
+                    <span style="min-width:30px; text-align:center; font:700 15px var(--font-primary); color:var(--text);">{{ numParcelas }}</span>
+                    <button onClick="{{ incParcela }}" disabled="{{ notEdit }}" style="width:30px; height:30px; border-radius:7px; border:none; background:transparent; color:{{ stepperFg }}; font-size:18px; cursor:{{ stepperCursor }}; display:flex; align-items:center; justify-content:center;"><span class="ms-icon" style="font-size:18px;">add</span></button>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:grid; grid-template-columns:54px 1.2fr 1fr 1fr; gap:10px; padding:0 4px 8px; font:600 10.5px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--text-muted); border-bottom:1px solid var(--border-light);">
+                <div>Nº</div><div>Valor</div><div>Forma</div><div>Vencimento</div>
+              </div>
+              <div style="max-height:300px; overflow-y:auto; margin-top:6px;">
+                <sc-for list="{{ parcelasView }}" as="p" hint-placeholder-count="11">
+                  <div style="display:grid; grid-template-columns:54px 1.2fr 1fr 1fr; gap:10px; align-items:center; padding:6px 4px; border-bottom:1px solid rgba(255,255,255,0.04);">
+                    <div style="font:700 13px var(--font-primary); color:var(--primary); text-align:center;">{{ p.num }}</div>
+                    <div style="display:flex; align-items:center; height:40px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); padding:0 10px; gap:5px; opacity:{{ entradaOpacity }};">
+                      <span style="font:600 12px 'Roboto'; color:var(--text-muted);">R$</span>
+                      <input type="number" step="0.01" value="{{ p.valor }}" data-idx="{{ p.idx }}" data-key="valor" onChange="{{ onParcela }}" disabled="{{ notEdit }}" style="flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--text); font:500 14px 'Roboto';" />
+                    </div>
+                    <select value="{{ p.forma }}" data-idx="{{ p.idx }}" data-key="forma" onChange="{{ onParcela }}" disabled="{{ notEdit }}" style="height:40px; padding:0 8px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 13px 'Roboto'; outline:none; cursor:{{ stepperCursor }};">
+                      <option style="background:#1E1E1C;">Pix</option>
+                      <option style="background:#1E1E1C;">Boleto</option>
+                      <option style="background:#1E1E1C;">Crédito</option>
+                      <option style="background:#1E1E1C;">Débito</option>
+                      <option style="background:#1E1E1C;">Recorrência</option>
+                      <option style="background:#1E1E1C;">Permuta</option>
+                    </select>
+                    <input type="date" value="{{ p.data }}" data-idx="{{ p.idx }}" data-key="data" onChange="{{ onParcela }}" disabled="{{ notEdit }}" style="height:40px; padding:0 10px; border-radius:8px; background:var(--surface-elevated); border:1px solid var(--border-light); color:var(--text); font:400 13px 'Roboto'; outline:none;" />
+                  </div>
+                </sc-for>
+              </div>
+
+              <!-- balance indicator -->
+              <div style="margin-top:14px; display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:10px; background:{{ balanceBg }}; border:1px solid {{ balanceBorder }};">
+                <div style="display:flex; align-items:center; gap:8px; font:500 12.5px var(--font-secondary); color:{{ balanceFg }};">
+                  <span class="ms-icon" style="font-size:17px;">{{ balanceIcon }}</span>{{ balanceText }}
+                </div>
+                <div style="font:700 14px 'Roboto'; color:{{ balanceFg }};">{{ somaFmt }}</div>
+              </div>
+            </div>
+
+            <!-- Destino -->
+            <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:20px 22px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span class="ms-icon" style="font-size:18px; color:var(--primary);">hub</span>
+                <span style="font:600 13px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--text-secondary);">Destino do cadastro</span>
+              </div>
+              <p style="font:400 12.5px var(--font-secondary); color:var(--text-muted); margin:0 0 14px;">Selecione em quais sistemas este cliente será cadastrado.</p>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <label style="display:flex; align-items:center; gap:12px; padding:16px; border-radius:12px; cursor:pointer; background:{{ omieBg }}; border:1.5px solid {{ omieBorder }}; transition:all 200ms;">
+                  <input type="checkbox" checked="{{ omie }}" data-field="omie" onChange="{{ onToggle }}" style="width:20px; height:20px; accent-color:var(--primary); cursor:pointer;" />
+                  <div>
+                    <div style="font:600 15px var(--font-primary); color:var(--text);">Omie</div>
+                    <div style="font:400 12px var(--font-secondary); color:var(--text-muted);">ERP financeiro e fiscal</div>
+                  </div>
+                </label>
+                <label style="display:flex; align-items:center; gap:12px; padding:16px; border-radius:12px; cursor:pointer; background:{{ conectaBg }}; border:1.5px solid {{ conectaBorder }}; transition:all 200ms;">
+                  <input type="checkbox" checked="{{ conecta }}" data-field="conecta" onChange="{{ onToggle }}" style="width:20px; height:20px; accent-color:var(--primary); cursor:pointer;" />
+                  <div>
+                    <div style="font:600 15px var(--font-primary); color:var(--text);">Conecta</div>
+                    <div style="font:400 12px var(--font-secondary); color:var(--text-muted);">Plataforma de gestão</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- STEP: RESUMO -->
+          <sc-if value="{{ stepResumo }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-bottom:22px;">
+              <h2 style="font:700 26px var(--font-primary); letter-spacing:-0.02em; margin:0 0 6px; color:var(--text);">Confirme o pedido</h2>
+              <p style="font:400 14px var(--font-secondary); color:var(--text-muted); margin:0;">Revise as informações antes de finalizar o cadastro.</p>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:14px;">
+              <!-- produto -->
+              <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:20px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;"><span style="font:600 12px var(--font-primary); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-secondary);">Produto</span><button onClick="{{ goStep }}" data-step="0" style="font:600 11px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--primary); background:none; border:none; cursor:pointer;">Editar</button></div>
+                <div style="display:flex; align-items:center; justify-content:space-between;"><div><div style="font:600 16px var(--font-primary); color:var(--text);">{{ product.name }}</div><div style="font:400 12.5px var(--font-secondary); color:var(--text-muted); margin-top:2px;">{{ category.name }} · {{ product.duration }}</div></div><div style="font:700 17px var(--font-primary); color:var(--primary);">{{ product.priceFmt }}</div></div>
+              </div>
+              <!-- empresa -->
+              <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:20px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;"><span style="font:600 12px var(--font-primary); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-secondary);">Empresa & Representante</span><button onClick="{{ goStep }}" data-step="1" style="font:600 11px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--primary); background:none; border:none; cursor:pointer;">Editar</button></div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px 24px;">
+                  <div><div style="font:400 11px var(--font-secondary); color:var(--text-muted);">Razão social</div><div style="font:500 13.5px var(--font-secondary); color:var(--text); margin-top:2px;">{{ razaoSocial }}</div></div>
+                  <div><div style="font:400 11px var(--font-secondary); color:var(--text-muted);">CNPJ</div><div style="font:500 13.5px var(--font-secondary); color:var(--text); margin-top:2px;">{{ cnpj }}</div></div>
+                  <div><div style="font:400 11px var(--font-secondary); color:var(--text-muted);">Representante</div><div style="font:500 13.5px var(--font-secondary); color:var(--text); margin-top:2px;">{{ repNomeDisplay }}</div></div>
+                  <div><div style="font:400 11px var(--font-secondary); color:var(--text-muted);">Contato</div><div style="font:500 13.5px var(--font-secondary); color:var(--text); margin-top:2px;">{{ repContatoDisplay }}</div></div>
+                </div>
+              </div>
+              <!-- pagamento -->
+              <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:20px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;"><span style="font:600 12px var(--font-primary); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-secondary);">Pagamento</span><button onClick="{{ goStep }}" data-step="2" style="font:600 11px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--primary); background:none; border:none; cursor:pointer;">Editar</button></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border-light);"><span style="font:500 13px var(--font-secondary); color:var(--text-secondary);">Entrada · {{ entradaForma }}</span><span style="font:600 13.5px 'Roboto'; color:var(--text);">{{ entradaFmt }}</span></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border-light);"><span style="font:500 13px var(--font-secondary); color:var(--text-secondary);">{{ parcelasLabel }}</span><span style="font:600 13.5px 'Roboto'; color:var(--text);">{{ parcelasTotalFmt }}</span></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0 0;"><span style="font:600 14px var(--font-primary); color:var(--text);">Total</span><span style="font:700 16px var(--font-primary); color:var(--primary);">{{ totalFmt }}</span></div>
+              </div>
+              <!-- destino -->
+              <div style="background:var(--surface); border:1px solid var(--border-light); border-radius:14px; padding:20px;">
+                <div style="display:flex; align-items:center; justify-content:space-between;"><span style="font:600 12px var(--font-primary); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-secondary);">Destino do cadastro</span><div style="display:flex; gap:8px;">{{ destinoChips }}</div></div>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- NAV BUTTONS -->
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:26px;">
+            <button onClick="{{ back }}" style="display:flex; align-items:center; gap:7px; height:46px; padding:0 20px; border-radius:10px; border:1px solid var(--border-light); background:transparent; color:var(--text-secondary); font:600 13.5px var(--font-primary); cursor:pointer;" style-hover="border-color:var(--primary); color:var(--primary);">
+              <span class="ms-icon" style="font-size:18px;">arrow_back</span>{{ backLabel }}
+            </button>
+            <button onClick="{{ primaryAction }}" disabled="{{ primaryDisabled }}" style="display:flex; align-items:center; gap:8px; height:46px; padding:0 28px; border-radius:10px; border:none; cursor:{{ primaryCursor }}; background:{{ primaryBg }}; color:#1A1A18; font:700 14px var(--font-primary); letter-spacing:0.03em; opacity:{{ primaryOpacity }}; box-shadow:{{ primaryShadow }};" style-hover="transform:translateY(-2px);">
+              {{ primaryLabel }}<span class="ms-icon" style="font-size:18px;">{{ primaryIcon }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- ---- ORDER SUMMARY (sticky) ---- -->
+        <div style="position:sticky; top:24px;">
+          <div style="background:var(--surface-elevated); border:1px solid var(--border-light); border-radius:16px; overflow:hidden; position:relative;">
+            <div style="position:absolute; top:0; left:10%; right:10%; height:1px; background:linear-gradient(90deg,transparent,rgba(199,164,68,0.45),transparent);"></div>
+            <div style="padding:18px 20px; border-bottom:1px solid var(--border-light);">
+              <div style="font:600 11px var(--font-primary); letter-spacing:0.1em; text-transform:uppercase; color:var(--primary);">Resumo do pedido</div>
+            </div>
+            <div style="padding:20px;">
+              <sc-if value="{{ productSelected }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex; align-items:flex-start; gap:12px; margin-bottom:18px;">
+                  <div style="width:42px; height:42px; border-radius:12px; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:{{ category.iconBg }}; color:{{ category.iconFg }};"><span class="ms-icon" style="font-size:22px;">{{ product.icon }}</span></div>
+                  <div style="min-width:0;">
+                    <div style="font:600 14.5px var(--font-primary); color:var(--text); line-height:1.3;">{{ product.name }}</div>
+                    <div style="font:400 12px var(--font-secondary); color:var(--text-muted); margin-top:3px;">{{ category.name }}</div>
+                  </div>
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-top:1px solid var(--border-light);"><span style="font:400 13px var(--font-secondary); color:var(--text-secondary);">Valor total</span><span style="font:700 15px 'Roboto'; color:var(--text);">{{ totalFmt }}</span></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-top:1px solid var(--border-light);"><span style="font:400 13px var(--font-secondary); color:var(--text-secondary);">Entrada</span><span style="font:600 13.5px 'Roboto'; color:var(--text);">{{ entradaFmt }}</span></div>
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-top:1px solid var(--border-light);"><span style="font:400 13px var(--font-secondary); color:var(--text-secondary);">Parcelas</span><span style="font:600 13.5px 'Roboto'; color:var(--text); text-align:right;">{{ parcelasShort }}</span></div>
+                <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
+                  <div style="font:400 11px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--text-muted); margin-bottom:8px;">Destino</div>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">{{ destinoChips }}</div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ noProduct }}" hint-placeholder-val="{{ true }}">
+                <div style="text-align:center; padding:24px 8px;">
+                  <span class="ms-icon" style="font-size:38px; color:var(--text-muted); opacity:0.5;">shopping_bag</span>
+                  <div style="font:400 13px var(--font-secondary); color:var(--text-muted); margin-top:10px;">Selecione um produto para montar o pedido.</div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ========== SUCCESS ========== -->
+    <sc-if value="{{ isSuccess }}" hint-placeholder-val="{{ false }}">
+      <div style="max-width:600px; margin:0 auto; padding:64px 28px; text-align:center;">
+        <div style="width:88px; height:88px; border-radius:50%; margin:0 auto 28px; display:flex; align-items:center; justify-content:center; background:rgba(40,167,69,0.12); border:1.5px solid rgba(40,167,69,0.4);">
+          <span class="ms-icon" style="font-size:48px; color:#4ADE80;">check_circle</span>
+        </div>
+        <h1 style="font:700 30px var(--font-primary); letter-spacing:-0.02em; margin:0 0 10px; color:var(--text);">Cadastro concluído</h1>
+        <p style="font:400 15px/1.6 var(--font-secondary); color:var(--text-secondary); margin:0 0 28px;">{{ product.name }} contratado para <strong style="color:var(--text);">{{ razaoSocial }}</strong>.<br/>O cliente foi enviado para {{ destinoText }}.</p>
+        <div style="display:inline-flex; align-items:center; gap:10px; padding:12px 20px; border-radius:12px; background:var(--surface-elevated); border:1px solid var(--border-light); margin-bottom:32px;">
+          <span style="font:400 12px var(--font-primary); letter-spacing:0.06em; text-transform:uppercase; color:var(--text-muted);">Protocolo</span>
+          <span style="font:700 15px 'Roboto'; color:var(--primary); letter-spacing:0.04em;">{{ protocol }}</span>
+        </div>
+        <div style="display:flex; gap:12px; justify-content:center;">
+          <button onClick="{{ restart }}" style="height:46px; padding:0 26px; border-radius:10px; border:none; cursor:pointer; background:var(--gradient-primary); color:#1A1A18; font:700 14px var(--font-primary); letter-spacing:0.03em; box-shadow:0 4px 14px rgba(199,164,68,0.3);" style-hover="transform:translateY(-2px);">Novo cadastro</button>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    screen: 'lobby',
+    step: 0,
+    catId: null,
+    product: null,
+    cnpj: '',
+    cnpjStatus: 'idle',
+    razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '',
+    repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
+    editMode: false,
+    entradaForma: 'Pix', entradaValor: 0, entradaData: '',
+    parcelas: [],
+    omie: true, conecta: true,
+    protocol: ''
+  };
+
+  CATS = [
+    { id: 'treinamentos', name: 'Treinamentos', icon: 'school', desc: 'Imersões e trilhas de desenvolvimento de líderes e equipes comerciais.', color: 'gold',
+      products: [
+        { id: 't1', name: 'Imersão Gestão 360', desc: 'Imersão presencial de 3 dias', duration: '3 dias', price: 18000, icon: 'groups' },
+        { id: 't2', name: 'Trilha Líder Elite', desc: 'Programa de formação de líderes', duration: '6 meses', price: 24000, icon: 'military_tech' },
+        { id: 't3', name: 'Vendas de Alta Performance', desc: 'Treinamento intensivo de vendas', duration: '2 meses', price: 12000, icon: 'trending_up' }
+      ] },
+    { id: 'apn', name: 'APN', icon: 'rocket_launch', desc: 'Aceleração de Performance de Negócios com acompanhamento contínuo.', color: 'blue',
+      products: [
+        { id: 'a1', name: 'APN Starter', desc: 'Aceleração para pequenos negócios', duration: '12 meses', price: 24000, icon: 'flight_takeoff' },
+        { id: 'a2', name: 'APN Pro', desc: 'Aceleração com consultoria dedicada', duration: '12 meses', price: 48000, icon: 'speed' },
+        { id: 'a3', name: 'APN Black', desc: 'Aceleração premium full-service', duration: '12 meses', price: 96000, icon: 'workspace_premium' }
+      ] },
+    { id: 'elite', name: 'Elite', icon: 'diamond', desc: 'Mentorias e masterminds exclusivos para a diretoria.', color: 'purple',
+      products: [
+        { id: 'e1', name: 'Mentoria Elite Individual', desc: 'Mentoria 1:1 com especialista', duration: '12 meses', price: 36000, icon: 'person' },
+        { id: 'e2', name: 'Elite Mastermind', desc: 'Grupo seleto de empresários', duration: '12 meses', price: 60000, icon: 'hub' },
+        { id: 'e3', name: 'Elite Diretoria', desc: 'Acompanhamento de board', duration: '12 meses', price: 120000, icon: 'corporate_fare' }
+      ] },
+    { id: 'palestras', name: 'Palestras', icon: 'campaign', desc: 'Palestras in company e eventos de alto impacto.', color: 'green',
+      products: [
+        { id: 'p1', name: 'Palestra In Company', desc: 'Palestra exclusiva na empresa', duration: '1 evento', price: 15000, icon: 'record_voice_over' },
+        { id: 'p2', name: 'Palestra Magna', desc: 'Palestra para grandes públicos', duration: '1 evento', price: 25000, icon: 'stadium' },
+        { id: 'p3', name: 'Ciclo de Palestras Anual', desc: 'Programa anual de palestras', duration: '12 meses', price: 80000, icon: 'event' }
+      ] }
+  ];
+
+  COLORS = {
+    gold: { iconBg: 'rgba(199,164,68,0.12)', iconFg: '#E8B84B', orb: '#C7A444' },
+    blue: { iconBg: 'rgba(33,150,243,0.12)', iconFg: '#64B5F6', orb: '#2196F3' },
+    green: { iconBg: 'rgba(76,175,80,0.12)', iconFg: '#81C784', orb: '#4CAF50' },
+    purple: { iconBg: 'rgba(124,58,237,0.12)', iconFg: '#A78BFA', orb: '#7C3AED' }
+  };
+
+  STEPS = ['Produto', 'Empresa', 'Pagamento', 'Resumo'];
+
+  fmt(n) { return (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+  iso(d) { const p = (x) => String(x).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  addMonths(base, m) { const d = new Date(base); d.setMonth(d.getMonth() + m); return d; }
+  round2(n) { return Math.round(n * 100) / 100; }
+
+  getCat(id) { return this.CATS.find(c => c.id === id) || null; }
+
+  greeting() { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; }
+
+  distribute(n) {
+    const total = this.state.product ? this.state.product.price : 0;
+    const rem = Math.max(0, this.round2(total - (Number(this.state.entradaValor) || 0)));
+    const part = Math.floor((rem / n) * 100) / 100;
+    const today = new Date();
+    const old = this.state.parcelas;
+    const arr = [];
+    for (let i = 0; i < n; i++) {
+      const v = i === n - 1 ? this.round2(rem - part * (n - 1)) : part;
+      arr.push({ valor: v, forma: old[i] ? old[i].forma : 'Boleto', data: old[i] ? old[i].data : this.iso(this.addMonths(today, i + 1)) });
+    }
+    return arr;
+  }
+
+  initPayment(product) {
+    const total = product.price;
+    const n = 11;
+    const part = Math.floor((total / 12) * 100) / 100;
+    const entrada = this.round2(total - part * n);
+    const today = new Date();
+    const parcelas = [];
+    for (let i = 0; i < n; i++) parcelas.push({ valor: part, forma: 'Boleto', data: this.iso(this.addMonths(today, i + 1)) });
+    return { entradaForma: 'Pix', entradaValor: entrada, entradaData: this.iso(today), parcelas, editMode: false };
+  }
+
+  onCategory = (e) => {
+    const id = e.currentTarget.dataset.id;
+    this.setState({ screen: 'flow', step: 0, catId: id, product: null });
+  };
+
+  onProduct = (e) => {
+    const id = e.currentTarget.dataset.id;
+    const cat = this.getCat(this.state.catId);
+    const product = cat.products.find(p => p.id === id);
+    this.setState({ product, ...this.initPayment(product) });
+  };
+
+  maskCNPJ(v) { const d = String(v).replace(/\D/g, '').slice(0, 14); let o = ''; for (let i = 0; i < d.length; i++) { if (i === 2 || i === 5) o += '.'; if (i === 8) o += '/'; if (i === 12) o += '-'; o += d[i]; } return o; }
+  maskCPF(v) { const d = String(v).replace(/\D/g, '').slice(0, 11); let o = ''; for (let i = 0; i < d.length; i++) { if (i === 3 || i === 6) o += '.'; if (i === 9) o += '-'; o += d[i]; } return o; }
+  maskCEP(v) { const d = String(v).replace(/\D/g, '').slice(0, 8); return d.length <= 5 ? d : d.slice(0, 5) + '-' + d.slice(5); }
+  maskPhone(v) { const d = String(v).replace(/\D/g, '').slice(0, 11); let o = ''; if (d.length > 0) o = '(' + d.slice(0, 2); if (d.length >= 2) o += ') '; if (d.length > 2) { if (d.length <= 10) { o += d.slice(2, 6); if (d.length > 6) o += '-' + d.slice(6, 10); } else { o += d.slice(2, 7) + '-' + d.slice(7, 11); } } return o; }
+
+  onField = (e) => {
+    const f = e.target.dataset.field;
+    let v = e.target.value;
+    if (f === 'cnpj') v = this.maskCNPJ(v);
+    else if (f === 'repCpf') v = this.maskCPF(v);
+    else if (f === 'repTelefone') v = this.maskPhone(v);
+    else if (f === 'cep') v = this.maskCEP(v);
+    this.setState({ [f]: v });
+  };
+  onToggle = (e) => { this.setState({ [e.target.dataset.field]: e.target.checked }); };
+
+  validateCnpj = () => {
+    if (this.state.cnpjStatus === 'loading') return;
+    this.setState({ cnpjStatus: 'loading' });
+    setTimeout(() => {
+      this.setState({
+        cnpjStatus: 'done',
+        cnpj: this.state.cnpj || '34.215.880/0001-90',
+        razaoSocial: 'Nexus Soluções Empresariais LTDA',
+        inscricaoEstadual: '123.456.789.110',
+        endereco: 'Av. Paulista',
+        numero: '1842',
+        complemento: 'Conj. 1203',
+        bairro: 'Bela Vista',
+        cidade: 'São Paulo',
+        estado: 'SP',
+        cep: '01310-200'
+      });
+    }, 1300);
+  };
+
+  onEntradaForma = (e) => { this.setState({ entradaForma: e.target.value }); };
+  onEntradaData = (e) => { this.setState({ entradaData: e.target.value }); };
+  onEntradaValor = (e) => {
+    const v = Number(e.target.value) || 0;
+    this.setState({ entradaValor: v }, () => this.setState({ parcelas: this.distribute(this.state.parcelas.length) }));
+  };
+
+  onParcela = (e) => {
+    const i = Number(e.target.dataset.idx);
+    const k = e.target.dataset.key;
+    const parcelas = this.state.parcelas.slice();
+    parcelas[i] = Object.assign({}, parcelas[i], { [k]: k === 'valor' ? (Number(e.target.value) || 0) : e.target.value });
+    this.setState({ parcelas });
+  };
+
+  incParcela = () => { if (!this.state.editMode) return; const n = Math.min(24, this.state.parcelas.length + 1); this.setState({ parcelas: this.distribute(n) }); };
+  decParcela = () => { if (!this.state.editMode) return; const n = Math.max(1, this.state.parcelas.length - 1); this.setState({ parcelas: this.distribute(n) }); };
+
+  toggleEdit = () => {
+    const on = !this.state.editMode;
+    if (!on) this.setState(Object.assign(this.initPayment(this.state.product), { editMode: false }));
+    else this.setState({ editMode: true });
+  };
+
+  next = () => { this.setState({ step: Math.min(3, this.state.step + 1) }); };
+  back = () => { if (this.state.step === 0) this.setState({ screen: 'lobby' }); else this.setState({ step: this.state.step - 1 }); };
+  goLobby = () => { this.setState({ screen: 'lobby' }); };
+  goStep = (e) => { this.setState({ step: Number(e.currentTarget.dataset.step) }); };
+
+  finalize = () => {
+    const proto = 'CAP-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 899999);
+    this.setState({ screen: 'success', protocol: proto });
+  };
+
+  restart = () => {
+    this.setState({ screen: 'lobby', step: 0, catId: null, product: null, cnpj: '', cnpjStatus: 'idle',
+      razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '',
+      repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
+      editMode: false, entradaForma: 'Pix', entradaValor: 0, entradaData: '', parcelas: [], omie: true, conecta: true });
+  };
+
+  chip(label) {
+    return React.createElement('span', { key: label, style: { display: 'inline-flex', alignItems: 'center', gap: '5px', font: "600 11.5px 'Montserrat'", letterSpacing: '0.03em', color: 'var(--primary)', background: 'var(--primary-subtle)', border: '1px solid rgba(199,164,68,0.35)', padding: '4px 10px', borderRadius: '7px' } },
+      React.createElement('span', { className: 'ms-icon', style: { fontSize: '13px' } }, 'check'), label);
+  }
+
+  renderVals() {
+    const s = this.state;
+    const cat = this.getCat(s.catId);
+    const colors = cat ? this.COLORS[cat.color] : this.COLORS.gold;
+    const category = cat ? Object.assign({}, cat, colors) : { name: '', iconBg: colors.iconBg, iconFg: colors.iconFg };
+
+    const categories = this.CATS.map((c, i) => {
+      const col = this.COLORS[c.color];
+      return { id: c.id, name: c.name, desc: c.desc, icon: c.icon, iconBg: col.iconBg, iconFg: col.iconFg, orb: col.orb,
+        countLabel: c.products.length + ' produtos', delay: (i * 90) + 'ms' };
+    });
+
+    const currentProducts = (cat ? cat.products : []).map(p => ({
+      id: p.id, name: p.name, desc: p.desc, duration: p.duration, icon: p.icon, priceFmt: this.fmt(p.price),
+      selected: s.product && s.product.id === p.id,
+      borderColor: s.product && s.product.id === p.id ? 'var(--primary)' : 'var(--border-light)'
+    }));
+
+    const product = s.product ? Object.assign({}, s.product, { priceFmt: this.fmt(s.product.price) }) : { name: '', icon: 'shopping_bag', priceFmt: '', duration: '' };
+    const productSelected = !!s.product;
+
+    // payment computed
+    const parcelasSum = s.parcelas.reduce((a, p) => a + (Number(p.valor) || 0), 0);
+    const soma = this.round2((Number(s.entradaValor) || 0) + parcelasSum);
+    const total = s.product ? s.product.price : 0;
+    const diff = this.round2(total - soma);
+    const balanced = Math.abs(diff) < 0.01;
+    const parcelasView = s.parcelas.map((p, i) => ({ idx: i, num: i + 1, valor: p.valor, forma: p.forma, data: p.data }));
+    const allEqual = s.parcelas.length > 0 && s.parcelas.every(p => Math.abs(p.valor - s.parcelas[0].valor) < 0.01);
+    const parcelasLabel = s.parcelas.length + (allEqual ? 'x de ' + this.fmt(s.parcelas[0] ? s.parcelas[0].valor : 0) : ' parcelas personalizadas');
+    const parcelasShort = s.parcelas.length + (allEqual ? 'x ' + this.fmt(s.parcelas[0] ? s.parcelas[0].valor : 0) : ' (variadas)');
+
+    // stepper
+    const stepper = this.STEPS.map((label, i) => {
+      const state = i < s.step ? 'done' : i === s.step ? 'active' : 'todo';
+      const circleStyle = state === 'active'
+        ? 'background:var(--gradient-primary); color:#1A1A18; border-color:transparent; box-shadow:0 4px 12px rgba(199,164,68,0.35);'
+        : state === 'done'
+        ? 'background:rgba(199,164,68,0.15); color:var(--primary); border-color:var(--primary);'
+        : 'background:var(--surface-light); color:var(--text-muted); border-color:var(--border-light);';
+      return {
+        label, flex: i === 0 ? '0 0 auto' : '1', showLine: i !== 0,
+        lineColor: i <= s.step ? 'var(--primary)' : 'var(--border-light)',
+        circleStyle, circleContent: state === 'done' ? '✓' : String(i + 1),
+        labelColor: state === 'todo' ? 'var(--text-muted)' : 'var(--text)',
+        cursor: i <= s.step ? 'pointer' : 'default',
+        onClick: i < s.step ? this.goStep : () => {},
+      };
+    });
+    // attach data-step via wrapper: goStep reads currentTarget dataset; but onClick here is fn. Provide index closure instead.
+    stepper.forEach((st, i) => { st.onClick = i < s.step ? () => this.setState({ step: i }) : () => {}; });
+
+    // gating
+    const empresaValid = s.cnpjStatus === 'done' && s.repNome.trim() && s.repEmail.trim();
+    const pagamentoValid = (s.omie || s.conecta) && balanced;
+    let primaryLabel, primaryAction, enabled, primaryIcon = 'arrow_forward';
+    if (s.step === 0) { primaryLabel = 'Continuar'; primaryAction = this.next; enabled = productSelected; }
+    else if (s.step === 1) { primaryLabel = 'Continuar'; primaryAction = this.next; enabled = empresaValid; }
+    else if (s.step === 2) { primaryLabel = 'Revisar pedido'; primaryAction = this.next; enabled = pagamentoValid; }
+    else { primaryLabel = 'Finalizar cadastro'; primaryAction = this.finalize; enabled = (s.omie || s.conecta); primaryIcon = 'check'; }
+
+    const notEdit = !s.editMode;
+    const destinoChips = [s.omie ? this.chip('Omie') : null, s.conecta ? this.chip('Conecta') : null].filter(Boolean);
+    const destinoText = s.omie && s.conecta ? 'Omie e Conecta' : s.omie ? 'Omie' : s.conecta ? 'Conecta' : 'nenhum sistema';
+
+    return {
+      greeting: this.greeting(),
+      isLobby: s.screen === 'lobby', isFlow: s.screen === 'flow', isSuccess: s.screen === 'success',
+      categories, category, currentProducts, product, productSelected, noProduct: !productSelected,
+      onCategory: this.onCategory, onProduct: this.onProduct,
+      stepProduto: s.step === 0, stepEmpresa: s.step === 1, stepPagamento: s.step === 2, stepResumo: s.step === 3,
+      stepper,
+      // empresa
+      cnpj: s.cnpj, cnpjLoading: s.cnpjStatus === 'loading', cnpjDone: s.cnpjStatus === 'done',
+      cnpjBtnLabel: s.cnpjStatus === 'loading' ? 'Buscando...' : s.cnpjStatus === 'done' ? 'Revalidar' : 'Validar CNPJ',
+      cnpjIcon: s.cnpjStatus === 'loading' ? 'progress_activity' : 'search',
+      cnpjSpin: s.cnpjStatus === 'loading' ? 'spin' : '',
+      validateCnpj: this.validateCnpj,
+      razaoSocial: s.razaoSocial, inscricaoEstadual: s.inscricaoEstadual, endereco: s.endereco, numero: s.numero, complemento: s.complemento, bairro: s.bairro, cidade: s.cidade, estado: s.estado, cep: s.cep,
+      repNome: s.repNome, repNascimento: s.repNascimento, repCpf: s.repCpf, repMesmoEndereco: s.repMesmoEndereco, repEndereco: s.repEndereco, repEmail: s.repEmail, repTelefone: s.repTelefone,
+      repEnderecoDiff: !s.repMesmoEndereco,
+      repNomeDisplay: s.repNome || '—', repContatoDisplay: (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : ''),
+      onField: this.onField, onToggle: this.onToggle,
+      // pagamento
+      editMode: s.editMode, notEdit, toggleEdit: this.toggleEdit,
+      editBg: s.editMode ? 'var(--primary-subtle)' : 'var(--surface)',
+      editBorder: s.editMode ? 'rgba(199,164,68,0.4)' : 'var(--border-light)',
+      editFg: s.editMode ? 'var(--primary)' : 'var(--text-secondary)',
+      editIcon: s.editMode ? 'lock_open' : 'lock',
+      editTrack: s.editMode ? 'var(--primary)' : 'var(--surface-light)',
+      editKnob: s.editMode ? '18px' : '2px',
+      entradaOpacity: s.editMode ? '1' : '0.7',
+      stepperFg: s.editMode ? 'var(--primary)' : 'var(--text-muted)',
+      stepperCursor: s.editMode ? 'pointer' : 'not-allowed',
+      entradaForma: s.entradaForma, entradaValor: s.entradaValor, entradaData: s.entradaData,
+      onEntradaForma: this.onEntradaForma, onEntradaValor: this.onEntradaValor, onEntradaData: this.onEntradaData,
+      parcelasView, numParcelas: s.parcelas.length, onParcela: this.onParcela, incParcela: this.incParcela, decParcela: this.decParcela,
+      balanceBg: balanced ? 'rgba(40,167,69,0.1)' : 'rgba(255,193,7,0.1)',
+      balanceBorder: balanced ? 'rgba(40,167,69,0.3)' : 'rgba(255,193,7,0.35)',
+      balanceFg: balanced ? '#4ADE80' : '#FFC107',
+      balanceIcon: balanced ? 'task_alt' : 'error',
+      balanceText: balanced ? 'Valores conferem com o total' : 'Diferença de ' + this.fmt(Math.abs(diff)) + ' em relação ao total',
+      somaFmt: this.fmt(soma),
+      omie: s.omie, conecta: s.conecta,
+      omieBg: s.omie ? 'var(--primary-subtle)' : 'var(--surface-elevated)',
+      omieBorder: s.omie ? 'rgba(199,164,68,0.4)' : 'var(--border-light)',
+      conectaBg: s.conecta ? 'var(--primary-subtle)' : 'var(--surface-elevated)',
+      conectaBorder: s.conecta ? 'rgba(199,164,68,0.4)' : 'var(--border-light)',
+      // summary
+      totalFmt: this.fmt(total), entradaFmt: this.fmt(s.entradaValor),
+      parcelasLabel, parcelasShort, parcelasTotalFmt: this.fmt(parcelasSum),
+      destinoChips, destinoText,
+      goStep: this.goStep,
+      // nav
+      back: this.back, goLobby: this.goLobby,
+      backLabel: s.step === 0 ? 'Voltar ao lobby' : 'Voltar',
+      primaryLabel, primaryAction, primaryIcon, primaryDisabled: !enabled,
+      primaryBg: enabled ? 'var(--gradient-primary)' : 'var(--surface-light)',
+      primaryCursor: enabled ? 'pointer' : 'not-allowed',
+      primaryOpacity: enabled ? '1' : '0.5',
+      primaryShadow: enabled ? '0 4px 14px rgba(199,164,68,0.3)' : 'none',
+      // success
+      restart: this.restart, protocol: s.protocol
+    };
+  }
+}
+</script>
+</body>
+</html>

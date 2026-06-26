@@ -1,0 +1,219 @@
+{
+  "plugins": [
+    "react",
+    "import"
+  ],
+  "rules": {
+    "react/forbid-elements": [
+      "warn",
+      {
+        "forbid": []
+      }
+    ],
+    "no-restricted-imports": [
+      "warn",
+      {
+        "patterns": [
+          {
+            "group": [
+              "ui_kits/conecta-ap/**"
+            ],
+            "message": "Import design-system components from 'index.js', not component internals."
+          }
+        ]
+      }
+    ],
+    "no-restricted-syntax": [
+      "warn",
+      {
+        "selector": "Literal[value=/#[0-9a-fA-F]{3,8}\\b/]",
+        "message": "Raw hex color — use a design-system color token via var()."
+      },
+      {
+        "selector": "Literal[value=/\\b\\d+px\\b/]",
+        "message": "Raw px value — use a design-system spacing token via var()."
+      },
+      {
+        "selector": "Literal[value=/font-family\\s*:\\s*(?!['\\\"]?(?:Montserrat|Roboto))/i]",
+        "message": "Font not provided by the design system. Available: Montserrat, Roboto."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/index.js"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    }
+  ],
+  "x-omelette": {
+    "components": {},
+    "tokens": [
+      "--accent",
+      "--accent-solid",
+      "--background",
+      "--border",
+      "--border-light",
+      "--border-radius",
+      "--border-radius-lg",
+      "--border-radius-sm",
+      "--danger",
+      "--duration-fast",
+      "--duration-instant",
+      "--duration-normal",
+      "--duration-slow",
+      "--ease-accelerate",
+      "--ease-decelerate",
+      "--ease-sharp",
+      "--ease-standard",
+      "--elevation-0",
+      "--elevation-1",
+      "--elevation-2",
+      "--elevation-3",
+      "--elevation-4",
+      "--elevation-5",
+      "--focus-ring",
+      "--font-2xl",
+      "--font-3xl",
+      "--font-base",
+      "--font-bold",
+      "--font-lg",
+      "--font-light",
+      "--font-medium",
+      "--font-normal",
+      "--font-primary",
+      "--font-secondary",
+      "--font-semibold",
+      "--font-sm",
+      "--font-xl",
+      "--font-xs",
+      "--glow-primary",
+      "--gradient-primary",
+      "--gradient-primary-hover",
+      "--gradient-surface",
+      "--info",
+      "--input-height-md",
+      "--input-height-sm",
+      "--opacity-activated",
+      "--opacity-disabled",
+      "--opacity-focus",
+      "--opacity-hover",
+      "--opacity-inactive",
+      "--opacity-selected",
+      "--primary",
+      "--primary-dark",
+      "--primary-hover",
+      "--primary-light",
+      "--primary-subtle",
+      "--secondary",
+      "--secondary-dark",
+      "--secondary-light",
+      "--spacing-2xl",
+      "--spacing-lg",
+      "--spacing-md",
+      "--spacing-sm",
+      "--spacing-xl",
+      "--spacing-xs",
+      "--spacing-xxs",
+      "--success",
+      "--surface",
+      "--surface-alt",
+      "--surface-elevated",
+      "--surface-light",
+      "--text",
+      "--text-muted",
+      "--text-secondary",
+      "--transition-fast",
+      "--transition-normal",
+      "--transition-slow",
+      "--warning"
+    ],
+    "tokenKinds": {
+      "--primary": "color",
+      "--primary-light": "color",
+      "--primary-dark": "color",
+      "--primary-hover": "color",
+      "--primary-subtle": "color",
+      "--secondary": "color",
+      "--secondary-light": "color",
+      "--secondary-dark": "color",
+      "--accent": "color",
+      "--accent-solid": "color",
+      "--background": "color",
+      "--surface": "color",
+      "--surface-light": "color",
+      "--surface-elevated": "color",
+      "--surface-alt": "color",
+      "--text": "font",
+      "--text-secondary": "font",
+      "--text-muted": "font",
+      "--border": "color",
+      "--border-light": "color",
+      "--success": "color",
+      "--warning": "color",
+      "--danger": "color",
+      "--info": "color",
+      "--gradient-primary": "other",
+      "--gradient-primary-hover": "other",
+      "--gradient-surface": "color",
+      "--glow-primary": "shadow",
+      "--font-primary": "font",
+      "--font-secondary": "font",
+      "--font-light": "font",
+      "--font-normal": "font",
+      "--font-medium": "font",
+      "--font-semibold": "font",
+      "--font-bold": "font",
+      "--font-xs": "font",
+      "--font-sm": "font",
+      "--font-base": "font",
+      "--font-lg": "font",
+      "--font-xl": "font",
+      "--font-2xl": "font",
+      "--font-3xl": "font",
+      "--spacing-xxs": "spacing",
+      "--spacing-xs": "spacing",
+      "--spacing-sm": "spacing",
+      "--spacing-md": "spacing",
+      "--spacing-lg": "spacing",
+      "--spacing-xl": "spacing",
+      "--spacing-2xl": "spacing",
+      "--elevation-0": "shadow",
+      "--elevation-1": "shadow",
+      "--elevation-2": "shadow",
+      "--elevation-3": "shadow",
+      "--elevation-4": "shadow",
+      "--elevation-5": "shadow",
+      "--duration-instant": "other",
+      "--duration-fast": "other",
+      "--duration-normal": "other",
+      "--duration-slow": "other",
+      "--ease-standard": "other",
+      "--ease-decelerate": "other",
+      "--ease-accelerate": "other",
+      "--ease-sharp": "other",
+      "--transition-fast": "color",
+      "--transition-normal": "color",
+      "--transition-slow": "color",
+      "--border-radius-sm": "radius",
+      "--border-radius": "radius",
+      "--border-radius-lg": "radius",
+      "--input-height-sm": "spacing",
+      "--input-height-md": "spacing",
+      "--focus-ring": "shadow",
+      "--opacity-disabled": "other",
+      "--opacity-inactive": "other",
+      "--opacity-hover": "other",
+      "--opacity-focus": "other",
+      "--opacity-selected": "other",
+      "--opacity-activated": "other"
+    },
+    "fontFamilies": [
+      "Montserrat",
+      "Roboto"
+    ]
+  }
+}
