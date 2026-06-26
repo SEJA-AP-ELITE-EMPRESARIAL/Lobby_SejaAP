@@ -776,6 +776,8 @@ function App() {
   // cliente e endereço — campos pedidos pelo fluxo n8n.
   const buildPixPayload = () => ({
     origem: 'lobby_conecta_ap',
+    forma_pagamento: s.entradaForma,                       // hoje sempre 'pix' (só Pix libera esta cobrança)
+    forma_pagamento_label: paymentLabel(s.entradaForma),
     valor: round2(Number(s.entradaValor) || 0),
     valor_centavos: Math.round((Number(s.entradaValor) || 0) * 100),
     cnpj: s.cnpj || '',
