@@ -406,14 +406,16 @@ function pixGet(raw, keys) {
 const PIX_PAID_WORDS = ['pago', 'paga', 'paid', 'approved', 'aprovado', 'aprovada', 'concluido', 'concluído', 'concluida', 'concluída', 'recebido', 'recebida', 'received', 'liquidado', 'liquidada', 'settled', 'confirmado', 'confirmada', 'completed', 'complete', 'done', 'sucesso', 'success', 'ok', 'finalizado', 'finalizada'];
 // Normaliza a resposta do webhook Pix em { qrImg, copiaCola, txid, paid }.
 function normalizePixResponse(raw) {
-  const emv = pixGet(raw, ['pix_copia_cola', 'copia_cola', 'copiaecola', 'pixcopiaecola', 'copia_e_cola', 'emv', 'brcode', 'br_code', 'qrcode_text', 'pixcode', 'pix_code', 'payload']);
+  const emv = pixGet(raw, ['pix_copia_cola', 'copia_cola', 'copiaecola', 'pixcopiaecola', 'copia_e_cola', 'copyandpastecode', 'copy_and_paste_code', 'emv', 'brcode', 'br_code', 'qrcode_text', 'pixcode', 'pix_code', 'payload']);
   const base64 = pixGet(raw, ['qr_base64', 'qrcode_base64', 'qr_code_base64', 'imagemqrcode', 'imagem_qrcode', 'qr_image_base64', 'qrcodebase64', 'imagem', 'base64']);
   const url = pixGet(raw, ['qr_url', 'qrcode_url', 'qr_code_url', 'qr_image_url', 'image_url', 'url_qrcode', 'qrimage']);
   const generic = pixGet(raw, ['qrcode', 'qr_code', 'qr', 'qr_image']);
-  const txid = pixGet(raw, ['txid', 'tx_id', 'orderid', 'order_id', 'pedido_id', 'transaction_id', 'transactionid', 'identificador', 'reference', 'referencia', 'correlationid', 'e2eid', 'cobranca_id', 'charge_id', 'id']);
+  const txid = pixGet(raw, ['txid', 'tx_id', 'orderid', 'order_id', 'paymentid', 'payment_id', 'pedido_id', 'transaction_id', 'transactionid', 'identificador', 'reference', 'referencia', 'correlationid', 'e2eid', 'cobranca_id', 'charge_id', 'id']);
 
-  const statusRaw = pixGet(raw, ['status', 'situacao', 'situação', 'payment_status', 'state', 'resultado', 'evento', 'event', 'message', 'mensagem']).toLowerCase();
-  const paidBool = /^(true|1|sim|yes|paid|pago)$/i.test(pixGet(raw, ['pago', 'paid', 'success', 'sucesso', 'confirmado', 'is_paid', 'ispaid']));
+  const statusRaw = pixGet(raw, ['status', 'situacao', 'situação', 'payment_status', 'state', 'resultado', 'evento', 'event', 'eventname', 'event_name', 'message', 'mensagem']).toLowerCase();
+  // ATENÇÃO: NÃO usar "success" como sinal de pago — em alguns webhooks (ex.: Stark)
+  // success=true significa "requisição ok", não "pagamento concluído".
+  const paidBool = /^(true|1|sim|yes|paid|pago)$/i.test(pixGet(raw, ['pago', 'paid', 'confirmado', 'is_paid', 'ispaid', 'ispaidevent', 'is_paid_event']));
   const paid = paidBool || PIX_PAID_WORDS.indexOf(statusRaw) >= 0;
 
   let qrImg = '', copiaCola = emv || '';
