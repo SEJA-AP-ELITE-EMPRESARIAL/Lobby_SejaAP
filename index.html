@@ -13,6 +13,8 @@
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<!-- Gerador de QR Code (renderiza o copia-e-cola do Pix como imagem, quando o webhook não devolve imagem pronta) -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
@@ -134,6 +136,8 @@ const { useState, useEffect, useMemo, useRef } = React;
 const CNPJ_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/brasilapi-cnpj';
 const CEP_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/busca-cep';
 const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite';
+// Cobrança Pix da entrada: gera o QR e, por polling no mesmo webhook, confirma o pagamento.
+const PIX_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/907bbfb8-b366-4f1e-9871-9cc4ba98c5e8';
 
 // ===== Máscaras =====
 const maskCNPJ = (v) => {
@@ -368,6 +372,62 @@ async function sendPreContrato(payload) {
   return body || {};
 }
 
+// ===== Cobrança Pix da entrada =====
+// Gera a imagem do QR a partir do código copia-e-cola (EMV) com qrcode-generator.
+function emvToDataUrl(text) {
+  try {
+    if (typeof qrcode === 'undefined') return '';
+    const qr = qrcode(0, 'M');
+    qr.addData(String(text));
+    qr.make();
+    return qr.createDataURL(6, 10);
+  } catch (e) { return ''; }
+}
+// Busca (case-insensitive) a primeira chave preenchida entre a raiz e contêineres
+// aninhados comuns — o webhook n8n pode devolver vários formatos.
+function pixGet(raw, keys) {
+  let r = raw;
+  if (Array.isArray(r)) r = r[0] || {};
+  const sources = [];
+  const push = (o) => { if (o && typeof o === 'object' && !Array.isArray(o)) sources.push(o); };
+  push(r);
+  ['data', 'result', 'resultado', 'response', 'body', 'pix', 'charge', 'cobranca', 'payment', 'pagamento', 'qrcode', 'qr_code'].forEach((k) => push(r && r[k]));
+  for (const src of sources) {
+    const lower = {};
+    for (const k of Object.keys(src)) { const lk = k.toLowerCase(); if (!(lk in lower)) lower[lk] = src[k]; }
+    for (const key of keys) {
+      const v = lower[key.toLowerCase()];
+      if (v != null && typeof v !== 'object' && String(v).trim() !== '') return String(v).trim();
+    }
+  }
+  return '';
+}
+// Estados que significam PAGO (não inclui "pendente", "ativa", "aguardando" etc.).
+const PIX_PAID_WORDS = ['pago', 'paga', 'paid', 'approved', 'aprovado', 'aprovada', 'concluido', 'concluído', 'concluida', 'concluída', 'recebido', 'recebida', 'received', 'liquidado', 'liquidada', 'settled', 'confirmado', 'confirmada', 'completed', 'complete', 'done', 'sucesso', 'success', 'ok', 'finalizado', 'finalizada'];
+// Normaliza a resposta do webhook Pix em { qrImg, copiaCola, txid, paid }.
+function normalizePixResponse(raw) {
+  const emv = pixGet(raw, ['pix_copia_cola', 'copia_cola', 'copiaecola', 'pixcopiaecola', 'copia_e_cola', 'emv', 'brcode', 'br_code', 'qrcode_text', 'pixcode', 'pix_code', 'payload']);
+  const base64 = pixGet(raw, ['qr_base64', 'qrcode_base64', 'qr_code_base64', 'imagemqrcode', 'imagem_qrcode', 'qr_image_base64', 'qrcodebase64', 'imagem', 'base64']);
+  const url = pixGet(raw, ['qr_url', 'qrcode_url', 'qr_code_url', 'qr_image_url', 'image_url', 'url_qrcode', 'qrimage']);
+  const generic = pixGet(raw, ['qrcode', 'qr_code', 'qr', 'qr_image']);
+  const txid = pixGet(raw, ['txid', 'tx_id', 'transaction_id', 'transactionid', 'identificador', 'reference', 'referencia', 'correlationid', 'e2eid', 'cobranca_id', 'charge_id', 'id']);
+
+  const statusRaw = pixGet(raw, ['status', 'situacao', 'situação', 'payment_status', 'state', 'resultado', 'evento', 'event', 'message', 'mensagem']).toLowerCase();
+  const paidBool = /^(true|1|sim|yes|paid|pago)$/i.test(pixGet(raw, ['pago', 'paid', 'success', 'sucesso', 'confirmado', 'is_paid', 'ispaid']));
+  const paid = paidBool || PIX_PAID_WORDS.indexOf(statusRaw) >= 0;
+
+  let qrImg = '', copiaCola = emv || '';
+  const decide = (val) => {
+    if (!val || qrImg) return;
+    if (/^data:image\//i.test(val)) qrImg = val;
+    else if (/^https?:\/\//i.test(val)) qrImg = val;
+    else if (/^[A-Za-z0-9+/=\s]+$/.test(val) && val.length > 120 && !/^0002/.test(val)) qrImg = 'data:image/png;base64,' + val.replace(/\s+/g, '');
+    else if (!copiaCola) copiaCola = val;
+  };
+  decide(base64); decide(url); decide(generic);
+  return { qrImg, copiaCola, txid, paid };
+}
+
 /* ============================================================================
  * CATÁLOGO — categorias e produtos do lobby.
  *  - "elite" usa os produtos REAIS da página que está no ar (mensalidade × 12).
@@ -516,9 +576,14 @@ function App() {
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
+    pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '', pixCopied: false,
   });
   const patch = (o) => setS((prev) => ({ ...prev, ...(typeof o === 'function' ? o(prev) : o) }));
   const scrollRef = useRef(null);
+  const pixTimer = useRef(null);   // setTimeout do polling
+  const pixStop = useRef(false);   // sinaliza para o polling parar
+  const pixBase = useRef(null);    // payload de geração (reutilizado no polling, evita closure stale)
+  const pixTxidRef = useRef('');   // txid devolvido na geração
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' }); }, [s.step, s.screen]);
 
   // Espelha o endereço da empresa no representante quando "mesmo endereço".
@@ -675,7 +740,7 @@ function App() {
         entrada_detalhe: { valor: round2(Number(s.entradaValor) || 0), forma: s.entradaForma, forma_label: paymentLabel(s.entradaForma), data: s.entradaData || null },
         cronograma: s.parcelas.map((p, i) => ({ numero: i + 1, valor: round2(Number(p.valor) || 0), vencimento: p.data || null, forma: p.forma, forma_label: paymentLabel(p.forma) })),
       },
-      pagamento: { forma: 'personalizado', formas },
+      pagamento: { forma: 'personalizado', formas, pix_txid: s.pixTxid || null, entrada_pix_paga: s.entradaForma === 'pix' ? (s.pixState === 'paid') : null },
       destino: { omie: !!s.omie, conecta: !!s.conecta, sistemas: [s.omie ? 'omie' : null, s.conecta ? 'conecta' : null].filter(Boolean) },
       aceites: { pre_contrato: true, lgpd: true, aceito_em: nowIso },
       metadata: { user_agent: navigator.userAgent, url: location.href, enviado_em: nowIso, canal: 'lobby_conecta_ap' },
@@ -696,14 +761,93 @@ function App() {
     }
   };
 
-  const restart = () => patch({
+  const restart = () => { stopPixPolling(); patch({
     screen: 'lobby', step: 0, catId: null, product: null,
     cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
+    pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '', pixCopied: false,
+  }); };
+
+  // ===== Fluxo de cobrança Pix da entrada =====
+  // Payload de geração (reutilizado no polling). Inclui valor da entrada, dados do
+  // cliente e endereço — campos pedidos pelo fluxo n8n.
+  const buildPixPayload = () => ({
+    origem: 'lobby_conecta_ap',
+    valor: round2(Number(s.entradaValor) || 0),
+    valor_centavos: Math.round((Number(s.entradaValor) || 0) * 100),
+    cnpj: s.cnpj || '',
+    cnpj_limpo: onlyDigits(s.cnpj),
+    razao_social: (s.razaoSocial || '').trim(),
+    email: (s.repEmail || '').trim(),
+    telefone: s.repTelefone || '',
+    telefone_limpo: onlyDigits(s.repTelefone),
+    endereco: {
+      cep: s.cep || '',
+      logradouro: (s.endereco || '').trim(),
+      numero: (s.numero || '').trim(),
+      complemento: (s.complemento || '').trim() || null,
+      bairro: (s.bairro || '').trim(),
+      cidade: (s.cidade || '').trim(),
+      estado: (s.estado || '').toUpperCase(),
+    },
   });
+  const postPix = async (extra) => {
+    const res = await fetch(PIX_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ ...(pixBase.current || buildPixPayload()), ...extra }),
+      mode: 'cors',
+    });
+    let raw = null; try { raw = await res.json(); } catch { raw = null; }
+    if (!res.ok && !raw) throw new Error('HTTP ' + res.status);
+    return normalizePixResponse(raw);
+  };
+  const stopPixPolling = () => { pixStop.current = true; if (pixTimer.current) { clearTimeout(pixTimer.current); pixTimer.current = null; } };
+  const pollPix = async () => {
+    if (pixStop.current) return;
+    try {
+      const n = await postPix({ acao: 'status', txid: pixTxidRef.current });
+      if (pixStop.current) return;
+      if (n.paid) { stopPixPolling(); patch({ pixState: 'paid' }); return; }
+    } catch (e) { /* erro transitório — segue tentando */ }
+    if (!pixStop.current) pixTimer.current = setTimeout(pollPix, 4000);
+  };
+  const generatePix = async () => {
+    if (s.pixState === 'generating') return;
+    stopPixPolling();
+    pixStop.current = false;
+    pixBase.current = buildPixPayload();
+    pixTxidRef.current = '';
+    patch({ pixState: 'generating', pixErr: '', pixQrImg: '', pixCopiaCola: '', pixTxid: '' });
+    try {
+      const n = await postPix({ acao: 'gerar' });
+      if (n.paid) { patch({ pixState: 'paid' }); return; }
+      if (!n.qrImg && !n.copiaCola) throw new Error('O webhook não retornou o QR Code.');
+      const qrImg = n.qrImg || emvToDataUrl(n.copiaCola);
+      pixTxidRef.current = n.txid || '';
+      patch({ pixState: 'awaiting', pixQrImg: qrImg, pixCopiaCola: n.copiaCola, pixTxid: n.txid });
+      pixStop.current = false;
+      pixTimer.current = setTimeout(pollPix, 4000);
+    } catch (e) {
+      patch({ pixState: 'error', pixErr: (e && e.message) ? e.message : 'Erro ao gerar o Pix' });
+    }
+  };
+  const checkPixNow = () => { if (pixTimer.current) { clearTimeout(pixTimer.current); pixTimer.current = null; } pixStop.current = false; pollPix(); };
+  const cancelPix = () => { stopPixPolling(); patch({ pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '' }); };
+  const copyPix = () => {
+    const t = s.pixCopiaCola; if (!t) return;
+    const done = () => { patch({ pixCopied: true }); setTimeout(() => patch({ pixCopied: false }), 1800); };
+    try { (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(done, done); } catch (e) { done(); }
+  };
+  // Cancela/zera o Pix se a entrada (valor ou forma) mudar; e ao desmontar.
+  useEffect(() => {
+    stopPixPolling();
+    patch((d) => (d.pixState !== 'idle' ? { pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixErr: '' } : {}));
+  }, [s.entradaValor, s.entradaForma]);
+  useEffect(() => () => stopPixPolling(), []);
 
   const destinoChips = [s.omie ? 'Omie' : null, s.conecta ? 'Conecta' : null].filter(Boolean);
   const destinoText = s.omie && s.conecta ? 'Omie e Conecta' : s.omie ? 'Omie' : s.conecta ? 'Conecta' : 'nenhum sistema';
@@ -1064,6 +1208,75 @@ function App() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span className="sec-title" style={{ fontSize: 12 }}>Destino do cadastro</span><div style={{ display: 'flex', gap: 8 }}>{destinoChips.map((c) => <span key={c} className="chip"><span className="ms-icon" style={{ fontSize: 13 }}>check</span>{c}</span>)}</div></div>
           </div>
 
+          {/* ===== Cobrança Pix da entrada ===== */}
+          {s.entradaForma === 'pix' && s.pixState !== 'idle' && (
+            <div className="card" style={{ padding: 22 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="ms-icon" style={{ fontSize: 20, color: 'var(--primary)' }}>pix</span>
+                  <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Pagamento da entrada · Pix</span>
+                </div>
+                <span style={{ font: "700 15px 'Roboto'", color: 'var(--text)' }}>{fmt(s.entradaValor)}</span>
+              </div>
+
+              {s.pixState === 'generating' && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '24px 0' }}>
+                  <span style={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(199,164,68,.3)', borderTopColor: 'var(--primary)', display: 'inline-block', animation: 'spin .8s linear infinite' }} />
+                  <span style={{ font: '500 14px var(--font-secondary)', color: 'var(--text-secondary)' }}>Gerando código Pix…</span>
+                </div>
+              )}
+
+              {s.pixState === 'awaiting' && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+                  {s.pixQrImg ? (
+                    <div style={{ background: '#fff', padding: 12, borderRadius: 12, lineHeight: 0 }}>
+                      <img src={s.pixQrImg} alt="QR Code Pix" style={{ width: 210, height: 210, display: 'block' }} />
+                    </div>
+                  ) : (
+                    <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>Use o código copia e cola abaixo.</div>
+                  )}
+                  <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', textAlign: 'center' }}>Abra o app do banco, escolha <strong style={{ color: 'var(--text-secondary)' }}>Pix &gt; Pagar com QR Code</strong>, ou use o copia e cola.</div>
+                  {s.pixCopiaCola && (
+                    <div style={{ width: '100%', display: 'flex', gap: 8, alignItems: 'stretch' }}>
+                      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: "400 12px 'Roboto'", color: 'var(--text-secondary)', background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', borderRadius: 8, padding: '0 12px', lineHeight: '40px' }}>{s.pixCopiaCola}</div>
+                      <button onClick={copyPix} className="btn-ghost" style={{ height: 40, padding: '0 14px' }}>
+                        <span className="ms-icon" style={{ fontSize: 17 }}>{s.pixCopied ? 'check' : 'content_copy'}</span>{s.pixCopied ? 'Copiado' : 'Copiar'}
+                      </button>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                    <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2px solid rgba(199,164,68,.3)', borderTopColor: 'var(--primary)', display: 'inline-block', animation: 'spin .8s linear infinite' }} />
+                    <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Aguardando pagamento…</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 16 }}>
+                    <button onClick={checkPixNow} className="linkbtn">Verificar agora</button>
+                    <button onClick={cancelPix} className="linkbtn" style={{ color: 'var(--text-muted)' }}>Cancelar</button>
+                  </div>
+                </div>
+              )}
+
+              {s.pixState === 'paid' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}>
+                  <span className="ms-icon" style={{ fontSize: 26, color: '#4ADE80' }}>check_circle</span>
+                  <div>
+                    <div style={{ font: '600 15px var(--font-primary)', color: 'var(--text)' }}>Pagamento confirmado!</div>
+                    <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>Clique em <strong>Finalizar cadastro</strong> para concluir.</div>
+                  </div>
+                </div>
+              )}
+
+              {s.pixState === 'error' && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span className="ms-icon" style={{ fontSize: 22, color: 'var(--danger)' }}>error</span>
+                    <span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>{s.pixErr}</span>
+                  </div>
+                  <button onClick={generatePix} className="btn-ghost" style={{ height: 40 }}><span className="ms-icon" style={{ fontSize: 17 }}>refresh</span>Tentar novamente</button>
+                </div>
+              )}
+            </div>
+          )}
+
           {s.sendState === 'error' && (
             <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(220,53,69,.1)', border: '1px solid rgba(220,53,69,.35)' }} role="alert">
               <span className="ms-icon" style={{ fontSize: 20, color: 'var(--danger)' }}>error</span>
@@ -1116,7 +1329,20 @@ function App() {
   if (s.step === 0) enabled = !!product;
   else if (s.step === 1) enabled = empresaValid;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; }
-  else { primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && !sending; }
+  else {
+    // Etapa Resumo: se a entrada é Pix, é preciso gerar o QR e confirmar o pagamento
+    // antes de liberar "Finalizar cadastro".
+    const isPix = s.entradaForma === 'pix';
+    if (isPix && s.pixState !== 'paid') {
+      primaryIcon = 'qr_code_2';
+      if (s.pixState === 'generating') { primaryLabel = 'Gerando código Pix…'; primaryAction = () => {}; enabled = false; }
+      else if (s.pixState === 'awaiting') { primaryLabel = 'Aguardando pagamento…'; primaryAction = () => {}; enabled = false; }
+      else { primaryLabel = 'Gerar código Pix'; primaryAction = generatePix; enabled = pagamentoValid; }
+    } else {
+      primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && !sending;
+    }
+  }
+  const primaryBusy = s.step === 3 && (sending || s.pixState === 'generating' || s.pixState === 'awaiting');
 
   /* ======================= RENDER ======================= */
   return (
@@ -1142,8 +1368,8 @@ function App() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 26 }}>
                 <button className="btn-ghost" onClick={back} disabled={sending}><span className="ms-icon" style={{ fontSize: 18 }}>arrow_back</span>{s.step === 0 ? 'Voltar ao lobby' : 'Voltar'}</button>
                 <button className="btn-prim" onClick={primaryAction} disabled={!enabled}>
-                  {sending && s.step === 3 ? <span className="spin" /> : null}
-                  {primaryLabel}{!(sending && s.step === 3) && <span className="ms-icon" style={{ fontSize: 18 }}>{primaryIcon}</span>}
+                  {primaryBusy ? <span className="spin" /> : null}
+                  {primaryLabel}{!primaryBusy && <span className="ms-icon" style={{ fontSize: 18 }}>{primaryIcon}</span>}
                 </button>
               </div>
             </div>
