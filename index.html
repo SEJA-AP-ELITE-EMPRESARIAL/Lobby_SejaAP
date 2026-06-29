@@ -245,6 +245,12 @@ function redistributeSchedule(parcelas, total, entrada) {
   if (freeIdx.length === 0) return arr;
   const manualSum = arr.filter((p) => p.manual).reduce((s, p) => s + (Number(p.valor) || 0), 0);
   const residual = round2((Number(total) || 0) - (Number(entrada) || 0) - manualSum);
+  // Parcela NUNCA pode ser negativa nem ficar zerada: se a entrada + parcelas
+  // fixas já cobrem (ou ultrapassam) o total, as parcelas livres são removidas
+  // (em vez de ficarem zeradas), e parcelas fixas de valor 0 também saem — não
+  // faz sentido manter parcela zerada. Mantém-se apenas as fixas com valor > 0,
+  // cuja soma acima do total é sinalizada na conferência (exceeded).
+  if (residual <= 0) return arr.filter((p) => p.manual && round2(Number(p.valor) || 0) > 0);
   const per = round2(residual / freeIdx.length);
   let acc = 0;
   freeIdx.forEach((idx, k) => {
@@ -512,9 +518,10 @@ function Logo() {
 }
 
 /* ===== Input de dinheiro (mesmo comportamento da negociação) ===== */
-function MoneyInput({ value, onChangeNumber, disabled, placeholder, className }) {
+function MoneyInput({ value, onChangeNumber, onCommit, disabled, placeholder, className }) {
   const [focused, setFocused] = useState(false);
   const [buf, setBuf] = useState('');
+  const startRef = useRef(0);
   const num = Number(value);
   const hasNum = Number.isFinite(num);
   const display = focused ? buf : (hasNum ? fmtMoneyPlain(num) : '');
@@ -522,8 +529,8 @@ function MoneyInput({ value, onChangeNumber, disabled, placeholder, className })
     <input
       className={className || 'inp'} type="text" inputMode="decimal" disabled={disabled} placeholder={placeholder}
       value={display}
-      onFocus={() => { setFocused(true); setBuf(hasNum ? fmtMoneyPlain(num) : ''); }}
-      onBlur={() => setFocused(false)}
+      onFocus={() => { setFocused(true); setBuf(hasNum ? fmtMoneyPlain(num) : ''); startRef.current = hasNum ? num : 0; }}
+      onBlur={() => { setFocused(false); if (onCommit) { const p = parseMoney(buf); const v = Number.isFinite(p) ? p : 0; if (Math.abs(v - (Number(startRef.current) || 0)) >= 0.005) onCommit(v); } }}
       onChange={(e) => { const t = e.target.value; setBuf(t); const p = parseMoney(t); onChangeNumber(Number.isFinite(p) ? p : NaN, t); }}
     />
   );
@@ -609,7 +616,8 @@ function App() {
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
-    omie: true, conecta: true,
+    omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0,
+    observacao: '',
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   });
@@ -684,23 +692,28 @@ function App() {
   // unitValue = mensalidade (produtos recorrentes) ou valor à vista (eventos).
   const unitValue = Number(s.unitValue) || 0;
   const total = product ? (product.recurring ? round2(unitValue * (product.vigencia || 12)) : unitValue) : 0;
-  const setEntradaValor = (n) => patch((d) => ({ entradaValor: Number.isFinite(n) ? n : 0, parcelas: redistributeSchedule(d.parcelas, total, Number.isFinite(n) ? n : 0) }));
+  const setEntradaValor = (n) => patch((d) => { const v = Number.isFinite(n) ? Math.max(0, n) : 0; return { entradaValor: v, parcelas: redistributeSchedule(d.parcelas, total, v) }; });
   const setEntradaForma = (v) => patch({ entradaForma: v });
   const setEntradaData = (v) => patch({ entradaData: v });
   const setCount = (raw) => patch((d) => {
-    const n = Math.max(1, Math.min(60, Math.round(Number(raw) || 1)));
+    const n = Math.max(0, Math.min(60, Math.round(Number(raw) || 0)));
     const start = todayISO();
     const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: addMonthsISO(start, i + 1), forma: 'pix', manual: false });
     return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) };
   });
   const incParcela = () => { if (s.editMode) setCount(s.parcelas.length + 1); };
   const decParcela = () => { if (s.editMode) setCount(s.parcelas.length - 1); };
-  const setParcelaValor = (idx, n) => patch((d) => { const arr = d.parcelas.map((p, i) => i === idx ? { ...p, valor: Number.isFinite(n) ? n : 0, manual: true } : { ...p }); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
+  const setParcelaValor = (idx, n) => patch((d) => { const arr = d.parcelas.map((p, i) => i === idx ? { ...p, valor: Number.isFinite(n) ? Math.max(0, n) : 0, manual: true } : { ...p }); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
   const setParcelaData = (idx, iso) => patch((d) => ({ parcelas: d.parcelas.map((p, i) => i === idx ? { ...p, data: iso } : p) }));
   const setParcelaForma = (idx, forma) => patch((d) => ({ parcelas: d.parcelas.map((p, i) => i === idx ? { ...p, forma } : p) }));
   const unlockParcela = (idx) => patch((d) => { const arr = d.parcelas.map((p, i) => i === idx ? { ...p, manual: false } : { ...p }); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
   const resetSchedule = () => patch((d) => { const arr = d.parcelas.map((p) => ({ ...p, manual: false })); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
   const toggleEdit = () => { if (s.editMode) patch({ editMode: false, ...initPayment(product) }); else patch({ editMode: true }); };
+
+  // ----- Igualar parcelas: ao alterar a 1ª parcela, oferecer aplicar o valor às demais -----
+  const askEqualizar = (n) => { const v = Number.isFinite(n) ? Math.max(0, n) : 0; if (v > 0 && s.parcelas.length > 1) patch({ showEqualizar: true, equalizarValor: v }); };
+  const equalizarSim = () => patch((d) => { const v = Number(d.equalizarValor) || 0; const arr = d.parcelas.map((p) => ({ ...p, valor: v, manual: true })); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)), showEqualizar: false }; });
+  const equalizarNao = () => patch({ showEqualizar: false });
 
   // ----- Edição do VALOR do produto (mensalidade / valor à vista) -----
   // Ao alterar o valor, o cronograma volta ao padrão (entrada + 11 parcelas) sobre o novo total.
@@ -727,6 +740,7 @@ function App() {
   const soma = round2((Number(s.entradaValor) || 0) + parcelasSum);
   const diff = round2(total - soma);
   const balanced = Math.abs(diff) < 0.01;
+  const exceeded = diff < -0.01; // total definido (entrada + parcelas) ultrapassa o valor do contrato
   const parcelasUniformes = s.parcelas.length > 0 && s.parcelas.every((p) => Math.abs((Number(p.valor) || 0) - (Number(s.parcelas[0].valor) || 0)) < 0.005);
 
   // ----- Gating -----
@@ -743,7 +757,7 @@ function App() {
     (s.repMesmoEndereco || (s.repEndereco || '').trim().length > 5) &&
     isPhone(s.repTelefone) && isEmail(s.repEmail)
   );
-  const pagamentoValid = (s.omie || s.conecta) && balanced;
+  const pagamentoValid = (s.omie || s.conecta) && (balanced || exceeded);
 
   // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
   const buildPayload = () => {
@@ -776,7 +790,8 @@ function App() {
         cronograma: s.parcelas.map((p, i) => ({ numero: i + 1, valor: round2(Number(p.valor) || 0), vencimento: p.data || null, forma: p.forma, forma_label: paymentLabel(p.forma) })),
       },
       pagamento: { forma: 'personalizado', formas, pix_txid: s.pixTxid || null, entrada_pix_paga: s.entradaForma === 'pix' ? (s.pixState === 'paid') : null },
-      destino: { omie: !!s.omie, conecta: !!s.conecta, sistemas: [s.omie ? 'omie' : null, s.conecta ? 'conecta' : null].filter(Boolean) },
+      destino: { omie: !!s.omie, conecta: !!s.conecta, d4: !!s.d4, contrato_email: !!s.d4, sistemas: [s.omie ? 'omie' : null, s.conecta ? 'conecta' : null, s.d4 ? 'd4' : null].filter(Boolean) },
+      observacao: (s.observacao || '').trim() || null,
       aceites: { pre_contrato: true, lgpd: true, aceito_em: nowIso },
       metadata: { user_agent: navigator.userAgent, url: location.href, enviado_em: nowIso, canal: 'lobby_conecta_ap' },
     };
@@ -802,7 +817,7 @@ function App() {
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
-    omie: true, conecta: true, sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
+    omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '', sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
 
@@ -893,8 +908,8 @@ function App() {
   }, [s.entradaValor, s.entradaForma]);
   useEffect(() => () => stopPixPolling(), []);
 
-  const destinoChips = [s.omie ? 'Omie' : null, s.conecta ? 'Conecta' : null].filter(Boolean);
-  const destinoText = s.omie && s.conecta ? 'Omie e Conecta' : s.omie ? 'Omie' : s.conecta ? 'Conecta' : 'nenhum sistema';
+  const destinoChips = [s.omie ? 'Omie' : null, s.conecta ? 'Conecta' : null, s.d4 ? 'D4' : null].filter(Boolean);
+  const destinoText = destinoChips.length ? destinoChips.join(', ').replace(/, ([^,]*)$/, ' e $1') : 'nenhum sistema';
   const sending = s.sendState === 'sending';
 
   /* ======================= RENDER HELPERS ======================= */
@@ -1156,7 +1171,10 @@ function App() {
               <span style={{ font: '500 12px var(--font-secondary)', color: 'var(--text-muted)' }}>Quantidade</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', borderRadius: 9, padding: 3 }}>
                 <button onClick={decParcela} disabled={notEdit} style={{ width: 30, height: 30, borderRadius: 7, border: 'none', background: 'transparent', color: s.editMode ? 'var(--primary)' : 'var(--text-muted)', cursor: s.editMode ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span className="ms-icon" style={{ fontSize: 18 }}>remove</span></button>
-                <span style={{ minWidth: 30, textAlign: 'center', font: '700 15px var(--font-primary)', color: 'var(--text)' }}>{s.parcelas.length}</span>
+                <input type="text" inputMode="numeric" key={'pc' + s.parcelas.length} defaultValue={s.parcelas.length} disabled={notEdit} title="Quantidade de parcelas (0 a 60)"
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setCount(e.currentTarget.value); e.currentTarget.blur(); } }}
+                  onBlur={(e) => setCount(e.target.value)}
+                  style={{ width: 40, height: 30, textAlign: 'center', font: '700 15px var(--font-primary)', color: 'var(--text)', background: 'transparent', border: 'none', outline: 'none', padding: 0 }} />
                 <button onClick={incParcela} disabled={notEdit} style={{ width: 30, height: 30, borderRadius: 7, border: 'none', background: 'transparent', color: s.editMode ? 'var(--primary)' : 'var(--text-muted)', cursor: s.editMode ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span className="ms-icon" style={{ fontSize: 18 }}>add</span></button>
               </div>
             </div>
@@ -1171,7 +1189,7 @@ function App() {
                 <div style={{ font: '700 13px var(--font-primary)', color: 'var(--primary)', textAlign: 'center' }}>{i + 1}</div>
                 <div style={{ display: 'flex', alignItems: 'center', height: 40, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid ' + (p.manual ? 'rgba(199,164,68,.45)' : 'var(--border-light)'), padding: '0 10px', gap: 5, opacity: s.editMode ? 1 : .7 }}>
                   <span style={{ font: "600 12px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
-                  <MoneyInput className="" value={p.valor} onChangeNumber={(n) => setParcelaValor(i, n)} disabled={notEdit} placeholder="0,00" />
+                  <MoneyInput className="" value={p.valor} onChangeNumber={(n) => setParcelaValor(i, n)} onCommit={i === 0 ? askEqualizar : undefined} disabled={notEdit} placeholder="0,00" />
                 </div>
                 <select className="inp" style={{ height: 40 }} value={p.forma} onChange={(e) => setParcelaForma(i, e.target.value)} disabled={notEdit}>
                   {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -1187,8 +1205,12 @@ function App() {
           {/* balance */}
           <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: balanced ? 'rgba(40,167,69,.1)' : 'rgba(255,193,7,.1)', border: '1px solid ' + (balanced ? 'rgba(40,167,69,.3)' : 'rgba(255,193,7,.35)') }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '500 12.5px var(--font-secondary)', color: balanced ? '#4ADE80' : 'var(--warning)' }}>
-              <span className="ms-icon" style={{ fontSize: 17 }}>{balanced ? 'task_alt' : 'error'}</span>
-              {balanced ? 'Valores conferem com o total' : ('Diferença de ' + fmt(Math.abs(diff)) + ' em relação ao total')}
+              <span className="ms-icon" style={{ fontSize: 17 }}>{balanced ? 'task_alt' : (exceeded ? 'warning' : 'error')}</span>
+              {balanced
+                ? 'Valores conferem com o total'
+                : exceeded
+                  ? ('O total definido ultrapassa o contrato em ' + fmt(Math.abs(diff)) + ' — confirme a divergência ao revisar')
+                  : ('Faltam ' + fmt(Math.abs(diff)) + ' para atingir o total')}
               {!balanced && s.editMode && <button className="linkbtn" style={{ marginLeft: 8 }} onClick={resetSchedule}>Redistribuir</button>}
             </div>
             <div style={{ font: "700 14px 'Roboto'", color: balanced ? '#4ADE80' : 'var(--warning)' }}>{fmt(soma)}</div>
@@ -1202,8 +1224,8 @@ function App() {
             <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Destino do cadastro</span>
           </div>
           <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 14px' }}>Selecione em quais sistemas este cliente será cadastrado.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {[{ k: 'omie', t: 'Omie', d: 'ERP financeiro e fiscal' }, { k: 'conecta', t: 'Conecta', d: 'Plataforma de gestão' }].map((o) => (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            {[{ k: 'omie', t: 'Omie', d: 'ERP financeiro e fiscal' }, { k: 'conecta', t: 'Conecta', d: 'Plataforma de gestão' }, { k: 'd4', t: 'D4', d: 'Envia o contrato por e-mail' }].map((o) => (
               <label key={o.k} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 16, borderRadius: 12, cursor: 'pointer', background: s[o.k] ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (s[o.k] ? 'rgba(199,164,68,.4)' : 'var(--border-light)') }}>
                 <input type="checkbox" checked={s[o.k]} onChange={(e) => patch({ [o.k]: e.target.checked })} style={{ width: 20, height: 20, accentColor: 'var(--primary)', cursor: 'pointer' }} />
                 <div>
@@ -1214,12 +1236,27 @@ function App() {
             ))}
           </div>
         </div>
+
+        {/* Observação (opcional, máx. 350 caracteres) */}
+        <div className="card" style={{ padding: '20px 22px', marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>edit_note</span>
+            <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Observação</span>
+            <span style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>(opcional)</span>
+          </div>
+          <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px' }}>Use para explicar uma alteração de valor, negociação ou condição especial.</p>
+          <textarea className="inp" value={s.observacao} maxLength={350} rows={3}
+            onChange={(e) => patch({ observacao: e.target.value.slice(0, 350) })}
+            placeholder="Ex.: valor negociado com desconto de fidelidade…"
+            style={{ height: 'auto', minHeight: 88, padding: '10px 12px', resize: 'vertical', lineHeight: 1.5 }} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6, font: '400 11px var(--font-secondary)', color: s.observacao.length >= 350 ? 'var(--warning)' : 'var(--text-muted)' }}>{s.observacao.length}/350</div>
+        </div>
       </>
     );
   };
 
   const renderResumo = () => {
-    const parcelasLabel = s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
+    const parcelasLabel = s.parcelas.length === 0 ? 'Sem parcelas (à vista)' : s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
     return (
       <>
         <div style={{ marginBottom: 22 }}>
@@ -1359,7 +1396,7 @@ function App() {
                 <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{product.icon}</span></div>
                 <div style={{ minWidth: 0 }}><div style={{ font: '600 14.5px var(--font-primary)', color: 'var(--text)', lineHeight: 1.3 }}>{product.name}</div><div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3 }}>{cat.name}</div></div>
               </div>
-              {[['Valor total', fmt(soma)], ['Entrada', fmt(s.entradaValor)], ['Parcelas', s.parcelas.length + (parcelasUniformes ? '× ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0) : ' (variadas)')]].map(([k, v]) => (
+              {[['Valor total', fmt(soma)], ['Entrada', fmt(s.entradaValor)], ['Parcelas', s.parcelas.length === 0 ? 'Sem parcelas' : s.parcelas.length + (parcelasUniformes ? '× ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0) : ' (variadas)')]].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{v}</span></div>
               ))}
               <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
@@ -1382,7 +1419,7 @@ function App() {
   let primaryLabel = 'Continuar', primaryIcon = 'arrow_forward', primaryAction = next, enabled = true;
   if (s.step === 0) enabled = !!product;
   else if (s.step === 1) enabled = empresaValid;
-  else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; }
+  else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
   else {
     // Etapa Resumo: se a entrada é Pix, é preciso gerar o QR e confirmar o pagamento
     // antes de liberar "Finalizar cadastro".
@@ -1451,6 +1488,64 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* Modal: divergência de valores (total definido ultrapassa o valor do contrato) */}
+      {s.showDivergencia && (
+        <div onClick={() => patch({ showDivergencia: false })} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(0,0,0,.62)', backdropFilter: 'blur(2px)' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 440, background: 'var(--surface)', border: '1px solid var(--border-light)', borderRadius: 16, boxShadow: 'var(--elevation-3)', padding: 28, animation: 'popIn .22s both' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,193,7,.12)', border: '1px solid rgba(255,193,7,.35)' }}>
+                <span className="ms-icon" style={{ fontSize: 24, color: 'var(--warning)' }}>warning</span>
+              </div>
+              <div>
+                <h3 style={{ font: '700 18px var(--font-primary)', margin: 0, color: 'var(--text)' }}>Divergência de valores</h3>
+                <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '2px 0 0' }}>O total definido ultrapassa o valor do contrato.</p>
+              </div>
+            </div>
+            <div style={{ background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '4px 16px', margin: '4px 0 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 0', borderBottom: '1px solid var(--border-light)' }}>
+                <span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Valor do contrato (produto)</span>
+                <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{fmt(total)}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 0', borderBottom: '1px solid var(--border-light)' }}>
+                <span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Valor definido por você</span>
+                <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{fmt(soma)}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 0' }}>
+                <span style={{ font: '600 13px var(--font-secondary)', color: 'var(--warning)' }}>Diferença a mais</span>
+                <span style={{ font: "700 14px 'Roboto'", color: 'var(--warning)' }}>{fmt(Math.abs(diff))}</span>
+              </div>
+            </div>
+            <p style={{ font: '400 13px/1.5 var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 22px' }}>Confirme que está ciente da divergência para prosseguir com o pedido.</p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => patch({ showDivergencia: false })}>Cancelar</button>
+              <button className="btn-prim" onClick={() => patch((d) => ({ showDivergencia: false, step: Math.min(3, d.step + 1) }))}>Estou ciente<span className="ms-icon" style={{ fontSize: 18 }}>check</span></button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: igualar valor das demais parcelas ao da primeira */}
+      {s.showEqualizar && (
+        <div onClick={equalizarNao} style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(0,0,0,.62)', backdropFilter: 'blur(2px)' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: 'var(--surface)', border: '1px solid var(--border-light)', borderRadius: 16, boxShadow: 'var(--elevation-3)', padding: 28, animation: 'popIn .22s both' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--primary-subtle)', border: '1px solid rgba(199,164,68,.4)' }}>
+                <span className="ms-icon" style={{ fontSize: 24, color: 'var(--primary)' }}>event_repeat</span>
+              </div>
+              <div>
+                <h3 style={{ font: '700 18px var(--font-primary)', margin: 0, color: 'var(--text)' }}>Igualar parcelas</h3>
+                <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '2px 0 0' }}>Valor definido: <strong style={{ color: 'var(--text)' }}>{fmt(s.equalizarValor)}</strong></p>
+              </div>
+            </div>
+            <p style={{ font: '400 14px/1.5 var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 22px' }}>Deseja igualar o valor das demais parcelas a este?</p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={equalizarNao}>Não</button>
+              <button className="btn-prim" onClick={equalizarSim}>Sim<span className="ms-icon" style={{ fontSize: 18 }}>done_all</span></button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
