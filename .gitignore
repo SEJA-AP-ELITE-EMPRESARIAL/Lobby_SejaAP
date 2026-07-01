@@ -9,3 +9,10 @@ desktop.ini
 
 # Dependências (não usadas em runtime — a página roda via CDN)
 node_modules/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
