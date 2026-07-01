@@ -227,16 +227,35 @@ function addMonthsISO(iso, n) {
 }
 
 // ===== Formas de pagamento =====
+// `code`: dígito usado no código da venda (protocolo) enviado ao webhook.
 const PAYMENT_METHODS = [
-  { id: 'pix',            label: 'Pix' },
-  { id: 'cartao_credito', label: 'Cartão de crédito' },
-  { id: 'cartao_debito',  label: 'Cartão de débito' },
-  { id: 'boleto',         label: 'Boleto' },
-  { id: 'permuta',        label: 'Permuta' },
-  { id: 'link_pagamento', label: 'Link de pagamento' },
-  { id: 'recorrencia',    label: 'Recorrência' },
+  { id: 'pix',            label: 'Pix',                code: 0 },
+  { id: 'cartao_credito', label: 'Cartão de crédito',  code: 1 },
+  { id: 'cartao_debito',  label: 'Cartão de débito',   code: 2 },
+  { id: 'boleto',         label: 'Boleto',             code: 3 },
+  { id: 'permuta',        label: 'Permuta',            code: 4 },
+  { id: 'link_pagamento', label: 'Link de pagamento',  code: 5 },
+  { id: 'recorrencia',    label: 'Recorrência',        code: 6 },
 ];
 const paymentLabel = (id) => { const m = PAYMENT_METHODS.find((x) => x.id === id); return m ? m.label : '—'; };
+// Dígito da forma de pagamento (fallback 9 para forma desconhecida).
+const paymentCode = (id) => { const m = PAYMENT_METHODS.find((x) => x.id === id); return m ? m.code : 9; };
+
+// ===== Código da venda (protocolo) =====
+// Formato: SSS-YYMMDDPRRRRR
+//   SSS    = sigla de 3 letras do produto vendido
+//   -      = separador
+//   YYMMDD = data da venda (ano/mês/dia, 2 dígitos cada)
+//   P      = 1 dígito da forma de pagamento da ENTRADA (ver PAYMENT_METHODS.code)
+//   RRRRR  = 5 dígitos aleatórios
+// Ex.: PRO-260701005821  (ELITE PRO, 01/07/2026, entrada Pix=0, aleatório 05821)
+function buildProtocol(product, entradaForma, date) {
+  const d = date instanceof Date ? date : new Date();
+  const sigla = ((product && product.sigla) || 'XXX').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3).padEnd(3, 'X');
+  const yymmdd = pad2(d.getFullYear() % 100) + pad2(d.getMonth() + 1) + pad2(d.getDate());
+  const rand = String(Math.floor(Math.random() * 100000)).padStart(5, '0');
+  return `${sigla}-${yymmdd}${paymentCode(entradaForma)}${rand}`;
+}
 
 // ===== Cronograma (total âncora + redistribuição automática) =====
 function redistributeSchedule(parcelas, total, entrada) {
@@ -453,30 +472,30 @@ const CATS = [
   { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
     desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
     products: [
-      { id: 'pro',    name: 'ELITE PRO',    desc: 'O plano da Estrutura', duration: '12 meses', monthly: 12997, price: 12997 * 12, recurring: true, vigencia: 12, icon: 'workspace_premium' },
-      { id: 'gestao', name: 'ELITE GESTÃO', desc: 'O plano da Escala',    duration: '12 meses', monthly: 19997, price: 19997 * 12, recurring: true, vigencia: 12, icon: 'insights' },
-      { id: 'evo',    name: 'ELITE EVO',    desc: 'O plano do Legado',    duration: '12 meses', monthly: 29997, price: 29997 * 12, recurring: true, vigencia: 12, icon: 'diamond' },
+      { id: 'pro',    name: 'ELITE PRO',    sigla: 'PRO', desc: 'O plano da Estrutura', duration: '12 meses', monthly: 12997, price: 12997 * 12, recurring: true, vigencia: 12, icon: 'workspace_premium' },
+      { id: 'gestao', name: 'ELITE GESTÃO', sigla: 'GES', desc: 'O plano da Escala',    duration: '12 meses', monthly: 19997, price: 19997 * 12, recurring: true, vigencia: 12, icon: 'insights' },
+      { id: 'evo',    name: 'ELITE EVO',    sigla: 'EVO', desc: 'O plano do Legado',    duration: '12 meses', monthly: 29997, price: 29997 * 12, recurring: true, vigencia: 12, icon: 'diamond' },
     ] },
   { id: 'treinamentos', name: 'Treinamentos', icon: 'school', color: 'gold', locked: true,
     desc: 'Imersões e trilhas de desenvolvimento de líderes e equipes comerciais.',
     products: [
-      { id: 't1', name: 'Imersão Gestão 360',          desc: 'Imersão presencial de 3 dias',       duration: '3 dias',   price: 18000, icon: 'groups' },
-      { id: 't2', name: 'Trilha Líder Elite',          desc: 'Programa de formação de líderes',     duration: '6 meses',  price: 24000, icon: 'military_tech' },
-      { id: 't3', name: 'Vendas de Alta Performance',  desc: 'Treinamento intensivo de vendas',     duration: '2 meses',  price: 12000, icon: 'trending_up' },
+      { id: 't1', name: 'Imersão Gestão 360',          sigla: 'IMG', desc: 'Imersão presencial de 3 dias',       duration: '3 dias',   price: 18000, icon: 'groups' },
+      { id: 't2', name: 'Trilha Líder Elite',          sigla: 'TLE', desc: 'Programa de formação de líderes',     duration: '6 meses',  price: 24000, icon: 'military_tech' },
+      { id: 't3', name: 'Vendas de Alta Performance',  sigla: 'VAP', desc: 'Treinamento intensivo de vendas',     duration: '2 meses',  price: 12000, icon: 'trending_up' },
     ] },
   { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', locked: true,
     desc: 'Aceleração de Performance de Negócios com acompanhamento contínuo.',
     products: [
-      { id: 'a1', name: 'APN Starter', desc: 'Aceleração para pequenos negócios',  duration: '12 meses', price: 24000, icon: 'flight_takeoff' },
-      { id: 'a2', name: 'APN Pro',     desc: 'Aceleração com consultoria dedicada', duration: '12 meses', price: 48000, icon: 'speed' },
-      { id: 'a3', name: 'APN Black',   desc: 'Aceleração premium full-service',     duration: '12 meses', price: 96000, icon: 'workspace_premium' },
+      { id: 'a1', name: 'APN Starter', sigla: 'AST', desc: 'Aceleração para pequenos negócios',  duration: '12 meses', price: 24000, icon: 'flight_takeoff' },
+      { id: 'a2', name: 'APN Pro',     sigla: 'APR', desc: 'Aceleração com consultoria dedicada', duration: '12 meses', price: 48000, icon: 'speed' },
+      { id: 'a3', name: 'APN Black',   sigla: 'ABL', desc: 'Aceleração premium full-service',     duration: '12 meses', price: 96000, icon: 'workspace_premium' },
     ] },
   { id: 'palestras', name: 'Palestras', icon: 'campaign', color: 'green', locked: true,
     desc: 'Palestras in company e eventos de alto impacto.',
     products: [
-      { id: 'pl1', name: 'Palestra In Company',     desc: 'Palestra exclusiva na empresa',  duration: '1 evento',  price: 15000, icon: 'record_voice_over' },
-      { id: 'pl2', name: 'Palestra Magna',          desc: 'Palestra para grandes públicos', duration: '1 evento',  price: 25000, icon: 'stadium' },
-      { id: 'pl3', name: 'Ciclo de Palestras Anual', desc: 'Programa anual de palestras',    duration: '12 meses', price: 80000, icon: 'event' },
+      { id: 'pl1', name: 'Palestra In Company',     sigla: 'PIC', desc: 'Palestra exclusiva na empresa',  duration: '1 evento',  price: 15000, icon: 'record_voice_over' },
+      { id: 'pl2', name: 'Palestra Magna',          sigla: 'PMA', desc: 'Palestra para grandes públicos', duration: '1 evento',  price: 25000, icon: 'stadium' },
+      { id: 'pl3', name: 'Ciclo de Palestras Anual', sigla: 'CPA', desc: 'Programa anual de palestras',    duration: '12 meses', price: 80000, icon: 'event' },
     ] },
 ];
 const COLORS = {
@@ -800,12 +819,15 @@ function App() {
   const finalize = async () => {
     if (!pagamentoValid || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
+    // Código da venda gerado no cliente (formato SSS-YYMMDDPRRRRR) e enviado ao
+    // webhook dentro do payload. Também é o protocolo exibido na tela de sucesso.
+    const protocolo = buildProtocol(product, s.entradaForma, new Date());
     try {
-      const response = await sendPreContrato(buildPayload());
+      const payload = buildPayload();
+      payload.protocolo = protocolo;
+      const response = await sendPreContrato(payload);
       const r = response || {};
-      const fromApi = r.protocolo || r.protocol || r.id || r.protocolo_id || r.protocoloId;
-      const proto = fromApi ? String(fromApi) : ('CAP-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 899999));
-      patch({ screen: 'success', response: r, protocol: proto, sendState: 'idle' });
+      patch({ screen: 'success', response: r, protocol: protocolo, sendState: 'idle' });
     } catch (e) {
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
