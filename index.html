@@ -142,6 +142,14 @@ const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-e
 const PIX_CREATE_URL = 'https://n8n.sejaap.com.br/webhook/907bbfb8-b366-4f1e-9871-9cc4ba98c5e8';
 const PIX_STATUS_URL = 'https://n8n.sejaap.com.br/webhook/36a7380f-2ef9-4f82-bb9a-c93355a09081/easyflow-status/';
 
+// Liga/desliga a cobrança Pix in-app (gerar QR + polling do webhook EasyFlow).
+// Enquanto o webhook do Pix estiver em manutenção (questão bancária), deixe FALSE:
+// o fluxo NÃO trava — "Finalizar cadastro" fica liberado e a cobrança da entrada
+// é tratada fora do app. A entrada continua podendo ser marcada como Pix; só a
+// confirmação do pagamento dentro do app é dispensada. Volte para TRUE quando o
+// webhook voltar (nada mais precisa mudar).
+const PIX_COBRANCA_ATIVA = false;
+
 // ===== Máscaras =====
 const maskCNPJ = (v) => {
   v = v.replace(/\D/g, '').slice(0, 14);
@@ -225,6 +233,12 @@ function addMonthsISO(iso, n) {
   dt.setDate(Math.min(p[2], last));
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
+// Vencimento das parcelas: uma cobrança por mês, a partir da data de contratação
+// (data da entrada). A parcela i (1-based) vence no mesmo dia, i meses depois.
+// Quando o dia não existe no mês (ex.: dia 31 em fevereiro), cai no ÚLTIMO dia do
+// mês — assim fevereiro também é cobrado, em vez de "pular" para março.
+// Ex.: entrada 31/01 → parcela 1 = 28/02 (não 02/03).
+const parcelaVencimento = (baseISO, idx) => addMonthsISO(baseISO, idx + 1);
 
 // ===== Formas de pagamento =====
 // `code`: dígito usado no código da venda (protocolo) enviado ao webhook.
@@ -281,7 +295,7 @@ function redistributeSchedule(parcelas, total, entrada) {
 function buildSchedule(count, total, entrada, startISO) {
   const n = Math.max(1, Math.round(Number(count) || 1));
   const start = startISO || todayISO();
-  const arr = Array.from({ length: n }, (_, i) => ({ valor: 0, data: addMonthsISO(start, i + 1), forma: 'pix', manual: false }));
+  const arr = Array.from({ length: n }, (_, i) => ({ valor: 0, data: parcelaVencimento(start, i), forma: 'boleto', manual: false }));
   return redistributeSchedule(arr, total, entrada);
 }
 function scheduleTotal(entrada, parcelas) {
@@ -505,7 +519,7 @@ const COLORS = {
   purple: { iconBg: 'rgba(124,58,237,0.12)', iconFg: '#A78BFA', orb: '#7C3AED' },
 };
 const getCat = (id) => CATS.find((c) => c.id === id) || null;
-const STEPS = ['Produto', 'Empresa', 'Pagamento', 'Resumo'];
+const STEPS = ['Empresa', 'Produto', 'Pagamento', 'Resumo'];
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
@@ -713,11 +727,16 @@ function App() {
   const total = product ? (product.recurring ? round2(unitValue * (product.vigencia || 12)) : unitValue) : 0;
   const setEntradaValor = (n) => patch((d) => { const v = Number.isFinite(n) ? Math.max(0, n) : 0; return { entradaValor: v, parcelas: redistributeSchedule(d.parcelas, total, v) }; });
   const setEntradaForma = (v) => patch({ entradaForma: v });
-  const setEntradaData = (v) => patch({ entradaData: v });
+  // Ao mudar a data de contratação (entrada), recalcula os vencimentos das
+  // parcelas: cada uma 30 dias após a anterior, a partir da nova data.
+  const setEntradaData = (v) => patch((d) => ({
+    entradaData: v,
+    parcelas: d.parcelas.map((p, i) => ({ ...p, data: parcelaVencimento(v || todayISO(), i) })),
+  }));
   const setCount = (raw) => patch((d) => {
     const n = Math.max(0, Math.min(60, Math.round(Number(raw) || 0)));
-    const start = todayISO();
-    const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: addMonthsISO(start, i + 1), forma: 'pix', manual: false });
+    const start = d.entradaData || todayISO();
+    const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: parcelaVencimento(start, i), forma: 'boleto', manual: false });
     return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) };
   });
   const incParcela = () => { if (s.editMode) setCount(s.parcelas.length + 1); };
@@ -738,12 +757,23 @@ function App() {
   // Ao alterar o valor, o cronograma volta ao padrão (entrada + 11 parcelas) sobre o novo total.
   const rebuildDefault = (newTotal) => {
     const entrada = product.recurring ? round2(newTotal / (product.vigencia || 12)) : round2(newTotal / 12);
-    return { entradaValor: entrada, parcelas: buildSchedule(11, newTotal, entrada, todayISO()), editMode: false };
+    return { entradaValor: entrada, parcelas: buildSchedule(11, newTotal, entrada, s.entradaData || todayISO()), editMode: false };
   };
   const setUnitValue = (n) => patch(() => {
     const val = Number.isFinite(n) ? n : 0;
     const newTotal = product.recurring ? round2(val * (product.vigencia || 12)) : val;
     return { unitValue: val, ...rebuildDefault(newTotal) };
+  });
+  // Edita o VALOR TOTAL (valor cheio) do contrato diretamente. Recalcula a
+  // mensalidade (total ÷ vigência) e reconstrói o cronograma sobre o novo total.
+  // O total digitado é preservado (a divisão fica só na mensalidade), então
+  // `total` derivado == valor definido pelo consultor.
+  const setTotalValue = (n) => patch(() => {
+    const val = Number.isFinite(n) ? Math.max(0, n) : 0;
+    const meses = product.vigencia || 12;
+    const unit = product.recurring ? (val / meses) : val;
+    const newTotal = product.recurring ? round2(unit * meses) : round2(val);
+    return { unitValue: unit, ...rebuildDefault(newTotal) };
   });
   const togglePriceEdit = () => patch((d) => {
     if (d.priceEdit) { // desligar: volta ao valor de tabela do produto
@@ -808,7 +838,13 @@ function App() {
         entrada_detalhe: { valor: round2(Number(s.entradaValor) || 0), forma: s.entradaForma, forma_label: paymentLabel(s.entradaForma), data: s.entradaData || null },
         cronograma: s.parcelas.map((p, i) => ({ numero: i + 1, valor: round2(Number(p.valor) || 0), vencimento: p.data || null, forma: p.forma, forma_label: paymentLabel(p.forma) })),
       },
-      pagamento: { forma: 'personalizado', formas, pix_txid: s.pixTxid || null, entrada_pix_paga: s.entradaForma === 'pix' ? (s.pixState === 'paid') : null },
+      pagamento: {
+        forma: 'personalizado', formas, pix_txid: s.pixTxid || null,
+        pix_cobranca_ativa: PIX_COBRANCA_ATIVA,
+        // Com a cobrança in-app desativada, o app não afere o pagamento da entrada
+        // Pix (fica null = "não aferido"); com ela ativa, reflete o pixState.
+        entrada_pix_paga: (PIX_COBRANCA_ATIVA && s.entradaForma === 'pix') ? (s.pixState === 'paid') : null,
+      },
       destino: { omie: !!s.omie, conecta: !!s.conecta, d4: !!s.d4, contrato_email: !!s.d4, sistemas: [s.omie ? 'omie' : null, s.conecta ? 'conecta' : null, s.d4 ? 'd4' : null].filter(Boolean) },
       observacao: (s.observacao || '').trim() || null,
       aceites: { pre_contrato: true, lgpd: true, aceito_em: nowIso },
@@ -893,6 +929,7 @@ function App() {
   };
   // Cria a cobrança (POST). Devolve o orderId; o QR vem depois, via polling do status.
   const generatePix = async () => {
+    if (!PIX_COBRANCA_ATIVA) return;   // cobrança Pix in-app desativada (webhook em manutenção)
     if (s.pixState === 'generating') return;
     stopPixPolling();
     pixStop.current = false;
@@ -1036,8 +1073,8 @@ function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span className="ms-icon" style={{ fontSize: 20, color: 'var(--primary)' }}>sell</span>
               <div>
-                <div className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>{product.recurring ? 'Valor da mensalidade' : 'Valor do produto'}</div>
-                <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>O valor pode variar por evento/negociação — habilite para ajustar.</div>
+                <div className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>{product.recurring ? 'Valores do contrato' : 'Valor do produto'}</div>
+                <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{product.recurring ? 'Edite a mensalidade ou o valor total — as parcelas se recalculam automaticamente.' : 'O valor pode variar por evento/negociação — habilite para ajustar.'}</div>
               </div>
             </div>
             <EditToggle on={s.priceEdit} onToggle={togglePriceEdit} label="Editar valor" />
@@ -1050,11 +1087,22 @@ function App() {
                 <MoneyInput className="" value={s.unitValue} onChangeNumber={setUnitValue} disabled={!s.priceEdit} placeholder="0,00" />
               </div>
             </div>
-            <div style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)', paddingBottom: 11 }}>
-              {product.recurring
-                ? <>× {product.vigencia || 12} meses = <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong></>
-                : <>Total do contrato = <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong></>}
-            </div>
+            {product.recurring ? (
+              <>
+                <div style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)', paddingBottom: 11 }}>× {product.vigencia || 12} meses =</div>
+                <div style={{ minWidth: 200 }}>
+                  <label className="lbl sm">Valor total do contrato (R$)</label>
+                  <div style={{ display: 'flex', alignItems: 'center', height: 44, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid ' + (s.priceEdit ? 'rgba(199,164,68,.45)' : 'var(--border-light)'), padding: '0 12px', gap: 6, opacity: s.priceEdit ? 1 : .7 }}>
+                    <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+                    <MoneyInput className="" value={total} onChangeNumber={setTotalValue} disabled={!s.priceEdit} placeholder="0,00" />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)', paddingBottom: 11 }}>
+                Total do contrato = <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong>
+              </div>
+            )}
           </div>
           {round2(unitValue) !== round2(valorTabela) && (
             <div style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6, font: '500 11.5px var(--font-secondary)', color: 'var(--primary)' }}>
@@ -1213,10 +1261,10 @@ function App() {
                   <span style={{ font: "600 12px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
                   <MoneyInput className="" value={p.valor} onChangeNumber={(n) => setParcelaValor(i, n)} onCommit={i === 0 ? askEqualizar : undefined} disabled={notEdit} placeholder="0,00" />
                 </div>
-                <select className="inp" style={{ height: 40 }} value={p.forma} onChange={(e) => setParcelaForma(i, e.target.value)} disabled={notEdit}>
+                <select className="inp" style={{ height: 40 }} value={p.forma} onChange={(e) => setParcelaForma(i, e.target.value)}>
                   {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
-                <input className="inp" style={{ height: 40 }} type="date" value={p.data || ''} onChange={(e) => setParcelaData(i, e.target.value)} disabled={notEdit} />
+                <input className="inp" style={{ height: 40 }} type="date" value={p.data || ''} onChange={(e) => setParcelaData(i, e.target.value)} />
                 <button onClick={() => p.manual && unlockParcela(i)} disabled={notEdit || !p.manual} title={p.manual ? 'Valor fixado — clique para voltar ao automático' : 'Valor automático'} style={{ width: 34, height: 34, borderRadius: 8, border: 'none', background: 'transparent', color: p.manual ? 'var(--primary)' : 'var(--text-muted)', cursor: (notEdit || !p.manual) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span className="ms-icon" style={{ fontSize: 18 }}>{p.manual ? 'lock' : 'auto_mode'}</span>
                 </button>
@@ -1287,18 +1335,18 @@ function App() {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="card" style={{ padding: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Produto</span><button className="linkbtn" onClick={() => goStep(0)}>Editar</button></div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div><div style={{ font: '600 16px var(--font-primary)', color: 'var(--text)' }}>{product.name}</div><div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{cat.name} · {product.duration}</div></div>
-              <div style={{ font: '700 17px var(--font-primary)', color: 'var(--primary)' }}>{fmt(total)}</div>
-            </div>
-          </div>
-          <div className="card" style={{ padding: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Empresa & Representante</span><button className="linkbtn" onClick={() => goStep(1)}>Editar</button></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Empresa & Representante</span><button className="linkbtn" onClick={() => goStep(0)}>Editar</button></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
               {[['Razão social', s.razaoSocial], ['CNPJ', s.cnpj], ['Representante', s.repNome || '—'], ['Contato', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]].map(([k, v]) => (
                 <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
               ))}
+            </div>
+          </div>
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Produto</span><button className="linkbtn" onClick={() => goStep(1)}>Editar</button></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div><div style={{ font: '600 16px var(--font-primary)', color: 'var(--text)' }}>{product.name}</div><div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{cat.name} · {product.duration}</div></div>
+              <div style={{ font: '700 17px var(--font-primary)', color: 'var(--primary)' }}>{fmt(total)}</div>
             </div>
           </div>
           <div className="card" style={{ padding: 20 }}>
@@ -1311,8 +1359,19 @@ function App() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span className="sec-title" style={{ fontSize: 12 }}>Destino do cadastro</span><div style={{ display: 'flex', gap: 8 }}>{destinoChips.map((c) => <span key={c} className="chip"><span className="ms-icon" style={{ fontSize: 13 }}>check</span>{c}</span>)}</div></div>
           </div>
 
+          {/* ===== Cobrança Pix em manutenção (webhook desativado) ===== */}
+          {!PIX_COBRANCA_ATIVA && s.entradaForma === 'pix' && (
+            <div className="card" style={{ padding: 18, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <span className="ms-icon" style={{ fontSize: 22, color: 'var(--warning)' }}>info</span>
+              <div style={{ font: '400 13px/1.55 var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text)', display: 'block', marginBottom: 2 }}>Cobrança Pix em manutenção</strong>
+                A geração de QR Code está temporariamente indisponível. Prossiga normalmente — a cobrança da entrada será tratada fora do app.
+              </div>
+            </div>
+          )}
+
           {/* ===== Cobrança Pix da entrada ===== */}
-          {s.entradaForma === 'pix' && s.pixState !== 'idle' && (
+          {PIX_COBRANCA_ATIVA && s.entradaForma === 'pix' && s.pixState !== 'idle' && (
             <div className="card" style={{ padding: 22 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1439,14 +1498,15 @@ function App() {
 
   // ----- Botão primário por etapa -----
   let primaryLabel = 'Continuar', primaryIcon = 'arrow_forward', primaryAction = next, enabled = true;
-  if (s.step === 0) enabled = !!product;
-  else if (s.step === 1) enabled = empresaValid;
+  if (s.step === 0) enabled = empresaValid;
+  else if (s.step === 1) enabled = !!product;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
   else {
-    // Etapa Resumo: se a entrada é Pix, é preciso gerar o QR e confirmar o pagamento
-    // antes de liberar "Finalizar cadastro".
+    // Etapa Resumo: com a cobrança Pix ATIVA, é preciso gerar o QR e confirmar o
+    // pagamento antes de liberar "Finalizar cadastro". Com a cobrança desativada
+    // (webhook em manutenção), esse gate é ignorado e o fluxo segue direto.
     const isPix = s.entradaForma === 'pix';
-    if (isPix && s.pixState !== 'paid') {
+    if (PIX_COBRANCA_ATIVA && isPix && s.pixState !== 'paid') {
       primaryIcon = 'qr_code_2';
       if (s.pixState === 'generating') { primaryLabel = 'Gerando código Pix…'; primaryAction = () => {}; enabled = false; }
       else if (s.pixState === 'awaiting') { primaryLabel = 'Aguardando pagamento…'; primaryAction = () => {}; enabled = false; }
@@ -1472,8 +1532,8 @@ function App() {
         {s.screen === 'flow' && (
           <div className="flow-grid">
             <div style={{ minWidth: 0 }}>
-              {s.step === 0 && renderProduto()}
-              {s.step === 1 && renderEmpresa()}
+              {s.step === 0 && renderEmpresa()}
+              {s.step === 1 && renderProduto()}
               {s.step === 2 && renderPagamento()}
               {s.step === 3 && renderResumo()}
 
