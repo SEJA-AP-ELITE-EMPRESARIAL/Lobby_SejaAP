@@ -9,3 +9,6 @@ desktop.ini
 
 # Dependências (não usadas em runtime — a página roda via CDN)
 node_modules/
+
+# Documentação interna/local — não deve ser versionada no GitHub
+docs/
