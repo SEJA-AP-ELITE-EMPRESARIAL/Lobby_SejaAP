@@ -1308,7 +1308,7 @@ function App() {
           </div>
         </div>
 
-        {/* Observação (opcional, máx. 350 caracteres) */}
+        {/* Observação (opcional, máx. 1500 caracteres) */}
         <div className="card" style={{ padding: '20px 22px', marginTop: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>edit_note</span>
@@ -1316,11 +1316,11 @@ function App() {
             <span style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>(opcional)</span>
           </div>
           <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px' }}>Use para explicar uma alteração de valor, negociação ou condição especial.</p>
-          <textarea className="inp" value={s.observacao} maxLength={350} rows={3}
-            onChange={(e) => patch({ observacao: e.target.value.slice(0, 350) })}
+          <textarea className="inp" value={s.observacao} maxLength={1500} rows={3}
+            onChange={(e) => patch({ observacao: e.target.value.slice(0, 1500) })}
             placeholder="Ex.: valor negociado com desconto de fidelidade…"
             style={{ height: 'auto', minHeight: 88, padding: '10px 12px', resize: 'vertical', lineHeight: 1.5 }} />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6, font: '400 11px var(--font-secondary)', color: s.observacao.length >= 350 ? 'var(--warning)' : 'var(--text-muted)' }}>{s.observacao.length}/350</div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6, font: '400 11px var(--font-secondary)', color: s.observacao.length >= 1500 ? 'var(--warning)' : 'var(--text-muted)' }}>{s.observacao.length}/1500</div>
         </div>
       </>
     );
