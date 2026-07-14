@@ -12,3 +12,10 @@ node_modules/
 
 # Documentação interna/local — não deve ser versionada no GitHub
 docs/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
