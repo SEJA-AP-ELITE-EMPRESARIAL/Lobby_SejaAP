@@ -136,6 +136,15 @@ const { useState, useEffect, useMemo, useRef } = React;
 const CNPJ_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/brasilapi-cnpj';
 const CEP_WEBHOOK_URL  = 'https://n8n.sejaap.com.br/webhook/busca-cep';
 const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite';
+// Venda APN — fluxo n8n PRÓPRIO. A APN não passa pelo onboarding do Elite: o
+// payload é outro (sem cronograma, sem destino Omie/Conecta/D4).
+//
+// ⚠️ PREENCHER com a URL do webhook da APN. Enquanto estiver vazio, o fluxo APN
+// abre e preenche normalmente, mas o botão "Finalizar" fica travado no resumo,
+// com aviso na tela — travar é melhor do que mandar a venda para o fluxo errado.
+const APN_SEND_WEBHOOK_URL = '';
+// Parcelamento no cartão de crédito da APN (as demais formas são à vista).
+const APN_MAX_PARCELAS_CREDITO = 12;
 // Cobrança Pix da entrada (EasyFlow), em 2 endpoints:
 //  - CRIAR  : POST PIX_CREATE_URL  -> { orderId, ... }
 //  - STATUS : GET  PIX_STATUS_URL + orderId  -> { status: pending|qr_ready|paid, qrCodeBase64, copyAndPasteCode, expireAt }
@@ -402,10 +411,14 @@ function extractWebhookError(body) {
   if (item.faultstring || item.error_type) return { message: item.faultstring || 'Não foi possível concluir o envio.', errorType: item.error_type || null };
   return null;
 }
-async function sendPreContrato(payload) {
+// POST do cadastro num webhook n8n, com o mesmo tratamento de erro para todos os
+// fluxos: erro de negócio volta em `faultstring` e é mostrado ao consultor
+// (err.handled); o resto vira mensagem genérica.
+async function postCadastro(url, payload) {
+  if (!url) throw new Error('Webhook de envio não configurado.');
   let res;
   try {
-    res = await fetch(SEND_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(payload), mode: 'cors' });
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(payload), mode: 'cors' });
   } catch (e) { throw new Error('Falha de conexão ao enviar o cadastro'); }
   let body = null; try { body = await res.json(); } catch { body = null; }
   const errInfo = extractWebhookError(body);
@@ -413,6 +426,8 @@ async function sendPreContrato(payload) {
   if (!res.ok) throw new Error(`Erro ao enviar (HTTP ${res.status})`);
   return body || {};
 }
+const sendPreContrato = (payload) => postCadastro(SEND_WEBHOOK_URL, payload);
+const sendVendaApn = (payload) => postCadastro(APN_SEND_WEBHOOK_URL, payload);
 
 // ===== Cobrança Pix da entrada =====
 // Gera a imagem do QR a partir do código copia-e-cola (EMV) com qrcode-generator.
@@ -498,13 +513,12 @@ const CATS = [
       { id: 't2', name: 'Trilha Líder Elite',          sigla: 'TLE', desc: 'Programa de formação de líderes',     duration: '6 meses',  price: 24000, icon: 'military_tech' },
       { id: 't3', name: 'Vendas de Alta Performance',  sigla: 'VAP', desc: 'Treinamento intensivo de vendas',     duration: '2 meses',  price: 12000, icon: 'trending_up' },
     ] },
-  { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', locked: true,
-    desc: 'Aceleração de Performance de Negócios com acompanhamento contínuo.',
-    products: [
-      { id: 'a1', name: 'APN Starter', sigla: 'AST', desc: 'Aceleração para pequenos negócios',  duration: '12 meses', price: 24000, icon: 'flight_takeoff' },
-      { id: 'a2', name: 'APN Pro',     sigla: 'APR', desc: 'Aceleração com consultoria dedicada', duration: '12 meses', price: 48000, icon: 'speed' },
-      { id: 'a3', name: 'APN Black',   sigla: 'ABL', desc: 'Aceleração premium full-service',     duration: '12 meses', price: 96000, icon: 'workspace_premium' },
-    ] },
+  // APN: categoria de FLUXO PRÓPRIO (`flow: 'apn'`). Não tem produtos nem valor
+  // de tabela — o consultor informa o valor negociado da venda, e o fluxo é
+  // enxuto: cliente (CNPJ + contato), pagamento (valor/forma/origem) e resumo.
+  { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', flow: 'apn', sigla: 'APN',
+    desc: 'Aceleração de Performance de Negócios — valor definido na negociação.',
+    products: [] },
   { id: 'palestras', name: 'Palestras', icon: 'campaign', color: 'green', locked: true,
     desc: 'Palestras in company e eventos de alto impacto.',
     products: [
@@ -521,6 +535,10 @@ const COLORS = {
 };
 const getCat = (id) => CATS.find((c) => c.id === id) || null;
 const STEPS = ['Empresa', 'Produto', 'Pagamento', 'Resumo'];
+// A APN tem um fluxo mais curto: não há produto a escolher nem cronograma de
+// parcelas — só cliente, valor/forma/origem e conferência.
+const STEPS_APN = ['Cliente', 'Pagamento', 'Resumo'];
+const stepsDaCategoria = (c) => (c && c.flow === 'apn' ? STEPS_APN : STEPS);
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
@@ -652,6 +670,10 @@ function App() {
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0,
     observacao: '',
+    // ----- Fluxo APN (categoria de fluxo próprio) -----
+    // Valor livre da venda, forma de pagamento (parcelável só no crédito) e a
+    // origem da venda em texto livre.
+    apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   });
@@ -671,12 +693,16 @@ function App() {
   const cat = getCat(s.catId);
   const colors = cat ? COLORS[cat.color] : COLORS.gold;
   const product = s.product;
+  // Fluxo APN: wizard curto, sem produto/cronograma/destino.
+  const isApn = !!cat && cat.flow === 'apn';
+  const steps = stepsDaCategoria(cat);
+  const ultimoStep = steps.length - 1;
 
   // ----- Navegação -----
   const goLobby = () => patch({ screen: 'lobby' });
   const onCategory = (id) => patch({ screen: 'flow', step: 0, catId: id, product: null });
   const onProduct = (p) => patch({ product: p, priceEdit: false, unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) });
-  const next = () => patch((d) => ({ step: Math.min(3, d.step + 1) }));
+  const next = () => patch((d) => ({ step: Math.min(ultimoStep, d.step + 1) }));
   const back = () => { if (s.step === 0) patch({ screen: 'lobby' }); else patch((d) => ({ step: d.step - 1 })); };
   const goStep = (i) => patch({ step: i });
 
@@ -809,6 +835,31 @@ function App() {
   );
   const pagamentoValid = (s.omie || s.conecta) && (balanced || exceeded);
 
+  // ----- APN: valor livre, forma de pagamento e origem da venda -----
+  // Parcelamento existe só no cartão de crédito (até APN_MAX_PARCELAS_CREDITO);
+  // nas demais formas a venda é à vista, então `apnParcelas` é forçado a 1.
+  const apnCredito = s.apnForma === 'cartao_credito';
+  const apnParcelas = apnCredito
+    ? Math.min(APN_MAX_PARCELAS_CREDITO, Math.max(1, Math.round(Number(s.apnParcelas) || 1)))
+    : 1;
+  const apnValor = Number(s.apnValor);
+  const apnValorOk = Number.isFinite(apnValor) && apnValor > 0;
+  const apnValorParcela = apnValorOk ? round2(apnValor / apnParcelas) : 0;
+  const setApnForma = (forma) => patch((d) => ({
+    apnForma: forma,
+    apnParcelas: forma === 'cartao_credito' ? Math.max(1, Number(d.apnParcelas) || 1) : 1,
+  }));
+  const setApnParcelas = (n) => patch({ apnParcelas: Math.min(APN_MAX_PARCELAS_CREDITO, Math.max(1, Math.round(Number(n) || 1))) });
+
+  const apnClienteValid = (
+    isCNPJ(s.cnpj) &&
+    (s.razaoSocial || '').trim().length > 3 &&
+    (s.repNome || '').trim().length > 3 &&
+    isEmail(s.repEmail) && isPhone(s.repTelefone)
+  );
+  const apnPagamentoValid = apnValorOk && !!s.apnForma && (s.apnOrigem || '').trim().length > 1;
+  const apnEnvioConfigurado = !!APN_SEND_WEBHOOK_URL;
+
   // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
   const buildPayload = () => {
     const nowIso = new Date().toISOString();
@@ -853,6 +904,60 @@ function App() {
     };
   };
 
+  /* ----- Payload + envio da APN (webhook próprio) -----
+   * Bem menor que o do Elite: não há produto, cronograma nem destino. O endereço
+   * não é pedido na tela — vai só o que a consulta ao CNPJ trouxer, e `dados_receita`
+   * diz se ele veio mesmo da Receita ou se o CNPJ não foi consultado com sucesso.
+   */
+  const buildApnPayload = () => {
+    const nowIso = new Date().toISOString();
+    const valor = round2(Number(s.apnValor) || 0);
+    return {
+      origem: 'lobby_conecta_ap',
+      etapa: 'envio_venda_apn',
+      categoria: { id: cat ? cat.id : 'apn', nome: cat ? cat.name : 'APN' },
+      empresa: {
+        cnpj: s.cnpj || '', cnpj_limpo: onlyDigits(s.cnpj),
+        razao_social: (s.razaoSocial || '').trim(),
+        inscricao_estadual: (s.inscricaoEstadual || '').trim() || null,
+        endereco: composeEndereco(s) || null,
+        logradouro: (s.endereco || '').trim() || null, numero: (s.numero || '').trim() || null,
+        complemento: (s.complemento || '').trim() || null, bairro: (s.bairro || '').trim() || null,
+        cidade: (s.cidade || '').trim() || null, estado: (s.estado || '').toUpperCase() || null,
+        cep: s.cep || null,
+        dados_receita: s.cnpjStatus === 'done',
+      },
+      contato: {
+        nome: (s.repNome || '').trim(),
+        email: (s.repEmail || '').trim(),
+        telefone: s.repTelefone || '', telefone_limpo: onlyDigits(s.repTelefone),
+      },
+      pagamento: {
+        valor, valor_centavos: Math.round(valor * 100),
+        forma: s.apnForma, forma_label: paymentLabel(s.apnForma),
+        parcelado: apnParcelas > 1, parcelas: apnParcelas,
+        valor_parcela: round2(valor / apnParcelas),
+      },
+      origem_venda: (s.apnOrigem || '').trim(),
+      metadata: { user_agent: navigator.userAgent, url: location.href, enviado_em: nowIso, canal: 'lobby_conecta_ap' },
+    };
+  };
+
+  const finalizeApn = async () => {
+    if (!apnPagamentoValid || !apnEnvioConfigurado || s.sendState === 'sending') return;
+    patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
+    // Mesmo formato de protocolo do Elite; a sigla vem da categoria (APN).
+    const protocolo = buildProtocol({ sigla: (cat && cat.sigla) || 'APN' }, s.apnForma, new Date());
+    try {
+      const payload = buildApnPayload();
+      payload.protocolo = protocolo;
+      const response = await sendVendaApn(payload);
+      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle' });
+    } catch (e) {
+      patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
+    }
+  };
+
   const finalize = async () => {
     if (!pagamentoValid || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
@@ -876,7 +981,9 @@ function App() {
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
-    omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '', sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
+    omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '',
+    apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
+    sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
 
@@ -977,7 +1084,7 @@ function App() {
   const renderStepper = () => (
     <div style={{ flexShrink: 0, padding: '18px 28px', borderBottom: '1px solid var(--border-light)', background: 'var(--surface-alt)' }}>
       <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', alignItems: 'center' }}>
-        {STEPS.map((label, i) => {
+        {steps.map((label, i) => {
           const state = i < s.step ? 'done' : i === s.step ? 'active' : 'todo';
           const circle = state === 'active'
             ? { background: 'var(--gradient-primary)', color: '#1A1A18', borderColor: 'transparent', boxShadow: '0 4px 12px rgba(199,164,68,.35)' }
@@ -1014,7 +1121,8 @@ function App() {
                 <div style={{ width: 54, height: 54, borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: locked ? 'var(--surface-light)' : col.iconBg, color: locked ? 'var(--text-muted)' : col.iconFg }}>
                   <span className="ms-icon" style={{ fontSize: 28 }}>{c.icon}</span>
                 </div>
-                {!locked && <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.04em', color: 'var(--text-muted)', border: '1px solid var(--border-light)', padding: '5px 9px', borderRadius: 7 }}>{c.products.length} produtos</span>}
+                {/* Categoria de fluxo próprio (APN) não tem produtos a contar. */}
+                {!locked && <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.04em', color: 'var(--text-muted)', border: '1px solid var(--border-light)', padding: '5px 9px', borderRadius: 7 }}>{c.flow === 'apn' ? 'Valor livre' : `${(c.products || []).length} produtos`}</span>}
               </div>
               <div style={{ font: '700 20px var(--font-primary)', letterSpacing: '-.01em', color: 'var(--text)', marginBottom: 7 }}>{c.name}</div>
               <div style={{ font: '400 13.5px/1.55 var(--font-secondary)', color: 'var(--text-secondary)', marginBottom: 20, minHeight: 42 }}>{c.desc}</div>
@@ -1326,6 +1434,203 @@ function App() {
     );
   };
 
+  /* ===================================================================== */
+  /* ===================  APN — fluxo próprio (3 etapas)  ================= */
+  /* ===================================================================== */
+
+  // Etapa 1 — Cliente: CNPJ (mesma consulta do Elite) + dados de contato.
+  // O endereço não é pedido: fica com o que a Receita devolver, e é só exibido.
+  const renderApnCliente = () => {
+    const cnpjBtnLabel = s.cnpjStatus === 'loading' ? 'Buscando…' : s.cnpjStatus === 'done' ? 'Revalidar' : 'Validar CNPJ';
+    const enderecoAchado = composeEndereco(s);
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: colors.iconFg }}>{cat.name}</span>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '6px 0 6px', color: 'var(--text)' }}>Dados do cliente</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Informe o CNPJ para buscar os dados da empresa automaticamente.</p>
+        </div>
+
+        {/* Empresa (CNPJ) */}
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="sec-title" style={{ marginBottom: 14 }}>Empresa</div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <label className="lbl">CNPJ<span style={{ color: 'var(--primary)' }}> *</span></label>
+              <input className="inp lg" value={s.cnpj} placeholder="00.000.000/0000-00" inputMode="numeric"
+                onChange={(e) => onField('cnpj', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') validateCnpj(); }} />
+            </div>
+            <button className="btn-prim" onClick={validateCnpj} disabled={s.cnpjStatus === 'loading'} style={{ height: 46 }}>
+              {s.cnpjStatus === 'loading' ? <span className="spin" /> : <span className="ms-icon" style={{ fontSize: 18 }}>search</span>}
+              {cnpjBtnLabel}
+            </button>
+          </div>
+          {s.cnpjStatus === 'done' && (
+            <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: '#4ADE80', background: 'rgba(40,167,69,.12)', border: '1px solid rgba(40,167,69,.3)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>verified</span>Dados encontrados na Receita Federal.
+            </div>
+          )}
+          {(s.cnpjStatus === 'manual' || s.cnpjStatus === 'error') && (
+            <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>error</span>{s.cnpjErr}
+            </div>
+          )}
+          <div style={{ marginTop: 16 }}>
+            <Field label="Razão social" required value={s.razaoSocial} onChange={(v) => onField('razaoSocial', v)} placeholder="Nome registrado da empresa" />
+          </div>
+          {/* O endereço não é editado aqui — vai no envio apenas como veio do CNPJ. */}
+          {enderecoAchado && (
+            <div style={{ marginTop: 14, display: 'flex', alignItems: 'flex-start', gap: 8, font: '400 12.5px/1.5 var(--font-secondary)', color: 'var(--text-muted)' }}>
+              <span className="ms-icon" style={{ fontSize: 16, color: 'var(--text-muted)' }}>location_on</span>
+              <span>{enderecoAchado}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Contato */}
+        <div className="card">
+          <div className="sec-title" style={{ marginBottom: 16 }}>Dados de contato</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <Field span={2} label="Nome" required value={s.repNome} onChange={(v) => onField('repNome', v)} placeholder="Nome do contato na empresa" />
+            <Field label="E-mail" required type="email" value={s.repEmail} onChange={(v) => onField('repEmail', v)} placeholder="email@empresa.com.br" />
+            <Field label="Telefone" required value={s.repTelefone} onChange={(v) => onField('repTelefone', v)} mask={maskPhone} placeholder="(00) 00000-0000" inputMode="tel" />
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  // Etapa 2 — Pagamento: valor livre, forma (parcelável só no crédito) e origem.
+  const renderApnPagamento = () => (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Pagamento</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Informe o valor negociado, a forma de pagamento e de onde veio a venda.</p>
+      </div>
+
+      <div className="card" style={{ padding: '20px 22px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>payments</span>
+          <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Valor e forma de pagamento</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <div>
+            <label className="lbl">Valor a ser pago<span style={{ color: 'var(--primary)' }}> *</span></label>
+            <div style={{ display: 'flex', alignItems: 'center', height: 46, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', padding: '0 12px', gap: 6 }}>
+              <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+              <MoneyInput className="" value={s.apnValor} onChangeNumber={(n) => patch({ apnValor: n })} placeholder="0,00" />
+            </div>
+          </div>
+          <div>
+            <label className="lbl">Forma de pagamento<span style={{ color: 'var(--primary)' }}> *</span></label>
+            <select className="inp" style={{ height: 46 }} value={s.apnForma} onChange={(e) => setApnForma(e.target.value)}>
+              {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Parcelamento: exclusivo do cartão de crédito. */}
+        {apnCredito ? (
+          <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'end' }}>
+            <div>
+              <label className="lbl">Parcelas</label>
+              <select className="inp" style={{ height: 46 }} value={apnParcelas} onChange={(e) => setApnParcelas(e.target.value)}>
+                {Array.from({ length: APN_MAX_PARCELAS_CREDITO }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>{n}× {n === 1 ? '(à vista)' : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ height: 46, display: 'flex', alignItems: 'center', font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+              {apnValorOk
+                ? <span>{apnParcelas}× de <strong style={{ color: 'var(--primary)' }}>{fmt(apnValorParcela)}</strong></span>
+                : <span style={{ color: 'var(--text-muted)' }}>Informe o valor para ver a parcela.</span>}
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 7, font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
+            <span className="ms-icon" style={{ fontSize: 16 }}>info</span>
+            Pagamento à vista — o parcelamento em até {APN_MAX_PARCELAS_CREDITO}× vale só para cartão de crédito.
+          </div>
+        )}
+      </div>
+
+      {/* Origem da venda */}
+      <div className="card" style={{ padding: '20px 22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>alt_route</span>
+          <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Origem da venda</span>
+        </div>
+        <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px' }}>De onde veio este cliente — indicação, evento, prospecção, campanha…</p>
+        <input className="inp" value={s.apnOrigem} maxLength={120}
+          onChange={(e) => patch({ apnOrigem: e.target.value.slice(0, 120) })}
+          placeholder="Ex.: indicação do cliente João Silva" />
+      </div>
+    </>
+  );
+
+  // Etapa 3 — Resumo da venda APN.
+  const renderApnResumo = () => (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Confirme o pedido</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Revise as informações antes de finalizar o cadastro.</p>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <span className="sec-title" style={{ fontSize: 12 }}>Cliente</span>
+            <button className="linkbtn" onClick={() => goStep(0)}>Editar</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
+            {[['Razão social', s.razaoSocial || '—'], ['CNPJ', s.cnpj || '—'], ['Contato', s.repNome || '—'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]].map(([k, v]) => (
+              <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <span className="sec-title" style={{ fontSize: 12 }}>Pagamento</span>
+            <button className="linkbtn" onClick={() => goStep(1)}>Editar</button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+            <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Forma</span>
+            <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{paymentLabel(s.apnForma)}{apnParcelas > 1 ? ` · ${apnParcelas}× de ${fmt(apnValorParcela)}` : ' · à vista'}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+            <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Origem da venda</span>
+            <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{(s.apnOrigem || '').trim() || '—'}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0 0' }}>
+            <span style={{ font: '600 14px var(--font-primary)', color: 'var(--text)' }}>Valor total</span>
+            <span style={{ font: '700 16px var(--font-primary)', color: 'var(--primary)' }}>{fmt(apnValorOk ? apnValor : 0)}</span>
+          </div>
+        </div>
+
+        {/* Envio bloqueado: a URL do webhook da APN ainda não foi configurada. */}
+        {!apnEnvioConfigurado && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)' }} role="alert">
+            <span className="ms-icon" style={{ fontSize: 20, color: 'var(--warning)' }}>warning</span>
+            <div style={{ font: '400 13px/1.5 var(--font-secondary)', color: 'var(--text-secondary)' }}>
+              <strong style={{ color: 'var(--text)', display: 'block' }}>Envio da APN ainda não configurado.</strong>
+              O webhook do fluxo APN não foi definido nesta versão. Avise a equipe técnica — o cadastro não pode ser enviado até lá.
+            </div>
+          </div>
+        )}
+
+        {s.sendState === 'error' && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(220,53,69,.1)', border: '1px solid rgba(220,53,69,.35)' }} role="alert">
+            <span className="ms-icon" style={{ fontSize: 20, color: 'var(--danger)' }}>error</span>
+            <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+              <strong style={{ color: 'var(--text)', display: 'block' }}>{s.sendErrHandled ? 'Não foi possível enviar.' : 'Não conseguimos enviar.'}</strong>
+              {s.sendErrHandled ? s.sendErr : `${s.sendErr} Verifique a conexão e tente novamente.`}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   const renderResumo = () => {
     const parcelasLabel = s.parcelas.length === 0 ? 'Sem parcelas (à vista)' : s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
     return (
@@ -1472,7 +1777,25 @@ function App() {
           <div style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--primary)' }}>Resumo do pedido</div>
         </div>
         <div style={{ padding: 20 }}>
-          {product ? (
+          {isApn ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{cat.icon}</span></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ font: '600 14.5px var(--font-primary)', color: 'var(--text)', lineHeight: 1.3 }}>{cat.name}</div>
+                  <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(s.razaoSocial || '').trim() || 'Cliente a definir'}</div>
+                </div>
+              </div>
+              {[
+                ['Valor', apnValorOk ? fmt(apnValor) : '—'],
+                ['Forma', paymentLabel(s.apnForma)],
+                ['Parcelas', apnParcelas > 1 ? `${apnParcelas}× ${fmt(apnValorParcela)}` : 'À vista'],
+                ['Origem', (s.apnOrigem || '').trim() || '—'],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', flexShrink: 0 }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>
+              ))}
+            </>
+          ) : product ? (
             <>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
                 <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{product.icon}</span></div>
@@ -1499,7 +1822,17 @@ function App() {
 
   // ----- Botão primário por etapa -----
   let primaryLabel = 'Continuar', primaryIcon = 'arrow_forward', primaryAction = next, enabled = true;
-  if (s.step === 0) enabled = empresaValid;
+  if (isApn) {
+    // APN: Cliente → Pagamento → Resumo. Sem Pix, sem divergência de cronograma.
+    if (s.step === 0) enabled = apnClienteValid;
+    else if (s.step === 1) enabled = apnPagamentoValid;
+    else {
+      primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro';
+      primaryIcon = 'check';
+      primaryAction = finalizeApn;
+      enabled = apnPagamentoValid && apnEnvioConfigurado && !sending;
+    }
+  } else if (s.step === 0) enabled = empresaValid;
   else if (s.step === 1) enabled = !!product;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
   else {
@@ -1516,7 +1849,9 @@ function App() {
       primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && !sending;
     }
   }
-  const primaryBusy = s.step === 3 && (sending || s.pixState === 'generating' || s.pixState === 'awaiting');
+  const primaryBusy = isApn
+    ? (s.step === ultimoStep && sending)
+    : (s.step === 3 && (sending || s.pixState === 'generating' || s.pixState === 'awaiting'));
 
   /* ======================= RENDER ======================= */
   return (
@@ -1533,10 +1868,20 @@ function App() {
         {s.screen === 'flow' && (
           <div className="flow-grid">
             <div style={{ minWidth: 0 }}>
-              {s.step === 0 && renderEmpresa()}
-              {s.step === 1 && renderProduto()}
-              {s.step === 2 && renderPagamento()}
-              {s.step === 3 && renderResumo()}
+              {isApn ? (
+                <>
+                  {s.step === 0 && renderApnCliente()}
+                  {s.step === 1 && renderApnPagamento()}
+                  {s.step === 2 && renderApnResumo()}
+                </>
+              ) : (
+                <>
+                  {s.step === 0 && renderEmpresa()}
+                  {s.step === 1 && renderProduto()}
+                  {s.step === 2 && renderPagamento()}
+                  {s.step === 3 && renderResumo()}
+                </>
+              )}
 
               {/* NAV */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 26 }}>
@@ -1558,8 +1903,17 @@ function App() {
             </div>
             <h1 style={{ font: '700 30px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 10px', color: 'var(--text)' }}>Cadastro enviado!</h1>
             <p style={{ font: '400 15px/1.6 var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 28px' }}>
-              {product ? product.name : ''} contratado para <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
-              O cliente foi enviado para {destinoText}.
+              {isApn ? (
+                <>
+                  {cat.name} contratada por <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
+                  Venda de {fmt(apnValorOk ? apnValor : 0)} registrada em {paymentLabel(s.apnForma).toLowerCase()}{apnParcelas > 1 ? ` em ${apnParcelas}×` : ''}.
+                </>
+              ) : (
+                <>
+                  {product ? product.name : ''} contratado para <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
+                  O cliente foi enviado para {destinoText}.
+                </>
+              )}
             </p>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '12px 20px', borderRadius: 12, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', marginBottom: 32 }}>
               <span style={{ font: '400 12px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Protocolo</span>
