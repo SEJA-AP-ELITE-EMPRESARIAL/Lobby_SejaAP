@@ -139,10 +139,14 @@ const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-e
 // Venda APN — fluxo n8n PRÓPRIO. A APN não passa pelo onboarding do Elite: o
 // payload é outro (sem cronograma, sem destino Omie/Conecta/D4).
 //
-// ⚠️ PREENCHER com a URL do webhook da APN. Enquanto estiver vazio, o fluxo APN
-// abre e preenche normalmente, mas o botão "Finalizar" fica travado no resumo,
-// com aviso na tela — travar é melhor do que mandar a venda para o fluxo errado.
-const APN_SEND_WEBHOOK_URL = '';
+// O nó Webhook no n8n precisa estar em POST e com CORS liberado para a origem
+// https://lobby.sejaap.com.br — igual aos webhooks do Elite e do CNPJ. Sem isso o
+// navegador barra a chamada no preflight e a venda nem sai da tela.
+//
+// Se um dia esta constante voltar a ficar vazia, o fluxo APN continua abrindo e
+// preenchendo, mas o botão "Finalizar" trava no resumo com aviso na tela — melhor
+// travar do que mandar a venda para o fluxo errado.
+const APN_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/lobby-apn';
 // Parcelamento no cartão de crédito da APN (as demais formas são à vista).
 const APN_MAX_PARCELAS_CREDITO = 12;
 // Cobrança Pix da entrada (EasyFlow), em 2 endpoints:
