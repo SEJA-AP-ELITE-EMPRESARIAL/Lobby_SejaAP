@@ -673,7 +673,7 @@ function App() {
     // ----- Fluxo APN (categoria de fluxo próprio) -----
     // Valor livre da venda, forma de pagamento (parcelável só no crédito) e a
     // origem da venda em texto livre.
-    apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
+    apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   });
@@ -709,7 +709,7 @@ function App() {
   // ----- Campos -----
   const onField = (k, v) => {
     if (k === 'cnpj') v = maskCNPJ(v);
-    else if (k === 'repCpf') v = maskCPF(v);
+    else if (k === 'repCpf' || k === 'apnCpf') v = maskCPF(v);
     else if (k === 'repTelefone') v = maskPhone(v);
     else if (k === 'cep') v = maskCEP(v);
     else if (k === 'estado') v = maskUF(v);
@@ -851,12 +851,17 @@ function App() {
   }));
   const setApnParcelas = (n) => patch({ apnParcelas: Math.min(APN_MAX_PARCELAS_CREDITO, Math.max(1, Math.round(Number(n) || 1))) });
 
-  const apnClienteValid = (
-    isCNPJ(s.cnpj) &&
-    (s.razaoSocial || '').trim().length > 3 &&
-    (s.repNome || '').trim().length > 3 &&
-    isEmail(s.repEmail) && isPhone(s.repTelefone)
-  );
+  // Acontece de o comprador da APN não ter CNPJ — é venda avulsa. Nesse caso a
+  // identificação é nome + CPF, e quem contrata é o próprio contato: o nome vive
+  // em `repNome` nos dois modos, só muda o cartão em que ele é pedido.
+  const apnPf = s.apnTipoPessoa === 'PF';
+  const apnContatoValid = (s.repNome || '').trim().length > 3 && isEmail(s.repEmail) && isPhone(s.repTelefone);
+  const apnClienteValid = apnContatoValid && (apnPf
+    ? isCPF(s.apnCpf)
+    : (isCNPJ(s.cnpj) && (s.razaoSocial || '').trim().length > 3));
+  // Nome que identifica o cliente no resumo, na barra lateral e no sucesso.
+  const apnNomeCliente = ((apnPf ? s.repNome : s.razaoSocial) || '').trim();
+  const setApnTipoPessoa = (tipo) => patch({ apnTipoPessoa: tipo });
   const apnPagamentoValid = apnValorOk && !!s.apnForma && (s.apnOrigem || '').trim().length > 1;
   const apnEnvioConfigurado = !!APN_SEND_WEBHOOK_URL;
 
@@ -916,7 +921,22 @@ function App() {
       origem: 'lobby_conecta_ap',
       etapa: 'envio_venda_apn',
       categoria: { id: cat ? cat.id : 'apn', nome: cat ? cat.name : 'APN' },
-      empresa: {
+      // Nem todo comprador da APN tem CNPJ. `tipo_pessoa` diz qual dos dois
+      // blocos abaixo está preenchido (o outro vem null), e `cliente` traz a
+      // identidade já resolvida — o n8n só precisa ramificar se quiser o resto.
+      tipo_pessoa: apnPf ? 'PF' : 'PJ',
+      cliente: {
+        tipo_pessoa: apnPf ? 'PF' : 'PJ',
+        nome: apnNomeCliente,
+        documento: (apnPf ? s.apnCpf : s.cnpj) || '',
+        documento_limpo: onlyDigits(apnPf ? s.apnCpf : s.cnpj),
+        documento_tipo: apnPf ? 'CPF' : 'CNPJ',
+      },
+      pessoa_fisica: apnPf ? {
+        nome: (s.repNome || '').trim(),
+        cpf: s.apnCpf || '', cpf_limpo: onlyDigits(s.apnCpf),
+      } : null,
+      empresa: apnPf ? null : {
         cnpj: s.cnpj || '', cnpj_limpo: onlyDigits(s.cnpj),
         razao_social: (s.razaoSocial || '').trim(),
         inscricao_estadual: (s.inscricaoEstadual || '').trim() || null,
@@ -982,7 +1002,7 @@ function App() {
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '',
-    apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
+    apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
@@ -1448,12 +1468,42 @@ function App() {
         <div style={{ marginBottom: 22 }}>
           <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: colors.iconFg }}>{cat.name}</span>
           <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '6px 0 6px', color: 'var(--text)' }}>Dados do cliente</h2>
-          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Informe o CNPJ para buscar os dados da empresa automaticamente.</p>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>{apnPf ? 'Contratação no CPF — informe o nome e o documento de quem está contratando.' : 'Informe o CNPJ para buscar os dados da empresa automaticamente.'}</p>
         </div>
 
-        {/* Empresa (CNPJ) */}
+        {/* Identificação — empresa (CNPJ) ou pessoa física (CPF) */}
         <div className="card" style={{ marginBottom: 18 }}>
-          <div className="sec-title" style={{ marginBottom: 14 }}>Empresa</div>
+          <div className="sec-title" style={{ marginBottom: 12 }}>Identificação</div>
+          {/* A APN é venda avulsa e nem todo comprador tem CNPJ. */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+            {[{ k: 'PJ', t: 'Empresa', d: 'CNPJ', i: 'apartment' }, { k: 'PF', t: 'Pessoa física', d: 'CPF', i: 'person' }].map((o) => {
+              const on = s.apnTipoPessoa === o.k;
+              return (
+                <button key={o.k} type="button" onClick={() => setApnTipoPessoa(o.k)} aria-pressed={on}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 10, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (on ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
+                  <span className="ms-icon" style={{ fontSize: 19, color: on ? 'var(--primary)' : 'var(--text-muted)' }}>{o.i}</span>
+                  <span style={{ font: '600 13.5px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{o.t}</span>
+                  <span style={{ font: '600 10.5px var(--font-primary)', letterSpacing: '.05em', color: 'var(--text-muted)', background: 'var(--surface-light)', padding: '3px 7px', borderRadius: 5 }}>{o.d}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {apnPf ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+                <Field label="Nome completo" required value={s.repNome} onChange={(v) => onField('repNome', v)} placeholder="Nome de quem está contratando" />
+                <Field label="CPF" required value={s.apnCpf} onChange={(v) => onField('apnCpf', v)} mask={maskCPF} placeholder="000.000.000-00" inputMode="numeric" />
+              </div>
+              {/* Só reclama depois que o CPF está completo — não fica piscando erro enquanto digita. */}
+              {onlyDigits(s.apnCpf).length === 11 && !isCPF(s.apnCpf) && (
+                <div style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+                  <span className="ms-icon" style={{ fontSize: 16 }}>error</span>CPF inválido — confira os números.
+                </div>
+              )}
+            </>
+          ) : (
+          <>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 220 }}>
               <label className="lbl">CNPJ<span style={{ color: 'var(--primary)' }}> *</span></label>
@@ -1485,16 +1535,23 @@ function App() {
               <span>{enderecoAchado}</span>
             </div>
           )}
+          </>
+          )}
         </div>
 
-        {/* Contato */}
+        {/* Contato — na PF o nome já foi pedido acima, aqui só o resto. */}
         <div className="card">
-          <div className="sec-title" style={{ marginBottom: 16 }}>Dados de contato</div>
+          <div className="sec-title" style={{ marginBottom: 16 }}>{apnPf ? 'Contato' : 'Dados de contato'}</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <Field span={2} label="Nome" required value={s.repNome} onChange={(v) => onField('repNome', v)} placeholder="Nome do contato na empresa" />
-            <Field label="E-mail" required type="email" value={s.repEmail} onChange={(v) => onField('repEmail', v)} placeholder="email@empresa.com.br" />
+            {!apnPf && <Field span={2} label="Nome" required value={s.repNome} onChange={(v) => onField('repNome', v)} placeholder="Nome do contato na empresa" />}
+            <Field label="E-mail" required type="email" value={s.repEmail} onChange={(v) => onField('repEmail', v)} placeholder={apnPf ? 'email@exemplo.com.br' : 'email@empresa.com.br'} />
             <Field label="Telefone" required value={s.repTelefone} onChange={(v) => onField('repTelefone', v)} mask={maskPhone} placeholder="(00) 00000-0000" inputMode="tel" />
           </div>
+          {apnPf && (
+            <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '12px 0 0' }}>
+              O contato é a própria pessoa que está contratando.
+            </p>
+          )}
         </div>
       </>
     );
@@ -1582,7 +1639,10 @@ function App() {
             <button className="linkbtn" onClick={() => goStep(0)}>Editar</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
-            {[['Razão social', s.razaoSocial || '—'], ['CNPJ', s.cnpj || '—'], ['Contato', s.repNome || '—'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]].map(([k, v]) => (
+            {(apnPf
+              ? [['Nome', s.repNome || '—'], ['CPF', s.apnCpf || '—'], ['Tipo', 'Pessoa física'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]]
+              : [['Razão social', s.razaoSocial || '—'], ['CNPJ', s.cnpj || '—'], ['Contato', s.repNome || '—'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]]
+            ).map(([k, v]) => (
               <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
             ))}
           </div>
@@ -1783,7 +1843,7 @@ function App() {
                 <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{cat.icon}</span></div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ font: '600 14.5px var(--font-primary)', color: 'var(--text)', lineHeight: 1.3 }}>{cat.name}</div>
-                  <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(s.razaoSocial || '').trim() || 'Cliente a definir'}</div>
+                  <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{apnNomeCliente || 'Cliente a definir'}</div>
                 </div>
               </div>
               {[
@@ -1905,7 +1965,7 @@ function App() {
             <p style={{ font: '400 15px/1.6 var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 28px' }}>
               {isApn ? (
                 <>
-                  {cat.name} contratada por <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
+                  {cat.name} contratada por <strong style={{ color: 'var(--text)' }}>{apnNomeCliente}</strong>.<br />
                   Venda de {fmt(apnValorOk ? apnValor : 0)} registrada em {paymentLabel(s.apnForma).toLowerCase()}{apnParcelas > 1 ? ` em ${apnParcelas}×` : ''}.
                 </>
               ) : (
