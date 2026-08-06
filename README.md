@@ -12,24 +12,99 @@ reais da página de pré-contrato.
 
 | Arquivo | Descrição |
 |---|---|
-| **`index.html`** | **Página funcional** — é o que vai para produção (servida na raiz). Autossuficiente (React 18 + Babel via CDN, tokens e logo embutidos). |
+| **`index.html`** | **Página funcional** — o lobby do consultor. Autossuficiente (React 18 + Babel via CDN, tokens e logo embutidos). Não tem build. |
+| **`admin.html`** | **Painel de valores de tabela** (`/admin`) — onde a diretoria muda os preços sem deploy. |
+| **`backend/`** | API em Django: o catálogo, a publicação da tabela e a autorização de negociação. |
+| **`deploy/`** | Dockerfiles do nginx e do túnel do banco, mais o vhost do host. |
+| **`docker-compose.yml`** | A stack como ela roda na `prod.solucoes`. |
+| `functions/` | ⚠️ **Superseded.** Implementação anterior em Cloudflare Pages Functions, com senha compartilhada e catálogo em KV. Nunca foi ao ar e não é mais usada — mantida só como referência histórica. |
 | `Lobby de Produtos.dc.html` | Fonte de design (protótipo no framework DC). Apenas referência visual. |
 | `_ds/` | Design system Conecta AP (tokens de cor/tipografia). Referência. |
 | `assets/logo-sejaap.svg` | Logo (também já embutido inline na página funcional). |
 | `support.js` | Runtime do protótipo DC (só usado pelo `.dc.html`). |
 
-## Como rodar
+## O lobby é anônimo — a negociação não
 
-A página é um único HTML estático. Basta servir a pasta e abrir o arquivo:
+Esta é a regra que atravessa o projeto inteiro:
+
+> **Qualquer consultor abre, navega, cota, cadastra e envia a venda sem nenhuma
+> credencial.** Não existe tela de login no lobby, e nenhuma rota do fluxo de
+> cadastro pode passar a exigir uma.
+
+O que exige credencial é **negociar** — alterar valor de produto ou cronograma de
+parcelas — e **publicar a tabela de preços**. São coisas diferentes, com pessoas
+diferentes e mecanismos diferentes:
+
+|   | O que é | Quem pode | Onde | Como a credencial funciona |
+|---|---|---|---|---|
+| **Valor de tabela** | O preço padrão que todo consultor vê. | **Diretoria** | `/admin` | Sessão normal, no computador de quem publica. |
+| **Valor negociado** | O desconto de UMA venda. Não altera a tabela. | **Gerente** ou diretoria | No próprio lobby | Autorização pontual, **válida só para aquela venda**. |
+
+### Por que a autorização de negociação não é sessão
+
+O gerente digita a credencial **no aparelho do consultor**, no meio de um
+atendimento. Uma sessão de horas significaria que a primeira autorização do dia
+libera todas as vendas seguintes naquele tablet, sem ninguém perceber.
+
+Por isso ela vive só na memória da página e morre ao: enviar o cadastro, trocar
+de produto, voltar ao lobby, ou clicar em "Encerrar autorização". Recarregar a
+página também encerra — não há nada no `sessionStorage`.
+
+### Quem confere a senha
+
+O **[Conecta ID](https://github.com/SEJA-AP-ELITE-EMPRESARIAL/conecta-id)**, o
+serviço de identidade da empresa — o mesmo login do kanban, do CRM e do
+financeiro. Nenhuma senha mora neste repositório nem chega ao navegador.
+
+Os papéis (`gerente` / `diretoria`) são **deste app**, não do Conecta ID: lá o
+acesso é binário, e quem guarda permissão de negócio é cada sistema. Promover
+alguém:
 
 ```bash
-# qualquer servidor estático serve; ex.:
-npx serve .
-# abra http://localhost:3000 — index.html é servido na raiz
+docker exec lobby-backend python manage.py promover_no_lobby \
+    fulano@sejaap.com.br --papel diretoria
 ```
 
-Abrir via `file://` também funciona, mas servir por HTTP é recomendado para
-evitar bloqueios de CORS/cache do navegador.
+> **Não edite mais preços no `index.html`.** O array `CATS` lá continua existindo,
+> mas é só uma **rede de segurança**: se a API estiver fora do ar, o lobby abre com
+> aqueles valores em vez de quebrar no meio de um evento. A fonte de verdade é o banco.
+
+### Como o catálogo chega na página
+
+```text
+index.html  --GET /api/catalogo-->  Postgres `lobby` (db-sejaap, via túnel SSH)
+   (anônimo)                                   ^
+                                               |  PUT /api/catalogo (exige diretoria)
+                                        admin.html  (/admin)
+```
+
+Cada publicação grava uma linha em `PublicacaoCatalogo` com o catálogo inteiro, o
+resumo do que mudou e **quem publicou** — algo que a implementação anterior, em KV,
+nunca teve.
+
+## Como rodar
+
+```bash
+cd backend
+python -m venv .venv && ./.venv/Scripts/pip install -r requirements.txt   # Linux: .venv/bin/pip
+./.venv/Scripts/python manage.py migrate      # cria o banco e semeia o catálogo
+./.venv/Scripts/python manage.py test apps    # a suíte inteira
+./.venv/Scripts/python manage.py runserver
+```
+
+Sem `.env`, sobe com SQLite e `DEBUG=true` — o suficiente para mexer em tudo menos
+no login, que precisa de um Conecta ID alcançável (`AUTH_CENTRAL_ATIVO`).
+
+A stack completa, igual à de produção:
+
+```bash
+cp .env.example .env      # e preencha banco + IDENTIDADE_APP_KEY
+docker compose up -d --build
+# lobby: http://127.0.0.1:8095   ·   painel: http://127.0.0.1:8095/admin
+```
+
+Servir só o HTML (`npx serve .`) continua funcionando para mexer em layout: o lobby
+cai no catálogo embutido e a edição de valores fica indisponível.
 
 ## Integrações (webhooks n8n)
 
@@ -48,21 +123,51 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 
 ## Personalização rápida
 
-- **Catálogo de produtos/preços:** array `CATS` no `<script>`. Cada item tem
-  `{ id, name, desc, duration, price, icon, ... }`. Para liberar uma categoria,
-  remova `locked: true` dela.
-- **Valor por evento/negociação:** na etapa *Produto*, o botão **"Editar valor"**
-  libera ajustar a mensalidade (recorrentes) ou o valor à vista (eventos); o
-  total e o cronograma recalculam automaticamente.
-- **Pagamento:** na etapa *Pagamento*, o botão **"Editar valores"** libera
-  personalizar entrada, número de parcelas, valores, datas e formas, com o total
-  como âncora (a soma sempre fecha com o total).
+- **Preços:** em **`/admin`**, com a credencial da diretoria. Não mexa no `CATS` do
+  `index.html` (veja *O lobby é anônimo — a negociação não*, acima).
+- **Produtos e categorias novas:** pelo **`/django-admin/`**, sem deploy. Crie a
+  categoria, os produtos e a ordem; a APN é a única com `fluxo` preenchido, o que a
+  torna somente leitura para o `/admin` e manda o consultor para o wizard curto.
+  Para liberar uma categoria travada, desmarque *em implementação*.
+  O `CATS` do `index.html` é só o fallback offline — vale sincronizá-lo quando a
+  mudança for estrutural, mas ele não é a fonte de verdade.
+- **Valor por evento/negociação:** na etapa *Produto*, **"Editar valor"** libera a
+  mensalidade (recorrentes) ou o valor à vista (avulsos); o total e o cronograma
+  recalculam sozinhos. Pede autorização de um gerente ou da diretoria.
+- **Pagamento:** na etapa *Pagamento*, **"Editar valores"** libera entrada, número de
+  parcelas, valores, datas e formas, com o total como âncora. Também pede autorização.
 
 ## Deploy
 
-Publicado via **Cloudflare Pages** conectado a este repositório:
+Roda na **prod.solucoes (187.77.48.164)**, ao lado do kanban, do CRM, do formulário
+financeiro e do Conecta ID. Mesmo desenho dos vizinhos:
 
-- Build command: *(vazio)* · Output directory: `/`
-- Cada `push` na branch `main` gera um deploy automático.
-- Domínio de produção: **https://lobby.sejaap.com.br** (custom domain no Pages;
-  DNS + SSL gerenciados pelo Cloudflare, já que `sejaap.com.br` está na conta).
+```text
+Cloudflare (proxied, Full strict)
+   └── nginx do HOST  ── TLS com o Origin Certificate curinga *.sejaap.com.br
+          └── 127.0.0.1:8095  →  container lobby-frontend (nginx)
+                 ├── /            index.html · admin.html
+                 └── /api/        →  lobby-backend (Django + gunicorn)
+                                        └── db-tunnel → Postgres na db-sejaap:5437
+```
+
+- **Domínio:** <https://lobby.sejaap.com.br>. O DNS **precisa ficar proxiado** — em
+  "DNS only" o navegador fala direto com a VPS e recusa o Origin Certificate.
+- **Porta de loopback:** 8095. As vizinhas já estão tomadas: 8090 CRM, 8091 kanban,
+  8092 kanban-mcp, 8093 formulários, 8094 identidade-api.
+- **Rede:** o backend entra na `identidade-net`, criada pela stack do Conecta ID, para
+  alcançar `identidade-api:8000`. Ela é `external: true` — se o Conecta ID não estiver
+  de pé, o `up` falha alto, e isso é proposital.
+- **Migrations não rodam sozinhas.** Aplique à mão antes de trocar o container, como
+  nos outros apps da casa.
+
+Passo a passo, portas, chaves de túnel e o procedimento de rotação da chave de
+aplicação ficam em [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
+
+### Se o backend cair
+
+O lobby **continua de pé**. O nginx resolve o backend a cada requisição (não na
+inicialização), então ele sobe e serve o HTML mesmo sem a API; o `/api/catalogo`
+devolve 502, o `boot()` captura e a página abre com o catálogo embutido. O consultor
+segue cotando a preço de tabela — só não consegue negociar, porque não há como
+autorizar.

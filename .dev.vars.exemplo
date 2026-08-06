@@ -1,0 +1,13 @@
+# Modelo dos segredos para rodar localmente (`npm run dev`).
+# Copie para `.dev.vars` — que está no .gitignore e NÃO vai para o GitHub.
+#
+# Em produção estes dois valores vivem apenas no painel do Cloudflare
+# (Settings -> Environment variables, marcados como "Encrypt"). Nunca no código.
+
+# Senha que a diretoria digita para liberar a edição de valores.
+SENHA_DIRETORIA=troque-esta-senha
+
+# Chave usada para assinar o token de sessão. Não é digitada por ninguém:
+# é só um segredo aleatório e longo. Gere um novo com:
+#   node -e "console.log(crypto.randomUUID()+crypto.randomUUID())"
+TOKEN_SECRET=troque-este-segredo-por-um-aleatorio-longo

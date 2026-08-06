@@ -1,0 +1,11 @@
+# O COPY . . do Dockerfile arrastaria tudo isto para dentro da imagem.
+# O Formulários Financeiro não tem este arquivo, e por isso a imagem dele leva
+# o virtualenv e o banco de desenvolvimento junto. Não repita.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+db.sqlite3
+staticfiles/
+.env
+.pytest_cache/

@@ -163,6 +163,56 @@ const PIX_STATUS_URL = 'https://n8n.sejaap.com.br/webhook/36a7380f-2ef9-4f82-bb9
 // webhook voltar (nada mais precisa mudar).
 const PIX_COBRANCA_ATIVA = false;
 
+/* ============================================================================
+ * AUTORIZAÇÃO DE NEGOCIAÇÃO — destrava a alteração de valores numa venda.
+ *
+ * O LOBBY NÃO TEM TELA DE LOGIN. Qualquer consultor abre, navega, cota, cadastra
+ * e envia a venda sem credencial nenhuma. Isso é o produto, não um descuido.
+ *
+ * O que exige credencial é NEGOCIAR: alterar o valor do produto ou o cronograma
+ * de parcelas. Aí o consultor chama alguém autorizado (gerente ou diretoria),
+ * que digita e-mail e senha do Conecta ID NO APARELHO DO CONSULTOR.
+ *
+ * A AUTORIZAÇÃO É ÚNICA E VALE SÓ PARA AQUELE REGISTRO.
+ *
+ * Por isso ela NÃO vai para o sessionStorage — vive só no estado do React e
+ * morre ao enviar o cadastro, ao trocar de produto e ao voltar ao lobby. Uma
+ * sessão de horas num tablet que fica no balcão significaria que a primeira
+ * autorização do dia libera todas as vendas seguintes, sem ninguém perceber.
+ *
+ * (A tela da diretoria em /admin é outra coisa: lá é sessão de verdade, porque
+ * publicar a tabela de preços é trabalho continuado, não um ato pontual.)
+ *
+ * Nenhuma senha mora neste arquivo. Quem confere é o Conecta ID, pelo backend.
+ * ========================================================================== */
+
+// Mensagens por caso. Trocar uma pela outra custa caro: "senha incorreta"
+// quando o serviço está fora do ar faz a pessoa redefinir a senha à toa.
+const ERRO_AUTORIZACAO_PADRAO = 'Não foi possível autorizar. Tente de novo.';
+
+/**
+ * Troca e-mail + senha por uma autorização de negociação.
+ * Devolve { token, nome, email, papel }. Lança Error com a mensagem da vez.
+ */
+async function autorizaNegociacao(email, senha) {
+  let r;
+  try {
+    r = await fetch('/api/sessao', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha }),
+    });
+  } catch {
+    // Falha de rede: o consultor pode estar em campo, com sinal ruim. Dizer
+    // "senha incorreta" aqui mandaria a pessoa caçar o problema no lugar errado.
+    throw new Error('Sem conexão para autorizar. Verifique a internet e tente de novo.');
+  }
+
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.erro || ERRO_AUTORIZACAO_PADRAO);
+  return d;
+}
+
 // ===== Máscaras =====
 const maskCNPJ = (v) => {
   v = v.replace(/\D/g, '').slice(0, 14);
@@ -494,13 +544,22 @@ function normalizePixResponse(raw) {
 
 /* ============================================================================
  * CATÁLOGO — categorias e produtos do lobby.
- *  - "elite" usa os produtos REAIS da página que está no ar (mensalidade × 12).
- *  - As demais categorias seguem o catálogo do design comp (valor à vista).
- * Edite livremente esta lista para adicionar/ajustar produtos e preços.
+ *
+ * ATENÇÃO: esta lista NÃO é mais a fonte de verdade dos preços. Ela é a REDE DE
+ * SEGURANÇA. Os valores de tabela vivem no Cloudflare KV e são editados em
+ * /admin (senha da diretoria), sem deploy — veja `boot()` no fim do arquivo.
+ *
+ * Esta cópia só entra em cena se GET /api/catalogo falhar (KV fora do ar, Function
+ * com erro, página aberta via file://). Nesse caso o lobby abre com estes valores
+ * em vez de quebrar — o consultor nunca fica sem conseguir vender.
+ *
+ * Portanto: NÃO edite os preços aqui para mudar o valor de um evento (use /admin).
+ * Mexa aqui só ao adicionar/remover um produto, para manter o fallback coerente.
+ *
  *  campos: { id, name, desc, duration, price (TOTAL do contrato), icon,
  *            recurring?, monthly?, vigencia? }
  * ========================================================================== */
-const CATS = [
+let CATS = [
   // Elite é a única categoria ativa hoje. As demais ficam "Em implementação" (locked).
   { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
     desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
@@ -518,8 +577,9 @@ const CATS = [
       { id: 't3', name: 'Vendas de Alta Performance',  sigla: 'VAP', desc: 'Treinamento intensivo de vendas',     duration: '2 meses',  price: 12000, icon: 'trending_up' },
     ] },
   // APN: categoria de FLUXO PRÓPRIO (`flow: 'apn'`). Não tem produtos nem valor
-  // de tabela — o consultor informa o valor negociado da venda, e o fluxo é
-  // enxuto: cliente (CNPJ + contato), pagamento (valor/forma/origem) e resumo.
+  // de tabela — o consultor informa o valor da venda. Por isso ela também não
+  // mora no KV: a definição de verdade está em functions/_lib/catalogo.js e o
+  // GET /api/catalogo a reinsere. Esta cópia é só a rede de segurança offline.
   { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', flow: 'apn', sigla: 'APN',
     desc: 'Aceleração de Performance de Negócios — valor definido na negociação.',
     products: [] },
@@ -619,17 +679,143 @@ function Field({ label, value, onChange, placeholder, mask, type, inputMode, req
   );
 }
 
-/* ===== Toggle de edição (cadeado lock/unlock) — usado em Produto e Pagamento ===== */
-function EditToggle({ on, onToggle, label }) {
+/* ===== Toggle de edição (cadeado lock/unlock) — usado em Produto e Pagamento =====
+ * `restrito` = há um cadeado de verdade: quem não tem sessão de diretoria vê o
+ * pedido de senha ao clicar. O switch some, porque não é um liga/desliga livre.
+ */
+function EditToggle({ on, onToggle, label, restrito }) {
   return (
-    <label style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderRadius: 10, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface)', border: '1px solid ' + (on ? 'rgba(199,164,68,.4)' : 'var(--border-light)') }}>
+    <label
+      title={restrito ? 'Somente a diretoria pode alterar valores' : undefined}
+      style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderRadius: 10, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface)', border: '1px solid ' + (on ? 'rgba(199,164,68,.4)' : 'var(--border-light)') }}
+    >
       <span className="ms-icon" style={{ fontSize: 18, color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{on ? 'lock_open' : 'lock'}</span>
       <span style={{ font: '600 12.5px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{label}</span>
       <input type="checkbox" checked={on} onChange={onToggle} style={{ width: 0, height: 0, opacity: 0, position: 'absolute' }} />
-      <div style={{ width: 34, height: 18, borderRadius: 999, background: on ? 'var(--primary)' : 'var(--surface-light)', position: 'relative', transition: 'background .2s' }}>
-        <div style={{ position: 'absolute', top: 2, left: on ? 18 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
-      </div>
+      {restrito ? (
+        <span style={{ font: '600 10.5px var(--font-primary)', letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--text-muted)', background: 'var(--surface-light)', padding: '3px 7px', borderRadius: 5 }}>
+          Diretoria
+        </span>
+      ) : (
+        <div style={{ width: 34, height: 18, borderRadius: 999, background: on ? 'var(--primary)' : 'var(--surface-light)', position: 'relative', transition: 'background .2s' }}>
+          <div style={{ position: 'absolute', top: 2, left: on ? 18 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
+        </div>
+      )}
     </label>
+  );
+}
+
+/* ===== Autorizar negociação (modal) =====
+ * Não é "entrar no sistema": é um gerente ou alguém da diretoria digitando a
+ * própria credencial no aparelho do consultor para liberar UMA negociação.
+ * O texto da tela precisa deixar isso claro, senão o consultor tenta usar o
+ * próprio e-mail e não entende por que não funciona.
+ *
+ * Nenhuma senha mora neste arquivo — quem confere é o Conecta ID.
+ */
+function ModalAutorizacao({ alvo, onOk, onCancelar }) {
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
+  const [erro, setErro] = useState('');
+  const [carregando, setCarregando] = useState(false);
+  // Autorização já concedida, mas o Conecta ID marcou a senha para troca.
+  // Guardamos aqui para avisar ANTES de fechar o modal — depois de fechado, a
+  // pessoa volta a atender o cliente e o aviso se perde.
+  const [trocarSenha, setTrocarSenha] = useState(null);
+
+  const oQueLibera = alvo === 'produto'
+    ? 'alterar o valor deste produto'
+    : 'alterar as parcelas e o cronograma';
+
+  const enviar = async (e) => {
+    e.preventDefault();
+    if (!email || !senha || carregando) return;
+    setCarregando(true); setErro('');
+    try {
+      const dados = await autorizaNegociacao(email.trim(), senha);
+      // A negociação está liberada de qualquer jeito — a senha marcada para
+      // troca não invalida a autorização, e travar a venda por causa disso
+      // puniria o cliente por uma pendência administrativa.
+      if (dados.precisaTrocarSenha) { setTrocarSenha(dados); setCarregando(false); return; }
+      onOk(dados);
+    } catch (err) {
+      setErro(err.message);
+      // Limpa só a senha: reescrever o e-mail a cada tentativa é atrito puro,
+      // ainda mais com alguém esperando do outro lado do balcão.
+      setSenha('');
+      setCarregando(false);
+    }
+  };
+
+  if (trocarSenha) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(10,10,9,.72)', backdropFilter: 'blur(4px)', animation: 'popIn .18s both' }}>
+        <div className="card" style={{ width: '100%', maxWidth: 420 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <span className="ms-icon" style={{ color: 'var(--warning)' }}>key</span>
+            <strong style={{ font: '700 16px var(--font-primary)' }}>Autorizado — mas troque sua senha</strong>
+          </div>
+          <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 8px', lineHeight: 1.55 }}>
+            A negociação está liberada e você pode seguir com a venda normalmente.
+          </p>
+          <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 20px', lineHeight: 1.55 }}>
+            Só que a sua senha do Conecta ID está marcada para troca — provavelmente
+            é a senha inicial. Peça o link de definição de senha no <strong style={{ color: 'var(--text-secondary)' }}>kanban</strong>,
+            que é onde as contas da empresa são gerenciadas.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn-prim" autoFocus onClick={() => onOk(trocarSenha)}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>check</span>Entendi, continuar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCancelar(); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(10,10,9,.72)', backdropFilter: 'blur(4px)', animation: 'popIn .18s both' }}
+    >
+      <form onSubmit={enviar} className="card" style={{ width: '100%', maxWidth: 420 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)' }}>lock</span>
+          <strong style={{ font: '700 16px var(--font-primary)' }}>Autorizar negociação</strong>
+        </div>
+        <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 20px', lineHeight: 1.55 }}>
+          Negociar valor é atribuição do gerente ou da diretoria. Peça para quem
+          autoriza entrar com a credencial dele para {oQueLibera}.
+          <br />
+          <strong style={{ color: 'var(--text-secondary)' }}>A liberação vale só para esta venda.</strong>
+        </p>
+        <label className="lbl">E-mail de quem autoriza</label>
+        <input
+          className="inp" type="email" value={email} autoFocus autoComplete="off"
+          onChange={(e) => { setEmail(e.target.value); setErro(''); }}
+          placeholder="nome@sejaap.com.br"
+        />
+        <label className="lbl" style={{ marginTop: 14 }}>Senha</label>
+        <input
+          className="inp" type="password" value={senha} autoComplete="off"
+          onChange={(e) => { setSenha(e.target.value); setErro(''); }}
+          placeholder="••••••••"
+        />
+        {erro && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, font: '400 13px var(--font-secondary)', color: '#F1969E', lineHeight: 1.5 }}>
+            <span className="ms-icon" style={{ fontSize: 18, flexShrink: 0 }}>error</span>{erro}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 22 }}>
+          <button type="button" className="btn-ghost" onClick={onCancelar}>Cancelar</button>
+          <button type="submit" className="btn-prim" disabled={!email || !senha || carregando}>
+            {carregando
+              ? <><span className="ms-icon rot" style={{ fontSize: 18 }}>progress_activity</span>Verificando…</>
+              : <><span className="ms-icon" style={{ fontSize: 18 }}>lock_open</span>Autorizar</>}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -680,6 +866,12 @@ function App() {
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
+    // Negociação: `autorizacao` é { token, nome, email, papel } de quem liberou,
+    // ou null. Nasce NULL sempre — não há sessão que sobreviva ao recarregar,
+    // porque a liberação vale só para a venda em andamento.
+    // `pedindoAutorizacao` guarda qual toggle deve ligar quando ela for aceita
+    // ('produto' | 'pagamento').
+    autorizacao: null, pedindoAutorizacao: null,
   });
   const patch = (o) => setS((prev) => ({ ...prev, ...(typeof o === 'function' ? o(prev) : o) }));
   const scrollRef = useRef(null);
@@ -702,10 +894,16 @@ function App() {
   const steps = stepsDaCategoria(cat);
   const ultimoStep = steps.length - 1;
 
+  // Quem autorizou esta negociação, se alguém autorizou.
+  const autorizado = !!s.autorizacao;
+
   // ----- Navegação -----
-  const goLobby = () => patch({ screen: 'lobby' });
-  const onCategory = (id) => patch({ screen: 'flow', step: 0, catId: id, product: null });
-  const onProduct = (p) => patch({ product: p, priceEdit: false, unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) });
+  // A autorização morre ao sair da venda ou ao trocar de produto: ela vale para
+  // AQUELE registro. Sem isso, liberar um desconto no produto A deixaria o
+  // produto B destravado logo em seguida, no mesmo aparelho.
+  const goLobby = () => patch({ screen: 'lobby', autorizacao: null, priceEdit: false, editMode: false });
+  const onCategory = (id) => patch({ screen: 'flow', step: 0, catId: id, product: null, autorizacao: null });
+  const onProduct = (p) => patch({ product: p, priceEdit: false, editMode: false, autorizacao: null, unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) });
   const next = () => patch((d) => ({ step: Math.min(ultimoStep, d.step + 1) }));
   const back = () => { if (s.step === 0) patch({ screen: 'lobby' }); else patch((d) => ({ step: d.step - 1 })); };
   const goStep = (i) => patch({ step: i });
@@ -777,7 +975,31 @@ function App() {
   const setParcelaForma = (idx, forma) => patch((d) => ({ parcelas: d.parcelas.map((p, i) => i === idx ? { ...p, forma } : p) }));
   const unlockParcela = (idx) => patch((d) => { const arr = d.parcelas.map((p, i) => i === idx ? { ...p, manual: false } : { ...p }); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
   const resetSchedule = () => patch((d) => { const arr = d.parcelas.map((p) => ({ ...p, manual: false })); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
-  const toggleEdit = () => { if (s.editMode) patch({ editMode: false, ...initPayment(product) }); else patch({ editMode: true }); };
+  const toggleEdit = () => {
+    if (!s.editMode && !autorizado) { patch({ pedindoAutorizacao: 'pagamento' }); return; }
+    if (s.editMode) patch({ editMode: false, ...initPayment(product) });
+    else patch({ editMode: true });
+  };
+
+  // Autorização aceita: guarda quem liberou e liga o toggle que foi pedido.
+  const onAutorizacaoOk = (autorizacao) => {
+    const alvo = s.pedindoAutorizacao;
+    patch({
+      autorizacao, pedindoAutorizacao: null,
+      ...(alvo === 'produto' ? { priceEdit: true } : {}),
+      ...(alvo === 'pagamento' ? { editMode: true } : {}),
+    });
+  };
+
+  // Encerra a autorização e devolve os valores ao de tabela. Existe para o caso
+  // de a negociação ser descartada no meio — o aparelho não pode ficar liberado
+  // esperando a próxima venda.
+  const encerrarAutorizacao = () => patch((d) => ({
+    autorizacao: null,
+    priceEdit: false,
+    editMode: false,
+    ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product) } : {}),
+  }));
 
   // ----- Igualar parcelas: ao alterar a 1ª parcela, oferecer aplicar o valor às demais -----
   const askEqualizar = (n) => { const v = Number.isFinite(n) ? Math.max(0, n) : 0; if (v > 0 && s.parcelas.length > 1) patch({ showEqualizar: true, equalizarValor: v }); };
@@ -806,13 +1028,17 @@ function App() {
     const newTotal = product.recurring ? round2(unit * meses) : round2(val);
     return { unitValue: unit, ...rebuildDefault(newTotal) };
   });
-  const togglePriceEdit = () => patch((d) => {
-    if (d.priceEdit) { // desligar: volta ao valor de tabela do produto
-      const unit = product.recurring ? product.monthly : product.price;
-      return { priceEdit: false, unitValue: unit, ...rebuildDefault(product.price) };
-    }
-    return { priceEdit: true };
-  });
+  const togglePriceEdit = () => {
+    // Destravar exige autorização; travar de volta, não.
+    if (!s.priceEdit && !autorizado) { patch({ pedindoAutorizacao: 'produto' }); return; }
+    patch((d) => {
+      if (d.priceEdit) { // desligar: volta ao valor de tabela do produto
+        const unit = product.recurring ? product.monthly : product.price;
+        return { priceEdit: false, unitValue: unit, ...rebuildDefault(product.price) };
+      }
+      return { priceEdit: true };
+    });
+  };
   const valorTabela = product ? (product.recurring ? product.monthly : product.price) : 0;
 
   // Conferência da soma
@@ -896,6 +1122,16 @@ function App() {
         entrada: round2(Number(s.entradaValor) || 0), parcelas: s.parcelas.length,
         vigencia_meses: product && product.vigencia ? product.vigencia : 12,
         valor_total: soma, valores_negociados: !!(s.editMode || s.priceEdit),
+        // Quem autorizou a negociação. Antes era um booleano ("passou pela
+        // senha"); agora é o e-mail da pessoa, porque a credencial é individual.
+        // Vai no payload para o n8n auditar quem liberou cada desconto.
+        //
+        // ATENÇÃO: isto é AUDITORIA, não controle de acesso. O payload é montado
+        // no navegador e o webhook não valida nada — quem quiser mentir aqui,
+        // mente. Fechar essa brecha é a TSK-121: prender o valor negociado a uma
+        // assinatura do servidor e recusar no n8n o que não vier assinado.
+        edicao_autorizada: (s.editMode || s.priceEdit) ? (s.autorizacao?.email || null) : null,
+        autorizado_por: s.autorizacao ? { nome: s.autorizacao.nome, email: s.autorizacao.email, papel: s.autorizacao.papel } : null,
         entrada_detalhe: { valor: round2(Number(s.entradaValor) || 0), forma: s.entradaForma, forma_label: paymentLabel(s.entradaForma), data: s.entradaData || null },
         cronograma: s.parcelas.map((p, i) => ({ numero: i + 1, valor: round2(Number(p.valor) || 0), vencimento: p.data || null, forma: p.forma, forma_label: paymentLabel(p.forma) })),
       },
@@ -976,7 +1212,9 @@ function App() {
       const payload = buildApnPayload();
       payload.protocolo = protocolo;
       const response = await sendVendaApn(payload);
-      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle' });
+      // Venda enviada: a autorização se esgota aqui. Ela valia para este
+      // registro, e ele acabou de ser fechado.
+      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
     } catch (e) {
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
@@ -993,7 +1231,9 @@ function App() {
       payload.protocolo = protocolo;
       const response = await sendPreContrato(payload);
       const r = response || {};
-      patch({ screen: 'success', response: r, protocol: protocolo, sendState: 'idle' });
+      // Venda enviada: a autorização se esgota aqui. Ela valia para este
+      // registro, e ele acabou de ser fechado.
+      patch({ screen: 'success', response: r, protocol: protocolo, sendState: 'idle', autorizacao: null });
     } catch (e) {
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
@@ -1210,7 +1450,7 @@ function App() {
                 <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{product.recurring ? 'Edite a mensalidade ou o valor total — as parcelas se recalculam automaticamente.' : 'O valor pode variar por evento/negociação — habilite para ajustar.'}</div>
               </div>
             </div>
-            <EditToggle on={s.priceEdit} onToggle={togglePriceEdit} label="Editar valor" />
+            <EditToggle on={s.priceEdit} onToggle={togglePriceEdit} label="Editar valor" restrito={!autorizado} />
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 18, marginTop: 16, flexWrap: 'wrap' }}>
             <div style={{ minWidth: 200 }}>
@@ -1333,7 +1573,7 @@ function App() {
             <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Configuração de pagamento</h2>
             <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada + 11 parcelas iguais. Habilite a edição para personalizar.</p>
           </div>
-          <EditToggle on={s.editMode} onToggle={toggleEdit} label="Editar valores" />
+          <EditToggle on={s.editMode} onToggle={toggleEdit} label="Editar valores" restrito={!autorizado} />
         </div>
 
         {/* Entrada */}
@@ -2047,11 +2287,55 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Modal: credencial de quem autoriza a negociação desta venda */}
+      {s.pedindoAutorizacao && (
+        <ModalAutorizacao
+          alvo={s.pedindoAutorizacao}
+          onOk={onAutorizacaoOk}
+          onCancelar={() => patch({ pedindoAutorizacao: null })}
+        />
+      )}
+
+      {/* Faixa de quem autorizou. Fica visível enquanto a negociação estiver
+          liberada, para ninguém esquecer o aparelho destravado no balcão. */}
+      {autorizado && s.screen === 'flow' && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, flexWrap: 'wrap', padding: '10px 16px', background: 'var(--primary-subtle)', borderTop: '1px solid rgba(199,164,68,.4)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, font: '400 12.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            <span className="ms-icon" style={{ fontSize: 17, color: 'var(--primary)' }}>lock_open</span>
+            Negociação autorizada por <strong style={{ color: 'var(--text)' }}>{s.autorizacao.nome || s.autorizacao.email}</strong> — vale só para esta venda.
+          </span>
+          <button type="button" className="btn-ghost" style={{ padding: '5px 12px', font: '600 12px var(--font-primary)' }} onClick={encerrarAutorizacao}>
+            Encerrar autorização
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+/* ============================================================================
+ * BOOT — busca os valores de tabela antes de montar a tela.
+ *
+ * Os preços vêm do KV via GET /api/catalogo (editáveis em /admin, sem deploy).
+ * Se essa chamada falhar por qualquer motivo, seguimos com o CATS embutido no
+ * arquivo: o lobby abre com os últimos valores versionados em vez de quebrar.
+ * Vender com um preço possivelmente desatualizado é ruim; não conseguir abrir a
+ * página no meio de um evento é pior.
+ * ========================================================================== */
+async function boot() {
+  try {
+    const r = await fetch('/api/catalogo', { cache: 'no-store' });
+    if (r.ok) {
+      const d = await r.json();
+      if (Array.isArray(d?.cats) && d.cats.length) CATS = d.cats;
+    }
+  } catch (e) {
+    console.warn('[lobby] catálogo remoto indisponível; usando os valores embutidos.', e);
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+}
+boot();
 </script>
 </body>
 </html>

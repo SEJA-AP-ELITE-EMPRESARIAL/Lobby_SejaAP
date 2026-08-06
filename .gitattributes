@@ -1,0 +1,10 @@
+# O repositório é histórico de CRLF (o index.html nasceu no Windows) e mexer
+# nisso agora reescreveria o arquivo inteiro num diff ilegível. Por isso a regra
+# é escopada: só o que quebra de verdade com \r.
+#
+# Script com CRLF no shebang não executa dentro do container Linux, e é o tipo
+# de falha que só aparece no deploy.
+*.sh   text eol=lf
+*.py   text eol=lf
+Dockerfile text eol=lf
+*.yml  text eol=lf

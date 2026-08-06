@@ -1,0 +1,71 @@
+"""
+Como uma identidade do Conecta ID vira um usuário do Lobby.
+
+Este módulo é apontado por `IDENTIDADE_RESOLVER_USUARIO` no settings, e é
+chamado pelo `BackendIdentidade` logo depois de a senha conferir.
+"""
+import logging
+
+from django.contrib.auth import get_user_model
+
+from identidade_client import resolver_com_vinculo
+
+from .models import VinculoIdentidade
+
+logger = logging.getLogger(__name__)
+
+
+def _criar_usuario_local(dados):
+    """Cria a conta local de quem nunca entrou aqui.
+
+    Nasce SEM papel e SEM staff. É deliberado: ter acesso ao Lobby no Conecta ID
+    significa "pode entrar", não "pode autorizar desconto". A diretoria promove
+    depois, no /django-admin/ ou pelo comando `promover_no_lobby`.
+
+    Devolver `None` aqui seria o outro caminho — recusar a entrada de quem não
+    foi promovido antes. Não foi o escolhido, porque o Conecta ID só libera o app
+    para quem a empresa já decidiu que deve entrar, e recusar produziria um erro
+    indistinguível de senha errada bem no primeiro acesso da pessoa.
+    """
+    Usuario = get_user_model()
+    email = (dados.get("email") or "").strip().lower()
+    nome = (dados.get("nome") or "").strip()
+    partes = nome.split()
+
+    usuario = Usuario.objects.create(
+        # O `username` do Django é obrigatório e único; o login de verdade é o
+        # e-mail, que é o que o Conecta ID conhece.
+        username=email or str(dados["identidade_id"]),
+        email=email,
+        first_name=partes[0] if partes else "",
+        last_name=" ".join(partes[1:]) if len(partes) > 1 else "",
+        is_active=True,
+        is_staff=False,
+    )
+    # Sem senha utilizável: quem guarda senha é o Conecta ID. Uma senha local
+    # aqui seria uma segunda porta para a mesma conta, fora da política central.
+    usuario.set_unusable_password()
+    usuario.save(update_fields=["password"])
+
+    logger.info("conta local criada no Lobby para %s (sem papel)", email)
+    return usuario
+
+
+def resolver_usuario(dados):
+    """Ponte entre o Conecta ID e o usuário local. Devolve `User` ou `None`."""
+    usuario = resolver_com_vinculo(
+        dados, VinculoIdentidade, ao_criar=_criar_usuario_local
+    )
+    if usuario is None:
+        return None
+
+    # `precisa_trocar_senha` é do Conecta ID e muda a cada login; guardar a
+    # cópia local permite que a tela avise sem precisar de outra chamada.
+    vinculo = VinculoIdentidade.objects.filter(usuario=usuario).first()
+    if vinculo is not None:
+        precisa = bool(dados.get("precisa_trocar_senha", False))
+        if vinculo.precisa_trocar_senha != precisa:
+            vinculo.precisa_trocar_senha = precisa
+            vinculo.save(update_fields=["precisa_trocar_senha", "atualizado_em"])
+
+    return usuario

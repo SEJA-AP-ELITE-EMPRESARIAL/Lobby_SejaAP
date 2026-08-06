@@ -1,0 +1,100 @@
+# Lobby Seja AP — stack de produção.
+#   docker compose up -d --build
+#
+# Roda em prod.solucoes.sejaap (187.77.48.164), ao lado do kanban, do
+# conecta-crm, do formulario-financeiro e do Conecta ID. O banco NÃO fica nesta
+# VPS: Postgres `lobby` na db-sejaap (179.197.237.95), alcançado por `db-tunnel`.
+#
+# O subdomínio lobby.sejaap.com.br aponta para o nginx do HOST, que faz proxy
+# para a porta 8095 exposta aqui no loopback. Portas vizinhas já tomadas:
+#   8090 conecta-crm · 8091 kanban-frontend · 8092 kanban-mcp
+#   8093 formularios · 8094 identidade-api (admin, só por túnel SSH)
+name: lobby-sejaap
+
+services:
+  db-tunnel:
+    build: ./deploy/db-tunnel
+    image: lobby-db-tunnel:prod
+    container_name: lobby-db-tunnel
+    restart: unless-stopped
+    environment:
+      TUNNEL_HOST: "179.197.237.95"
+      TUNNEL_USER: "root"
+      TUNNEL_PORT: "22"
+    volumes:
+      - /opt/conecta/env/lobby_db_tunnel_key:/keys/id:ro
+      - /opt/conecta/env/lobby_db_known_hosts:/keys/known_hosts:ro
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  backend:
+    build: ./backend
+    container_name: lobby-backend
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      - db-tunnel
+    expose:
+      - "8000"
+    networks:
+      # `default` PRECISA estar listada. Declarar `networks:` num serviço que não
+      # tinha o tira da rede padrão do compose — e o backend perderia o db-tunnel
+      # e o frontend de uma vez, por um detalhe de sintaxe.
+      - default
+      # Rede compartilhada, criada pela stack do Conecta ID. É por ela que este
+      # backend vai alcançar `identidade-api:8000` para verificar credencial
+      # (TSK-125). Já declarada aqui para que a migração não precise mexer no
+      # compose depois.
+      - identidade-net
+    healthcheck:
+      # O X-Forwarded-Proto não é decoração: com DEBUG=false o SECURE_SSL_REDIRECT
+      # responde 301 para https, e sem o header o urllib tentaria TLS contra o
+      # gunicorn em texto claro — o healthcheck nunca passaria.
+      #
+      # Bate no GET público do catálogo de propósito: é a rota que precisa estar
+      # de pé para o consultor cotar. Se ela responde, o app serve.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8000/api/catalogo', headers={'X-Forwarded-Proto': 'https'}), timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    build:
+      # Contexto na raiz: o index.html e o admin.html continuam no lugar de
+      # sempre, para o projeto da Cloudflare Pages seguir publicável como
+      # rollback durante a transição.
+      context: .
+      dockerfile: deploy/frontend/Dockerfile
+    container_name: lobby-frontend
+    depends_on:
+      - backend
+    restart: unless-stopped
+    ports:
+      # Exposto só no loopback; o nginx do HOST faz o proxy do subdomínio.
+      - "127.0.0.1:8095:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  # Criada e mantida pela stack do Conecta ID (/opt/identidade/app). Aqui ela é
+  # externa: se não existir, o `up` falha alto em vez de criar uma rede vazia com
+  # o mesmo nome — que seria pior, porque o serviço subiria sem alcançar ninguém
+  # e o erro só apareceria no primeiro login.
+  identidade-net:
+    external: true

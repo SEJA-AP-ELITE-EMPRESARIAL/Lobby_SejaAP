@@ -12,3 +12,23 @@ node_modules/
 
 # Documentação interna/local — não deve ser versionada no GitHub
 docs/
+
+# Segredos locais do `wrangler pages dev` (SENHA_DIRETORIA, TOKEN_SECRET).
+# Em produção esses valores vivem só no painel do Cloudflare — nunca aqui.
+.dev.vars
+
+# Estado local do wrangler (KV simulado em disco)
+.wrangler/
+
+# ---- Backend Django (backend/) ----
+# Virtualenv, banco de desenvolvimento e estáticos coletados no build.
+backend/.venv/
+backend/venv/
+backend/db.sqlite3
+backend/staticfiles/
+__pycache__/
+*.py[cod]
+
+# Segredos do backend. Em produção vivem em /opt/conecta/env/, modo 600.
+backend/.env
+.env
