@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141412">
+<meta name="robots" content="noindex, nofollow">
+<title>Valores de tabela · Lobby · Conecta AP</title>
+<link rel="icon" href="data:,">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;700&display=swap');
+
+/* Tokens do design system Conecta AP — iguais aos do index.html. */
+:root{
+  --primary:#C7A444; --primary-light:#E8B84B; --primary-dark:#9C7C21;
+  --primary-subtle:rgba(199,164,68,0.08);
+  --background:#141412; --surface:#1E1E1C; --surface-light:#282826; --surface-elevated:#323230;
+  --text:#F0F0F0; --text-secondary:#D0D0D0; --text-muted:#A0A0A0;
+  --border-light:rgba(255,255,255,0.1);
+  --success:#28A745; --warning:#FFC107; --danger:#DC3545;
+  --gradient-primary:linear-gradient(135deg,#C7A444 0%,#9C7C21 100%);
+  --font-primary:'Montserrat','Segoe UI',Tahoma,sans-serif;
+  --font-secondary:'Roboto','Segoe UI',Tahoma,sans-serif;
+  --focus-ring:0 0 0 3px rgba(199,164,68,0.32);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;}
+body{background:var(--background);color:var(--text);font-family:var(--font-secondary);-webkit-font-smoothing:antialiased;}
+input,button{font-family:'Roboto',sans-serif;}
+button{font-family:var(--font-primary);}
+@keyframes slideUpFade{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+@keyframes spin{to{transform:rotate(360deg);}}
+.ms-icon{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;font-size:24px;line-height:1;display:inline-block;white-space:nowrap;-webkit-font-feature-settings:'liga';-webkit-font-smoothing:antialiased;}
+.ms-icon.rot{animation:spin .9s linear infinite;}
+.inp{width:100%;height:44px;padding:0 12px;border-radius:8px;background:var(--surface-elevated);border:1px solid var(--border-light);color:var(--text);font:400 14px 'Roboto';outline:none;transition:border-color .15s,box-shadow .15s;}
+.inp:focus{border-color:var(--primary);box-shadow:var(--focus-ring);}
+.inp.mudou{border-color:var(--warning);}
+.lbl{display:block;font:500 12px var(--font-primary);color:var(--text-secondary);margin-bottom:6px;}
+.card{background:var(--surface);border:1px solid var(--border-light);border-radius:14px;padding:22px;animation:slideUpFade .4s both;}
+.btn-prim{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:46px;padding:0 28px;border-radius:10px;border:none;cursor:pointer;background:var(--gradient-primary);color:#1A1A18;font:700 14px var(--font-primary);letter-spacing:.03em;box-shadow:0 4px 14px rgba(199,164,68,.3);transition:transform .2s,box-shadow .2s,opacity .2s;}
+.btn-prim:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 22px rgba(199,164,68,.4);}
+.btn-prim:disabled{background:var(--surface-light);color:var(--text-muted);cursor:not-allowed;opacity:.6;box-shadow:none;}
+.btn-ghost{display:inline-flex;align-items:center;gap:7px;height:46px;padding:0 20px;border-radius:10px;border:1px solid var(--border-light);background:transparent;color:var(--text-secondary);font:600 13.5px var(--font-primary);cursor:pointer;transition:border-color .2s,color .2s;}
+.btn-ghost:hover:not(:disabled){border-color:var(--primary);color:var(--primary);}
+.btn-ghost:disabled{opacity:.5;cursor:not-allowed;}
+.chip{display:inline-flex;align-items:center;gap:5px;font:600 11.5px var(--font-primary);color:var(--primary);background:var(--primary-subtle);border:1px solid rgba(199,164,68,.35);padding:4px 10px;border-radius:7px;}
+.prod{display:grid;grid-template-columns:1fr 200px 200px;gap:16px;align-items:end;padding:16px 0;border-bottom:1px solid var(--border-light);}
+.prod:last-child{border-bottom:none;}
+.aviso{display:flex;align-items:flex-start;gap:10px;padding:14px 16px;border-radius:10px;font:400 13.5px var(--font-secondary);line-height:1.5;}
+*::-webkit-scrollbar{width:10px;}
+*::-webkit-scrollbar-thumb{background:var(--surface-light);border-radius:10px;border:2px solid var(--background);}
+@media (max-width:820px){ .prod{grid-template-columns:1fr;gap:10px;} }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useMemo } = React;
+
+/* ============================================================================
+ * Esta tela é o OUTRO mecanismo de credencial do Lobby, e a diferença importa.
+ *
+ * No lobby (index.html) a credencial autoriza UMA negociação e morre com ela —
+ * não há sessão, porque quem digita é o gerente no aparelho do consultor.
+ *
+ * Aqui é sessão de verdade: publicar a tabela de preços é trabalho continuado,
+ * feito no próprio computador de quem faz. O token fica no sessionStorage e
+ * some ao fechar a aba.
+ *
+ * Publicar exige papel de DIRETORIA. Gerente entra no lobby e autoriza
+ * negociação, mas não muda o preço que todo consultor enxerga.
+ * ========================================================================== */
+const CHAVE_TOKEN = 'lobby_sessao_diretoria';
+const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+const sessao = {
+  ler() {
+    try {
+      const raw = JSON.parse(sessionStorage.getItem(CHAVE_TOKEN) || 'null');
+      if (raw?.token && raw.exp * 1000 > Date.now()) return raw;
+      sessionStorage.removeItem(CHAVE_TOKEN);
+    } catch {}
+    return null;
+  },
+  gravar(dados) { try { sessionStorage.setItem(CHAVE_TOKEN, JSON.stringify(dados)); } catch {} },
+  limpar() { try { sessionStorage.removeItem(CHAVE_TOKEN); } catch {} },
+};
+
+/* Entrada de dinheiro: digita só números, formata como moeda. */
+function MoneyInput({ value, onChange, mudou }) {
+  const [txt, setTxt] = useState(value ? Number(value).toFixed(2).replace('.', ',') : '');
+  useEffect(() => { setTxt(value ? Number(value).toFixed(2).replace('.', ',') : ''); }, [value]);
+  const onInput = (e) => {
+    const bruto = e.target.value.replace(/[^\d,]/g, '');
+    setTxt(bruto);
+    const n = Number(bruto.replace(/\./g, '').replace(',', '.'));
+    onChange(isFinite(n) ? n : 0);
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ font: '600 13px var(--font-primary)', color: 'var(--text-muted)' }}>R$</span>
+      <input className={'inp' + (mudou ? ' mudou' : '')} value={txt} onChange={onInput} inputMode="decimal" placeholder="0,00" />
+    </div>
+  );
+}
+
+/* ===== Tela de entrada ===== */
+function Login({ onEntrar }) {
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
+  const [erro, setErro] = useState('');
+  const [carregando, setCarregando] = useState(false);
+
+  const entrar = async (e) => {
+    e.preventDefault();
+    if (!email || !senha || carregando) return;
+    setCarregando(true); setErro('');
+    try {
+      let r;
+      try {
+        r = await fetch('/api/sessao', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email.trim(), senha }),
+        });
+      } catch {
+        throw new Error('Sem conexão. Verifique a internet e tente de novo.');
+      }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Não foi possível entrar.');
+      // Só a diretoria publica tabela. Gerente entra no lobby e autoriza
+      // negociação, mas aqui não teria o que fazer — e descobrir isso só ao
+      // clicar em "Publicar", depois de editar tudo, seria péssimo.
+      if (!d.podePublicarTabela) {
+        throw new Error('Sua conta não tem permissão para alterar a tabela de preços. Esta área é da diretoria.');
+      }
+      sessao.gravar(d);
+      onEntrar(d);
+    } catch (err) {
+      setErro(err.message);
+      // Só a senha: reescrever o e-mail a cada tentativa é atrito à toa.
+      setSenha('');
+    } finally {
+      setCarregando(false);
+    }
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+      <form onSubmit={entrar} className="card" style={{ width: '100%', maxWidth: 400 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)' }}>lock</span>
+          <h1 style={{ font: '700 19px var(--font-primary)', margin: 0 }}>Valores de tabela</h1>
+        </div>
+        <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 22px', lineHeight: 1.5 }}>
+          Área restrita à diretoria. Entre com o seu e-mail e senha do Conecta ID —
+          os mesmos do kanban e do financeiro.
+        </p>
+        <label className="lbl">E-mail</label>
+        <input
+          className="inp" type="email" value={email} autoFocus autoComplete="username"
+          onChange={(e) => { setEmail(e.target.value); setErro(''); }}
+          placeholder="nome@sejaap.com.br"
+        />
+        <label className="lbl" style={{ marginTop: 14 }}>Senha</label>
+        <input
+          className="inp" type="password" value={senha} autoComplete="current-password"
+          onChange={(e) => { setSenha(e.target.value); setErro(''); }}
+          placeholder="••••••••"
+        />
+        {erro && (
+          <div className="aviso" style={{ marginTop: 12, background: 'rgba(220,53,69,.1)', color: '#F1969E' }}>
+            <span className="ms-icon" style={{ fontSize: 19 }}>error</span>{erro}
+          </div>
+        )}
+        <button className="btn-prim" type="submit" disabled={!email || !senha || carregando} style={{ width: '100%', marginTop: 20 }}>
+          {carregando ? <span className="ms-icon rot" style={{ fontSize: 19 }}>progress_activity</span> : <span className="ms-icon" style={{ fontSize: 19 }}>lock_open</span>}
+          {carregando ? 'Verificando…' : 'Entrar'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/* ===== Editor de valores ===== */
+function Editor({ sessao: sess, aoSair }) {
+  const token = sess.token;
+  const [cats, setCats] = useState(null);
+  const [original, setOriginal] = useState(null);
+  const [atualizadoEm, setAtualizadoEm] = useState(null);
+  const [estado, setEstado] = useState('carregando'); // carregando | pronto | salvando | erro
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => { carregar(); }, []);
+
+  const carregar = async () => {
+    setEstado('carregando'); setMsg('');
+    try {
+      const r = await fetch('/api/catalogo', { cache: 'no-store' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao carregar o catálogo.');
+      setCats(d.cats);
+      setOriginal(JSON.parse(JSON.stringify(d.cats)));
+      setAtualizadoEm(d.atualizadoEm);
+      setEstado('pronto');
+    } catch (err) {
+      setMsg(err.message); setEstado('erro');
+    }
+  };
+
+  // Valor de um produto: mensalidade se recorrente, valor à vista se não.
+  const setValor = (catId, prodId, valor) => {
+    setCats((cs) => cs.map((c) => c.id !== catId ? c : {
+      ...c,
+      products: c.products.map((p) => {
+        if (p.id !== prodId) return p;
+        return p.recurring
+          ? { ...p, monthly: valor, price: Math.round(valor * p.vigencia * 100) / 100 }
+          : { ...p, price: valor };
+      }),
+    }));
+    setMsg('');
+  };
+
+  const valorDe = (p) => (p.recurring ? p.monthly : p.price);
+  const achaOriginal = (catId, prodId) =>
+    original?.find((c) => c.id === catId)?.products.find((p) => p.id === prodId);
+
+  const alteracoes = useMemo(() => {
+    if (!cats || !original) return [];
+    const out = [];
+    for (const c of cats) {
+      for (const p of c.products) {
+        const o = achaOriginal(c.id, p.id);
+        if (o && valorDe(o) !== valorDe(p)) out.push({ cat: c.name, prod: p.name, de: valorDe(o), para: valorDe(p), recorrente: !!p.recurring });
+      }
+    }
+    return out;
+  }, [cats, original]);
+
+  const salvar = async () => {
+    if (!alteracoes.length) return;
+    const resumo = alteracoes.map((a) => `• ${a.prod}: ${fmt(a.de)} → ${fmt(a.para)}${a.recorrente ? '/mês' : ''}`).join('\n');
+    if (!confirm(`Confirmar ${alteracoes.length} alteração(ões)?\n\n${resumo}\n\nOs novos valores passam a valer imediatamente para todos os consultores.`)) return;
+
+    setEstado('salvando'); setMsg('');
+    try {
+      const r = await fetch('/api/catalogo', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ cats }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401) { sessao.limpar(); aoSair(); return; }
+      if (!r.ok) throw new Error(d.erro || 'Falha ao salvar.');
+      setCats(d.cats);
+      setOriginal(JSON.parse(JSON.stringify(d.cats)));
+      setAtualizadoEm(d.atualizadoEm);
+      setEstado('pronto');
+      setMsg('ok');
+    } catch (err) {
+      setMsg(err.message); setEstado('pronto');
+    }
+  };
+
+  const descartar = () => { setCats(JSON.parse(JSON.stringify(original))); setMsg(''); };
+
+  if (estado === 'carregando') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>
+        <span className="ms-icon rot" style={{ fontSize: 30 }}>progress_activity</span>
+      </div>
+    );
+  }
+  if (estado === 'erro') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+        <div className="card" style={{ maxWidth: 440, textAlign: 'center' }}>
+          <span className="ms-icon" style={{ fontSize: 34, color: 'var(--danger)' }}>cloud_off</span>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-secondary)', lineHeight: 1.55 }}>{msg}</p>
+          <button className="btn-ghost" onClick={carregar} style={{ margin: '0 auto' }}>
+            <span className="ms-icon" style={{ fontSize: 19 }}>refresh</span>Tentar de novo
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const sujo = alteracoes.length > 0;
+
+  return (
+    <div style={{ minHeight: '100vh', paddingBottom: sujo ? 110 : 40 }}>
+      {/* Topo */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, height: 64, padding: '0 28px', background: 'rgba(20,20,18,.92)', backdropFilter: 'blur(8px)', borderBottom: '1px solid var(--border-light)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)' }}>sell</span>
+          <strong style={{ font: '700 15px var(--font-primary)' }}>Valores de tabela</strong>
+          <span className="chip">{sess.nome || sess.email}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <a href="/" style={{ font: '600 12.5px var(--font-primary)', color: 'var(--text-muted)', textDecoration: 'none' }}>Ir para o lobby</a>
+          <button className="btn-ghost" style={{ height: 38, padding: '0 14px' }} onClick={() => { sessao.limpar(); aoSair(); }}>
+            <span className="ms-icon" style={{ fontSize: 18 }}>logout</span>Sair
+          </button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 940, margin: '0 auto', padding: '28px 24px' }}>
+        {/* Senha marcada para troca no Conecta ID. Não bloqueia nada — quem
+            define senha é o kanban, o único app com gestão de identidades —
+            mas precisa ser dito onde a pessoa vai olhar. */}
+        {sess.precisaTrocarSenha && (
+          <div className="aviso" style={{ background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.3)', color: 'var(--text-secondary)', marginBottom: 18 }}>
+            <span className="ms-icon" style={{ fontSize: 20, color: 'var(--warning)' }}>key</span>
+            <span>
+              A sua senha do Conecta ID está marcada para troca — provavelmente é a senha inicial.
+              Peça o link de definição de senha no <strong>kanban</strong>, que é onde as contas da
+              empresa são gerenciadas. Você pode continuar publicando normalmente.
+            </span>
+          </div>
+        )}
+
+        <div className="aviso" style={{ background: 'var(--primary-subtle)', border: '1px solid rgba(199,164,68,.3)', color: 'var(--text-secondary)', marginBottom: 22 }}>
+          <span className="ms-icon" style={{ fontSize: 20, color: 'var(--primary)' }}>info</span>
+          <span>
+            Estes são os valores <strong>de tabela</strong> — o que o consultor vê ao abrir o produto.
+            Salvar publica na hora, sem deploy, e fica registrado quem publicou.
+            Desconto pontual por venda é outra coisa: acontece no próprio lobby, autorizado
+            venda a venda por um gerente ou pela diretoria.
+            {atualizadoEm && <><br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>Última alteração: {new Date(atualizadoEm).toLocaleString('pt-BR')}</span></>}
+          </span>
+        </div>
+
+        {msg === 'ok' && (
+          <div className="aviso" style={{ background: 'rgba(40,167,69,.1)', color: '#8FD79E', marginBottom: 18 }}>
+            <span className="ms-icon" style={{ fontSize: 20 }}>check_circle</span>
+            Valores publicados. Os consultores já veem os novos preços ao recarregar o lobby.
+          </div>
+        )}
+        {msg && msg !== 'ok' && (
+          <div className="aviso" style={{ background: 'rgba(220,53,69,.1)', color: '#F1969E', marginBottom: 18 }}>
+            <span className="ms-icon" style={{ fontSize: 20 }}>error</span>{msg}
+          </div>
+        )}
+
+        {cats.map((c) => (
+          <div key={c.id} className="card" style={{ marginBottom: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>{c.icon}</span>
+              <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>{c.name}</h2>
+              {c.locked && (
+                <span style={{ font: '600 11px var(--font-primary)', color: 'var(--text-muted)', background: 'var(--surface-light)', padding: '3px 9px', borderRadius: 6 }}>
+                  Em implementação
+                </span>
+              )}
+            </div>
+
+            {/* Categoria de fluxo próprio (APN): o valor é definido em cada venda,
+                não há tabela para editar aqui. Aparece só para a diretoria saber
+                que ela existe e está no ar. */}
+            {c.flow && (
+              <div style={{ font: '400 13px/1.55 var(--font-secondary)', color: 'var(--text-muted)', paddingTop: 4 }}>
+                Sem valor de tabela — o consultor informa o valor da venda no próprio lobby.
+              </div>
+            )}
+
+            {c.products.map((p) => {
+              const o = achaOriginal(c.id, p.id);
+              const mudou = o && valorDe(o) !== valorDe(p);
+              return (
+                <div className="prod" key={p.id}>
+                  <div>
+                    <div style={{ font: '600 14.5px var(--font-primary)' }}>{p.name}</div>
+                    <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>
+                      {p.desc} · {p.duration}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="lbl">{p.recurring ? 'Mensalidade' : 'Valor à vista'}</label>
+                    <MoneyInput value={valorDe(p)} mudou={mudou} onChange={(v) => setValor(c.id, p.id, v)} />
+                  </div>
+                  <div>
+                    <label className="lbl">Total do contrato</label>
+                    <div style={{ height: 44, display: 'flex', alignItems: 'center', font: '600 14px var(--font-secondary)', color: mudou ? 'var(--warning)' : 'var(--text-secondary)' }}>
+                      {fmt(p.price)}
+                      {p.recurring && (
+                        <span style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)', marginLeft: 6 }}>
+                          ({p.vigencia}×)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* Barra de salvar — só aparece quando há mudança pendente. */}
+      {sujo && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
+          <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            <strong style={{ color: 'var(--warning)' }}>{alteracoes.length}</strong>{' '}
+            {alteracoes.length === 1 ? 'valor alterado' : 'valores alterados'}, ainda não publicado
+            {alteracoes.length === 1 ? '' : 's'}.
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button className="btn-ghost" onClick={descartar} disabled={estado === 'salvando'}>Descartar</button>
+            <button className="btn-prim" onClick={salvar} disabled={estado === 'salvando'}>
+              {estado === 'salvando'
+                ? <><span className="ms-icon rot" style={{ fontSize: 19 }}>progress_activity</span>Publicando…</>
+                : <><span className="ms-icon" style={{ fontSize: 19 }}>cloud_upload</span>Publicar valores</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  // `sessao` agora guarda o objeto inteiro (token, nome, e-mail, papel), não só
+  // o token — é o que permite mostrar quem está publicando no cabeçalho.
+  const [sess, setSess] = useState(sessao.ler());
+  return sess
+    ? <Editor sessao={sess} aoSair={() => setSess(null)} />
+    : <Login onEntrar={setSess} />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
