@@ -2,9 +2,10 @@
 
 Operação do Lobby na **prod.solucoes (187.77.48.164)**.
 
-> **Estado:** a stack está escrita e testada localmente, mas **ainda não foi
-> provisionada na VPS**. Os passos de instalação abaixo são o roteiro do primeiro
-> deploy, não a descrição de algo que já existe.
+> **Estado: no ar.** A stack foi provisionada entre 06 e 07/08/2026 e
+> `lobby.sejaap.com.br` sai da VPS, não mais do Cloudflare Pages. Para publicar
+> uma mudança, vá direto para [Deploy do dia a dia](#deploy-do-dia-a-dia) — a
+> seção de primeiro deploy é o roteiro de reprovisionamento, não o que fazer hoje.
 
 ## Topologia
 
@@ -23,7 +24,11 @@ Portas vizinhas já tomadas nesta VPS — confira antes de mexer:
 Portas de banco na db-sejaap: 5433 kanban · 5434 CRM · 5435 formulários ·
 5436 identidade · **5437 lobby**.
 
-## Primeiro deploy
+## Primeiro deploy (já executado — roteiro de reprovisionamento)
+
+Estes oito passos já rodaram. Ficam registrados para reconstruir a stack do zero
+(VPS nova, disaster recovery) e para explicar de onde veio cada arquivo em
+`/opt/conecta/env/`. Não repita nada daqui num deploy comum.
 
 ### 1. Banco na db-sejaap
 
@@ -106,20 +111,39 @@ O nginx desta VPS é anterior ao 1.25.1 — a sintaxe é `listen 443 ssl http2;`
 
 ### 8. DNS
 
-`lobby.sejaap.com.br` → **A** → 187.77.48.164, **Proxied**. Hoje ele aponta para o
-Cloudflare Pages; virar o registro é o corte.
+`lobby.sejaap.com.br` → **A** → 187.77.48.164, **Proxied**. Registro já virado —
+o domínio serve a VPS.
 
 **Não apague o projeto no Pages junto.** Ele é o rollback enquanto a migração não
 estabilizar — basta reapontar o DNS de volta.
 
 ## Deploy do dia a dia
 
+**Não existe deploy automático.** Não há GitHub Actions neste repo: push em `main`
+publica no GitHub e mais nada. Enquanto ninguém rodar o comando abaixo, produção
+continua servindo o build anterior.
+
 ```bash
+ssh prod.solucoes.sejaap
 cd /opt/conecta/app/Lobby_SejaAP
 git pull --ff-only origin main
-docker compose up -d --build
-docker compose exec backend python manage.py migrate   # só se houver migration nova
+sudo docker compose up -d --build
+sudo docker compose exec backend python manage.py migrate   # só se houver migration nova
 ```
+
+**O `sudo` não é opcional.** O `.env` é um link para `/opt/conecta/env/lobby.env`,
+que é `root:600` — sem sudo o compose morre com `permission denied` antes de
+construir qualquer coisa. O usuário `deploy` está no grupo sudo e passa sem senha.
+
+Mudança só de `index.html` ou `admin.html` não precisa mexer no backend:
+
+```bash
+sudo docker compose up -d --build --no-deps frontend
+```
+
+O `--no-deps` evita recriar backend e túnel por nada. E o `--build` é obrigatório:
+os dois HTML são **copiados para dentro da imagem** (`deploy/frontend/Dockerfile`),
+não montados por volume — editar o arquivo na VPS não muda o que o nginx serve.
 
 Migrations **nunca** rodam no boot. É o padrão da casa, e existe para que uma
 migration ruim não suba junto com o container num horário movimentado.
@@ -127,10 +151,22 @@ migration ruim não suba junto com o container num horário movimentado.
 ## Verificações
 
 ```bash
+sudo docker compose ps                                                           # 3 healthy
 curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/            # 200
 curl -s https://lobby.sejaap.com.br/api/catalogo | head -c 200                   # JSON público
 curl -s -o /dev/null -w '%{http_code}\n' -X PUT https://lobby.sejaap.com.br/api/catalogo  # 401
 ```
+
+**Confirme que o build novo está no ar**, e não o anterior. Container saudável
+não quer dizer HTML novo — a imagem pode ter sido construída antes do `git pull`:
+
+```bash
+curl -s https://lobby.sejaap.com.br/ | grep -c '<trecho que você acabou de mudar>'
+```
+
+Se der `0`, foi cache do navegador que enganou você ou o `--build` não pegou. O
+`/` responde `Cache-Control: no-cache` e a Cloudflare devolve `cf-cache-status:
+DYNAMIC`, então HTML velho no `curl` é problema de servidor, não de borda.
 
 O `GET /api/catalogo` **tem que continuar anônimo** — é a primeira chamada de toda
 venda. Se ele passar a pedir credencial, o lobby quebra para todo consultor em campo.
