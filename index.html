@@ -104,9 +104,21 @@ select.inp option{background:#1E1E1C;color:var(--text);}
 .linkbtn:hover{text-decoration:underline;}
 
 /* Layout */
-.scrollarea{flex:1;overflow-y:auto;}
+/* dvh primeiro no celular: com 100vh o navegador conta a barra de endereço e a
+   última linha do app fica fora da tela. O 100vh acima fica de reserva para
+   quem não suporta dvh. */
+.app-shell{height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--background);color:var(--text);}
+.scrollarea{flex:1;min-height:0;overflow-y:auto;}
 .flow-grid{max-width:1240px;margin:0 auto;padding:32px 28px 48px;display:grid;grid-template-columns:minmax(0,1fr) 372px;gap:28px;align-items:start;}
 .sticky{position:sticky;top:24px;}
+.flow-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:26px;}
+
+/* Faixa de autorização: entra no fluxo da coluna (não é position:fixed), então
+   ela reduz a área de rolagem em vez de cobrir os botões de Voltar/Continuar
+   quando o texto quebra em duas linhas ou a janela é baixa. */
+.authbar{flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;padding:10px 16px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));background:var(--primary-subtle);border-top:1px solid rgba(199,164,68,.4);}
+.authbar-txt{display:flex;align-items:center;justify-content:center;gap:8px;font:400 12.5px var(--font-secondary);color:var(--text-secondary);text-align:center;}
+.authbar .btn-ghost{height:36px;padding:0 14px;font:600 12px var(--font-primary);flex-shrink:0;}
 
 @media (max-width:980px){
   .flow-grid{grid-template-columns:1fr;}
@@ -116,6 +128,26 @@ select.inp option{background:#1E1E1C;color:var(--text);}
 @media (max-width:560px){
   .topbar{padding:0 16px !important;gap:12px !important;}
   .who{display:none !important;}
+  .flow-grid{padding:22px 16px 32px;gap:20px;}
+  /* Stepper: sem a largura mínima por etapa ele cabe inteiro em 360px, em vez
+     de cortar o "Resumo" na borda direita. */
+  .stepper{padding:14px 12px !important;}
+  .step-btn{min-width:0 !important;gap:6px !important;}
+  .step-dot{width:30px !important;height:30px !important;font-size:12.5px !important;}
+  .step-lbl{font-size:10px !important;}
+  /* No celular os dois botões ocupam a largura toda, com o primário em cima. */
+  .flow-nav{flex-direction:column-reverse;align-items:stretch;gap:10px;margin-top:22px;}
+  .flow-nav .btn-ghost,.flow-nav .btn-prim{width:100%;justify-content:center;}
+  .authbar{gap:8px 12px;padding:8px 12px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));}
+  .authbar-txt{font-size:11.5px;}
+  .authbar-hint{display:none;}
+}
+/* Janela baixa (notebook com a tela dividida): a faixa encolhe para sobrar
+   altura de conteúdo. */
+@media (max-height:640px){
+  .authbar{padding-top:6px;padding-bottom:calc(6px + env(safe-area-inset-bottom,0px));}
+  .authbar-txt{font-size:11.5px;}
+  .authbar .btn-ghost{height:32px;}
 }
 </style>
 </head>
@@ -1443,7 +1475,7 @@ function App() {
   /* ======================= RENDER HELPERS ======================= */
 
   const renderStepper = () => (
-    <div style={{ flexShrink: 0, padding: '18px 28px', borderBottom: '1px solid var(--border-light)', background: 'var(--surface-alt)' }}>
+    <div className="stepper" style={{ flexShrink: 0, padding: '18px 28px', borderBottom: '1px solid var(--border-light)', background: 'var(--surface-alt)' }}>
       <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', alignItems: 'center' }}>
         {steps.map((label, i) => {
           const state = i < s.step ? 'done' : i === s.step ? 'active' : 'todo';
@@ -1454,11 +1486,11 @@ function App() {
           return (
             <div key={i} style={{ display: 'flex', alignItems: 'center', flex: i === 0 ? '0 0 auto' : 1 }}>
               {i !== 0 && <div style={{ flex: 1, height: 2, borderRadius: 2, margin: '0 6px 20px', background: i <= s.step ? 'var(--primary)' : 'var(--border-light)' }} />}
-              <button onClick={() => i < s.step && goStep(i)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: i < s.step ? 'pointer' : 'default', minWidth: 88 }}>
-                <div style={{ width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '700 14px var(--font-primary)', border: '1.5px solid', transition: 'all .25s', ...circle }}>
+              <button className="step-btn" onClick={() => i < s.step && goStep(i)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: i < s.step ? 'pointer' : 'default', minWidth: 88 }}>
+                <div className="step-dot" style={{ width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '700 14px var(--font-primary)', border: '1.5px solid', transition: 'all .25s', flexShrink: 0, ...circle }}>
                   {state === 'done' ? <span className="ms-icon" style={{ fontSize: 19 }}>check</span> : i + 1}
                 </div>
-                <div style={{ font: '600 11.5px var(--font-primary)', letterSpacing: '.03em', whiteSpace: 'nowrap', color: state === 'todo' ? 'var(--text-muted)' : 'var(--text)' }}>{label}</div>
+                <div className="step-lbl" style={{ font: '600 11.5px var(--font-primary)', letterSpacing: '.03em', whiteSpace: 'nowrap', color: state === 'todo' ? 'var(--text-muted)' : 'var(--text)' }}>{label}</div>
               </button>
             </div>
           );
@@ -2256,7 +2288,7 @@ function App() {
 
   /* ======================= RENDER ======================= */
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--background)', color: 'var(--text)' }}>
+    <div className="app-shell">
       {/* Sem header em nenhuma tela — navegação pelo stepper e pelos botões de Voltar. */}
 
       {/* STEPPER */}
@@ -2285,7 +2317,7 @@ function App() {
               )}
 
               {/* NAV */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 26 }}>
+              <div className="flow-nav">
                 <button className="btn-ghost" onClick={back} disabled={sending}><span className="ms-icon" style={{ fontSize: 18 }}>arrow_back</span>{s.step === 0 ? 'Voltar ao lobby' : 'Voltar'}</button>
                 <button className="btn-prim" onClick={primaryAction} disabled={!enabled}>
                   {primaryBusy ? <span className="spin" /> : null}
@@ -2395,14 +2427,19 @@ function App() {
       )}
 
       {/* Faixa de quem autorizou. Fica visível enquanto a negociação estiver
-          liberada, para ninguém esquecer o aparelho destravado no balcão. */}
+          liberada, para ninguém esquecer o aparelho destravado no balcão.
+          É o último item em fluxo da coluna: ocupa altura de verdade, então
+          nunca fica por cima do botão de Continuar. */}
       {autorizado && s.screen === 'flow' && (
-        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, flexWrap: 'wrap', padding: '10px 16px', background: 'var(--primary-subtle)', borderTop: '1px solid rgba(199,164,68,.4)' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8, font: '400 12.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+        <div className="authbar">
+          <span className="authbar-txt">
             <span className="ms-icon" style={{ fontSize: 17, color: 'var(--primary)' }}>lock_open</span>
-            Negociação autorizada por <strong style={{ color: 'var(--text)' }}>{s.autorizacao.nome || s.autorizacao.email}</strong> — vale só para esta venda.
+            <span>
+              Negociação autorizada por <strong style={{ color: 'var(--text)' }}>{s.autorizacao.nome || s.autorizacao.email}</strong>
+              <span className="authbar-hint"> — vale só para esta venda.</span>
+            </span>
           </span>
-          <button type="button" className="btn-ghost" style={{ padding: '5px 12px', font: '600 12px var(--font-primary)' }} onClick={encerrarAutorizacao}>
+          <button type="button" className="btn-ghost" onClick={encerrarAutorizacao}>
             Encerrar autorização
           </button>
         </div>
