@@ -26,6 +26,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import os
+import sys
 
 from dotenv import load_dotenv
 
@@ -243,6 +244,16 @@ if not DEBUG:
 # recebe HTTP em texto claro na rede do docker.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", not DEBUG)
+
+# Rodando `manage.py test`, o redirect fica desligado. O cliente de teste do
+# Django fala HTTP puro e não passa pelo nginx, então TODA requisição viraria um
+# 301 para https e a suíte inteira falharia com "301 != 200".
+#
+# Isso não é conveniência: sem esta linha, `docker compose exec backend
+# manage.py test` não funciona em produção — e é exatamente durante um incidente
+# que se quer poder rodar a suíte contra o banco de verdade.
+if "test" in sys.argv:
+    SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_TRUSTED_ORIGINS = _env_lista("DJANGO_CSRF_TRUSTED_ORIGINS")
