@@ -213,6 +213,63 @@ async function autorizaNegociacao(email, senha) {
   return d;
 }
 
+/* ============================================================================
+ * COMPROVANTE DA VENDA — a trava que segura de verdade.
+ *
+ * O cadeado da tela impede o clique, não a venda: este payload é montado aqui,
+ * no navegador, e postado direto no webhook público do n8n. Quem abrir o
+ * DevTools muda o valor e posta. Nenhum código desta página resolve isso —
+ * ela roda na máquina de quem se quer impedir.
+ *
+ * Por isso, antes de enviar, o servidor assina os valores. Ele só assina se
+ * eles se sustentarem: ou batem com a tabela de preços, ou vêm com a
+ * credencial de quem autorizou a negociação. O n8n confere a assinatura antes
+ * de processar.
+ *
+ * DUAS FALHAS DIFERENTES, E ELAS NÃO PODEM SER TRATADAS IGUAL:
+ *
+ * - RECUSA (422): o servidor olhou os valores e disse não. Ou é tentativa de
+ *   burla, ou a tabela mudou no meio do atendimento. A venda PARA, com a
+ *   mensagem do servidor na tela.
+ * - INDISPONÍVEL (rede, 5xx): o servidor não respondeu. A venda SEGUE, sem
+ *   comprovante e com o motivo anotado — o n8n a encaminha para conferência
+ *   manual. Consultor em campo não pode perder venda por causa de infra.
+ * ========================================================================== */
+class ComprovanteRecusado extends Error {
+  constructor(mensagem) {
+    super(mensagem);
+    // `handled` faz a tela exibir a mensagem do servidor como erro de negócio,
+    // e não como "Erro ao enviar. Tente novamente." — que é o pior conselho
+    // possível aqui: tentar de novo vai dar exatamente no mesmo.
+    this.handled = true;
+  }
+}
+
+async function pedeComprovante(valores, token) {
+  const cab = { 'Content-Type': 'application/json' };
+  // Só vai credencial quando houve negociação — o consultor é anônimo.
+  if (token) cab.Authorization = `Bearer ${token}`;
+
+  let r;
+  try {
+    r = await fetch('/api/venda/comprovante', {
+      method: 'POST', headers: cab, body: JSON.stringify(valores),
+    });
+  } catch {
+    return { comprovante: null, erro: 'servidor_indisponivel' };
+  }
+
+  if (r.status === 422) {
+    const d = await r.json().catch(() => ({}));
+    throw new ComprovanteRecusado(d.erro || 'Os valores desta venda não foram aprovados.');
+  }
+  if (!r.ok) return { comprovante: null, erro: `http_${r.status}` };
+
+  const d = await r.json().catch(() => ({}));
+  if (!d.comprovante) return { comprovante: null, erro: 'resposta_invalida' };
+  return { comprovante: d.comprovante, erro: null };
+}
+
 // ===== Máscaras =====
 const maskCNPJ = (v) => {
   v = v.replace(/\D/g, '').slice(0, 14);
@@ -1211,6 +1268,26 @@ function App() {
     try {
       const payload = buildApnPayload();
       payload.protocolo = protocolo;
+
+      // A APN tem valor livre por decisão de produto — não há tabela contra a
+      // qual conferir. O comprovante aqui atesta que a venda saiu do Lobby de
+      // verdade, o que impede forjar um payload direto no webhook.
+      const valores = {
+        fluxo: 'apn',
+        categoria_id: cat ? cat.id : '',
+        produto_id: '',
+        negociado: false,
+        valor_total: round2(apnValor),
+        valor_mensal: null,
+        entrada: round2(apnValor),
+        cronograma: [],
+        protocolo,
+      };
+      const atestado = await pedeComprovante(valores, s.autorizacao?.token);
+      payload.comprovante = atestado.comprovante;
+      payload.comprovante_valores = valores;
+      payload.comprovante_erro = atestado.erro;
+
       const response = await sendVendaApn(payload);
       // Venda enviada: a autorização se esgota aqui. Ela valia para este
       // registro, e ele acabou de ser fechado.
@@ -1229,6 +1306,26 @@ function App() {
     try {
       const payload = buildPayload();
       payload.protocolo = protocolo;
+
+      // O bloco que o servidor assina: só o que representa dinheiro e
+      // identifica o produto. Vai junto no payload para o n8n reenviá-lo na
+      // validação, sem ter que remontar a estrutura do lado dele.
+      const valores = {
+        fluxo: 'elite',
+        categoria_id: cat ? cat.id : '',
+        produto_id: product ? product.id : '',
+        negociado: !!(s.editMode || s.priceEdit),
+        valor_total: soma,
+        valor_mensal: product && product.recurring ? round2(Number(s.unitValue) || 0) : null,
+        entrada: round2(Number(s.entradaValor) || 0),
+        cronograma: s.parcelas.map((p) => round2(Number(p.valor) || 0)),
+        protocolo,
+      };
+      const atestado = await pedeComprovante(valores, s.autorizacao?.token);
+      payload.comprovante = atestado.comprovante;
+      payload.comprovante_valores = valores;
+      payload.comprovante_erro = atestado.erro;
+
       const response = await sendPreContrato(payload);
       const r = response || {};
       // Venda enviada: a autorização se esgota aqui. Ela valia para este

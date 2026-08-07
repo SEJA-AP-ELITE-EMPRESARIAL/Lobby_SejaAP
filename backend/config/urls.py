@@ -13,6 +13,7 @@ urlpatterns = [
     path("django-admin/", admin.site.urls),
     path("api/", include("apps.catalogo.urls")),
     path("api/", include("apps.contas.urls")),
+    path("api/", include("apps.vendas.urls")),
 ]
 
 admin.site.site_header = "Lobby Seja AP"

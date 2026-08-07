@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     # Apps do projeto
     "apps.catalogo",
     "apps.contas",
+    "apps.vendas",
 ]
 
 MIDDLEWARE = [
@@ -169,6 +170,12 @@ IDENTIDADE_APP_KEY = os.environ.get("IDENTIDADE_APP_KEY", "")
 IDENTIDADE_TIMEOUT = int(os.environ.get("IDENTIDADE_TIMEOUT", "5"))
 IDENTIDADE_RESOLVER_USUARIO = "apps.contas.identidade.resolver_usuario"
 
+# === n8n ===
+# Segredo compartilhado com o fluxo do n8n, que o usa para chamar
+# /api/venda/validar. Sem ele o endpoint responde 503 e o n8n cai no ramo de
+# conferência manual — falha visível, não silenciosa.
+LOBBY_N8N_TOKEN = os.environ.get("LOBBY_N8N_TOKEN", "")
+
 # Só o backend central. Sem `ModelBackend`: uma senha local seria uma segunda
 # porta para a mesma conta, fora da política do Conecta ID.
 #
@@ -207,6 +214,10 @@ REST_FRAMEWORK = {
         # conta e por IP do Conecta ID, mais a cota de 60/min por app de lá.
         # Este teto é contenção de rajada.
         "login": os.environ.get("LOBBY_RATE_LOGIN", "120/hour"),
+        # Emissão de comprovante de venda. Folgado: uma venda pode ser
+        # reenviada algumas vezes. Existe para o endpoint não virar oráculo
+        # de "qual valor passa na conferência".
+        "comprovante": os.environ.get("LOBBY_RATE_COMPROVANTE", "120/hour"),
     },
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }
