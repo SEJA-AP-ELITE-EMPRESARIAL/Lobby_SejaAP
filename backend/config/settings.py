@@ -176,6 +176,12 @@ IDENTIDADE_RESOLVER_USUARIO = "apps.contas.identidade.resolver_usuario"
 # conferência manual — falha visível, não silenciosa.
 LOBBY_N8N_TOKEN = os.environ.get("LOBBY_N8N_TOKEN", "")
 
+# === Prometheus ===
+# Token do /metrics. Vazio = endpoint desabilitado (404), que é o padrão certo:
+# um /metrics aberto entrega o volume de vendas da empresa e quantas pessoas
+# podem autorizar desconto. Mesmo desenho do Conecta ID.
+LOBBY_METRICS_TOKEN = os.environ.get("LOBBY_METRICS_TOKEN", "")
+
 # Só o backend central. Sem `ModelBackend`: uma senha local seria uma segunda
 # porta para a mesma conta, fora da política do Conecta ID.
 #
