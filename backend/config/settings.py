@@ -271,6 +271,17 @@ SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", not DEBUG)
 # que se quer poder rodar a suíte contra o banco de verdade.
 if "test" in sys.argv:
     SECURE_SSL_REDIRECT = False
+
+# O /metrics fica FORA do redirect para https, e isso é necessário, não frouxidão.
+#
+# O Prometheus bate direto no gunicorn pela 8096 do loopback, sem passar pelo
+# nginx — então ele não tem quem ponha o X-Forwarded-Proto, e toda coleta
+# levaria um 301 para https numa porta que não fala TLS. O alvo ficaria DOWN
+# para sempre, e o alerta de "Lobby fora do ar" tocaria com o Lobby de pé.
+#
+# O que se abre com isso é uma rota em texto claro no LOOPBACK da VPS, fechada
+# por token. Quem está no loopback da .164 é root — não há o que interceptar.
+SECURE_REDIRECT_EXEMPT = [r"^metrics$"]
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_TRUSTED_ORIGINS = _env_lista("DJANGO_CSRF_TRUSTED_ORIGINS")
