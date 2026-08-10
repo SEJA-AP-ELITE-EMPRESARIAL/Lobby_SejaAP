@@ -37,6 +37,18 @@ services:
       - db-tunnel
     expose:
       - "8000"
+    ports:
+      # SÓ para o Prometheus, que roda em network_mode: host e precisa alcançar
+      # o /metrics. Loopback, nunca 0.0.0.0.
+      #
+      # POR QUE NÃO COLETAR PELA 8095, QUE JÁ EXISTE
+      #
+      # A 8095 é o container do FRONT, e o vhost do host encaminha `location /`
+      # inteiro para lá. Fazer o /metrics passar por ele o publicaria em
+      # lobby.sejaap.com.br/metrics — protegido por token, mas exposto à
+      # internet sem precisar. Por esta porta o caminho público simplesmente
+      # não existe. É o mesmo desenho do identidade-api na 8094.
+      - "127.0.0.1:8096:8000"
     networks:
       # `default` PRECISA estar listada. Declarar `networks:` num serviço que não
       # tinha o tira da rede padrão do compose — e o backend perderia o db-tunnel

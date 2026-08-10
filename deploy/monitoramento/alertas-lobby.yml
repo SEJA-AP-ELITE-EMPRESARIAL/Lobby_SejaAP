@@ -1,0 +1,234 @@
+# Alertas do Lobby no Grafana.
+#
+# Instalar em /opt/monitoring/grafana/provisioning/alerting/lobby.yml na
+# prod.solucoes e reiniciar o monitoring-grafana. Fica versionado aqui porque a
+# stack de monitoramento não é um repositório — e infra alterada só no servidor
+# foi exatamente o que quebrou a migração de julho/2026.
+#
+# O ponto de contato (telegram-infra) e a política de notificação já existem;
+# estes alertas apenas entram neles. A mensagem do Telegram usa `.Labels.vps`,
+# por isso todas as expressões agregam `by(vps)` — sem isso o alerta chega sem
+# dizer de onde veio.
+#
+# ANTES DE INSTALAR: o Prometheus precisa coletar o Lobby, e hoje não coleta.
+# O job está em `prometheus-job-lobby.yml`, nesta mesma pasta. Sem ele, todas
+# as regras aqui ficam em NoData — e a primeira delas trata NoData como
+# alerta, então o Telegram toca sem que nada esteja errado.
+#
+# O QUE NÃO TEM ALERTA AQUI, E POR QUÊ
+#
+# - "faz muito tempo que ninguém vende": venda é esporádica e tocaria todo fim
+#   de semana. A série existe (`lobby_segundos_desde_ultimo_comprovante`), mas
+#   para o painel, onde um humano olha com contexto.
+# - motivo de recusa na validação (`valores_adulterados`, `assinatura_invalida`,
+#   `comprovante_desconhecido`): o `N8N-VALIDACAO.md` pede alerta imediato para
+#   os três, com razão. Não dá para medi-los: o Lobby não persiste evento, só
+#   loga (`apps/vendas/views.py:114`). Persistir é escopo da auditoria (TSK-128)
+#   e é lá que estes três alertas entram.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: lobby
+    folder: Infra SEJA AP
+    interval: 1m
+    rules:
+      # ---------------------------------------------------------------------
+      - uid: lobby-fora-do-ar
+        title: Lobby fora do ar
+        condition: B
+        for: 5m
+        # `Alerting` em NoData: parar de coletar é, na prática, o serviço fora.
+        noDataState: Alerting
+        execErrState: Error
+        labels: { severity: critical }
+        annotations:
+          summary: >-
+            O Lobby parou de responder. O consultor não consegue montar venda
+            nenhuma, e o /admin da diretoria também cai junto. Conferir os
+            containers na prod.solucoes: lobby-backend, lobby-frontend e
+            lobby-db-tunnel.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'min by(vps) (up{job="lobby"})'
+              instant: true
+              range: false
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # ---------------------------------------------------------------------
+      # Esta é a falha que NÃO aparece na tela. Com o catálogo vazio o front não
+      # quebra: ele cai no `CATS` embutido no index.html (boot(), :2216-2228) e
+      # segue vendendo, com a tabela de preços de quando o HTML foi escrito.
+      # Ou seja — venda a preço errado, sem erro em lugar nenhum.
+      - uid: lobby-catalogo-vazio
+        title: Catálogo do Lobby vazio
+        condition: B
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels: { severity: critical }
+        annotations:
+          summary: >-
+            O catálogo ficou sem nenhum produto. O lobby NÃO vai mostrar erro:
+            cai na tabela embutida no index.html e continua vendendo com preço
+            antigo. Conferir o /django-admin/ (alguém apagou produto) e a última
+            publicação em Publicações do catálogo.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'min by(vps) (lobby_catalogo{item="produtos"})'
+              instant: true
+              range: false
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # ---------------------------------------------------------------------
+      # O comprovante de venda só tem efeito se o n8n chamar /api/venda/validar.
+      # Se ele parar, o Lobby continua assinando e ninguém confere: a brecha do
+      # valor negociado reabre em silêncio, sem um único erro.
+      #
+      # A terceira cláusula (`consumido > 0`) é o que impede este alerta de
+      # tocar sem parar ENQUANTO o n8n ainda não foi ligado — que é o estado de
+      # 07/08/2026, com o LOBBY_N8N_TOKEN gerado mas ainda não plugado no fluxo.
+      # Sem ela, o alerta nasceria disparado e seria silenciado na primeira
+      # semana, virando decoração. Com ela, ele só toca depois de ter
+      # funcionado ao menos uma vez — que é quando "parou" quer dizer alguma
+      # coisa.
+      - uid: lobby-validacao-parada
+        title: O n8n parou de validar as vendas do Lobby
+        condition: B
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning }
+        annotations:
+          summary: >-
+            Vendas estão sendo assinadas e nenhuma foi validada nas últimas 6
+            horas. Enquanto isso, todo controle de valor negociado está
+            desligado na prática — o comprovante é emitido e ignorado. Conferir
+            se o fluxo do n8n ainda chama /api/venda/validar e se o
+            LOBBY_N8N_TOKEN dos dois lados ainda bate.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 21600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: >-
+                sum by(vps) (increase(lobby_comprovantes_total{estado="emitido"}[6h])) > 0
+                and on(vps) sum by(vps) (increase(lobby_comprovantes_total{estado="consumido"}[6h])) == 0
+                and on(vps) sum by(vps) (lobby_comprovantes_total{estado="consumido"}) > 0
+              instant: true
+              range: false
+          - refId: B
+            relativeTimeRange: { from: 21600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      # ---------------------------------------------------------------------
+      # Sem ninguém na diretoria, a tabela de preços não pode ser alterada por
+      # ninguém e o /django-admin/ fica inalcançável — não há senha local para
+      # cair de volta (AUTHENTICATION_BACKENDS só tem o BackendIdentidade).
+      # Não é hipótese: foi o estado do corte para a .164, com o app no ar e
+      # nenhuma promoção feita.
+      - uid: lobby-sem-diretoria
+        title: Lobby sem ninguém na diretoria
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning }
+        annotations:
+          summary: >-
+            Nenhuma pessoa com papel de diretoria no Lobby. Ninguém consegue
+            publicar a tabela de preços nem entrar no /django-admin/, e não há
+            senha local de emergência. A saída é
+            `docker exec lobby-backend python manage.py promover_no_lobby
+            <email> --papel diretoria`, com a pessoa já liberada para o app
+            lobby no Conecta ID.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'max by(vps) (lobby_pessoas{papel="diretoria"})'
+              instant: true
+              range: false
+          - refId: B
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # ---------------------------------------------------------------------
+      # Um deploy que perca a variável de ambiente desliga a validação sem que
+      # nada falhe deste lado: /api/venda/validar passa a responder 503 e o n8n
+      # manda tudo para conferência manual. Recuperável, mas ninguém descobre
+      # olhando o Lobby.
+      - uid: lobby-n8n-desconfigurado
+        title: Lobby sem o segredo do n8n
+        condition: B
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning }
+        annotations:
+          summary: >-
+            O LOBBY_N8N_TOKEN sumiu do ambiente do container. /api/venda/validar
+            está respondendo 503 e toda venda vai para conferência manual.
+            Conferir /opt/conecta/env/lobby.env e se o compose ainda carrega o
+            arquivo.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'min by(vps) (lobby_n8n_configurado)'
+              instant: true
+              range: false
+          - refId: B
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }

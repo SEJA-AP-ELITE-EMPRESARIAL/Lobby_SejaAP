@@ -1,0 +1,36 @@
+# Job de coleta do Lobby, para colar em /opt/monitoring/prometheus/prometheus.yml
+# na prod.solucoes, dentro de `scrape_configs:`.
+#
+# Sem isto, `alertas-lobby.yml` não tem série nenhuma sobre a qual disparar.
+#
+# COMO INSTALAR (na prod.solucoes)
+#
+#   1. Gerar o token, no servidor, sem imprimi-lo em log de sessão:
+#        openssl rand -hex 32 > /opt/monitoring/prometheus/lobby_token
+#        chmod 600 /opt/monitoring/prometheus/lobby_token
+#   2. Copiar o mesmo valor para LOBBY_METRICS_TOKEN em /opt/conecta/env/lobby.env
+#      e recriar o container:  docker compose up -d backend
+#   3. Colar o bloco abaixo em prometheus.yml
+#   4. cd /opt/monitoring && docker compose restart prometheus
+#   5. Conferir em Status > Targets que `lobby` aparece UP
+#   6. Só então instalar os alertas (alertas-lobby.yml)
+#
+# O Prometheus roda em network_mode: host, então alcança o container pelo
+# loopback. A porta é a **8096**, do backend, e não a 8095 — esta é do container
+# do front, e o vhost do host encaminha `location /` inteiro para ela: coletar
+# por lá significaria publicar o /metrics em lobby.sejaap.com.br. A 8096 não
+# tem caminho público nenhum. A lista canônica de portas está em
+# deploy/RUNBOOK.md; o job `identidade` usa o mesmo desenho, na 8094.
+#
+# O segredo fica em ARQUIVO e não inline, para o prometheus.yml continuar
+# podendo ser lido sem expor credencial. Enquanto LOBBY_METRICS_TOKEN estiver
+# vazio no app, /metrics responde 404 e o alvo aparece DOWN — o que é correto:
+# métricas desligadas não devem parecer métricas zeradas.
+
+  - job_name: lobby
+    metrics_path: /metrics
+    authorization:
+      credentials_file: /etc/prometheus/lobby_token
+    static_configs:
+      - targets: ['127.0.0.1:8096']
+        labels: { vps: solucoes, servico: lobby }

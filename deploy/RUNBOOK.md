@@ -14,12 +14,19 @@ Operação do Lobby na **prod.solucoes (187.77.48.164)**.
 | App | `prod.solucoes.sejaap` — **187.77.48.164**, `/opt/conecta/app/Lobby_SejaAP` |
 | Banco | `lobby` no Postgres da **db-sejaap** — 179.197.237.95:**5437**, por túnel SSH |
 | Domínio | <https://lobby.sejaap.com.br> — Cloudflare **proxied**, SSL Full (strict) |
-| Porta de loopback | **8095** |
+| Porta de loopback | **8095** (front, é a que o vhost do host encaminha) |
+| Coleta de métricas | **8096** (backend direto, só o Prometheus — sem caminho público) |
 | Identidade | Conecta ID, por `identidade-api:8000` na rede `identidade-net` |
 
 Portas vizinhas já tomadas nesta VPS — confira antes de mexer:
 8090 conecta-crm · 8091 kanban-frontend · 8092 kanban-mcp · 8093 formularios ·
 8094 identidade-api (admin, só por túnel SSH).
+
+As duas portas do Lobby não são intercambiáveis. A **8095** é o container do
+front, e o vhost do host manda `location /` inteiro para ela — tudo que responde
+ali é público. A **8096** é o backend direto e existe só para o Prometheus
+alcançar o `/metrics`; expor o `/metrics` pela 8095 o publicaria em
+`lobby.sejaap.com.br/metrics`.
 
 Portas de banco na db-sejaap: 5433 kanban · 5434 CRM · 5435 formulários ·
 5436 identidade · **5437 lobby**.
@@ -171,6 +178,34 @@ DYNAMIC`, então HTML velho no `curl` é problema de servidor, não de borda.
 O `GET /api/catalogo` **tem que continuar anônimo** — é a primeira chamada de toda
 venda. Se ele passar a pedir credencial, o lobby quebra para todo consultor em campo.
 
+## Monitoramento
+
+O Lobby expõe `/metrics` para o Prometheus, fechado por token
+(`LOBBY_METRICS_TOKEN`). **Sem o token configurado o endpoint responde 404** — é
+o padrão, e é deliberado: aberto, ele entrega o volume de vendas e quantas
+pessoas podem autorizar desconto.
+
+A coleta é pela **8096** (backend direto), nunca pela 8095 — ver *Topologia*.
+
+```bash
+# na prod.solucoes, com o token que está em /opt/conecta/env/lobby.env
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8096/metrics | head -5
+```
+
+Instalação, na ordem — os alertas antes do job fazem o Telegram tocar à toa,
+porque o "fora do ar" trata NoData como alerta:
+
+1. `deploy/monitoramento/prometheus-job-lobby.yml` → `prometheus.yml`, e reiniciar
+2. Conferir em *Status > Targets* que `lobby` está **UP**
+3. `deploy/monitoramento/alertas-lobby.yml` →
+   `/opt/monitoring/grafana/provisioning/alerting/lobby.yml`, e reiniciar o Grafana
+
+Cinco alertas: fora do ar, catálogo vazio, o n8n parou de validar, ninguém na
+diretoria, e segredo do n8n ausente. Os dois que ninguém adivinharia sozinho são
+o **catálogo vazio** (o front não quebra — cai na tabela embutida e vende com
+preço velho) e a **validação parada** (o comprovante continua sendo assinado e
+ninguém confere).
+
 ## Incidentes
 
 **Conecta ID fora do ar** → ninguém autoriza negociação e ninguém entra no `/admin`.
@@ -200,8 +235,14 @@ janela de indisponibilidade:
 - **Sem cache compartilhado.** O throttle das rotas anônimas usa `LocMemCache`, que é
   por processo do gunicorn (3 workers) e zera a cada deploy. Os tetos são contenção de
   rajada, não limite exato. Basta preencher `LOBBY_REDIS_URL` para resolver.
-- **A trava do valor por venda ainda é cosmética.** O valor negociado vai ao webhook do
-  n8n sem validação do servidor; `edicao_autorizada` e `autorizado_por` no payload são
-  **auditoria**, não controle de acesso. Fechar isso é a TSK-121.
+- **A trava do valor por venda ainda não tem efeito — mas o motivo mudou.** O lado do
+  servidor está pronto e no ar: `/api/venda/comprovante` assina os valores e
+  `/api/venda/validar` recusa comprovante forjado, reusado ou adulterado. Só que
+  **o fluxo do n8n ainda não chama `/api/venda/validar`**, então a assinatura é
+  emitida e ignorada. O `LOBBY_N8N_TOKEN` já existe no `.env` do servidor e falta
+  ser inserido no fluxo pelo responsável pelo n8n — passo a passo em
+  `N8N-VALIDACAO.md`. Enquanto isso, o alerta *"O n8n parou de validar as vendas"*
+  fica calado de propósito: ele só toca depois da primeira validação bem-sucedida,
+  para não nascer disparado.
 - **`functions/` está superseded.** É a implementação anterior em Cloudflare Pages
   Functions, com senha compartilhada e catálogo em KV. Nunca foi ao ar.
