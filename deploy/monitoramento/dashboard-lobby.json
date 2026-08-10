@@ -1,0 +1,231 @@
+{
+  "uid": "lobby",
+  "title": "Lobby — vendas e catálogo",
+  "tags": ["infra", "sejaap", "lobby"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Serviço",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "up{job=\"lobby\"}", "instant": true }],
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "FORA", "color": "red" },
+                "1": { "text": "no ar", "color": "green" }
+              }
+            }
+          ],
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Produtos no catálogo",
+      "description": "Zero é a falha que não aparece na tela: o front cai na tabela embutida no index.html e segue vendendo com preço velho.",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "lobby_catalogo{item=\"produtos\"}", "instant": true }
+      ],
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [{ "type": "value", "options": { "0": { "text": "VAZIO", "color": "red" } } }],
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Diretoria",
+      "description": "Sem ninguém na diretoria ninguém publica a tabela nem entra no /django-admin/ — e não há senha local de emergência.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "lobby_pessoas{papel=\"diretoria\"}", "instant": true }
+      ],
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [{ "type": "value", "options": { "0": { "text": "NINGUÉM", "color": "red" } } }],
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Vendas validadas pelo n8n",
+      "description": "Enquanto for 'nunca', o comprovante assinado é emitido e IGNORADO: o controle de valor negociado não tem efeito nenhum. Depende de o LOBBY_N8N_TOKEN ser inserido no fluxo do n8n.",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "lobby_comprovantes_total{estado=\"consumido\"}", "instant": true }
+      ],
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [{ "type": "value", "options": { "0": { "text": "nunca", "color": "red" } } }],
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Última venda assinada",
+      "description": "Informativo, não alarme: venda é esporádica e um alerta sobre isto tocaria todo fim de semana.",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "lobby_segundos_desde_ultimo_comprovante", "instant": true }
+      ],
+      "options": { "colorMode": "none", "graphMode": "none", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "noValue": "nenhuma ainda", "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Vendas assinadas x validadas (por hora)",
+      "description": "A distância entre as duas linhas é a brecha: tudo que foi assinado e não validado passou pelo webhook sem ninguém conferir o valor.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(lobby_comprovantes_total{estado=\"emitido\"}[1h])",
+          "legendFormat": "assinadas"
+        },
+        {
+          "refId": "B",
+          "expr": "increase(lobby_comprovantes_total{estado=\"consumido\"}[1h])",
+          "legendFormat": "validadas pelo n8n"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "assinadas" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "validadas pelo n8n" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Negociadas x expiradas sem uso (por hora)",
+      "description": "Negociada = valor abaixo da tabela, autorizado por alguém. Expirada sem uso = assinada e nunca validada, que é o rastro de um n8n que não está conferindo.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(lobby_comprovantes_total{estado=\"negociado\"}[1h])",
+          "legendFormat": "negociadas"
+        },
+        {
+          "refId": "B",
+          "expr": "increase(lobby_comprovantes_total{estado=\"expirado_sem_uso\"}[1h])",
+          "legendFormat": "expiraram sem uso"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "negociadas" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "expiraram sem uso" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true } }
+    },
+    {
+      "type": "bargauge",
+      "title": "Catálogo servido hoje",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "lobby_catalogo", "legendFormat": "{{item}}", "instant": true }
+      ],
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Pessoas por papel",
+      "description": "Sem papel = entra no Lobby mas não autoriza nada. Ninguém nasce com papel; a diretoria promove.",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "lobby_pessoas", "legendFormat": "{{papel}}", "instant": true }
+      ],
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } },
+        "overrides": []
+      }
+    }
+  ]
+}
