@@ -8,7 +8,8 @@ Por que isso precisa estar escrito:
 
 Existiam três tabelas candidatas quando esta migração foi escrita, e elas não
 concordavam. A de produção (acima), a constante `CATALOGO_PADRAO` de
-`functions/_lib/catalogo.js:14-43` (nunca publicada, mas idêntica em valor), e
+`functions/_lib/catalogo.js:14-43` (nunca publicada, mas idêntica em valor;
+arquivo removido da árvore — `git show 338e932`), e
 um estado local de desenvolvimento em `.wrangler/state/v3/kv/` com dois
 registros de 12/07/2026 — 01:13 e 01:17 — em que o ELITE PRO aparece como
 14997 e depois 21000. Dois registros com 17 minutos de diferença, num namespace

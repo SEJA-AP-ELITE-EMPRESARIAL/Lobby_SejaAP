@@ -249,5 +249,7 @@ janela de indisponibilidade:
   `N8N-VALIDACAO.md`. Enquanto isso, o alerta *"O n8n parou de validar as vendas"*
   fica calado de propósito: ele só toca depois da primeira validação bem-sucedida,
   para não nascer disparado.
-- **`functions/` está superseded.** É a implementação anterior em Cloudflare Pages
-  Functions, com senha compartilhada e catálogo em KV. Nunca foi ao ar.
+- **`functions/` foi removida** (era a implementação anterior em Cloudflare Pages
+  Functions, com senha compartilhada e catálogo em KV; nunca foi ao ar). Vários
+  comentários do `backend/apps/catalogo/` ainda a citam, de propósito, porque
+  explicam de onde cada regra veio — leia com `git show 338e932 -- functions/`.

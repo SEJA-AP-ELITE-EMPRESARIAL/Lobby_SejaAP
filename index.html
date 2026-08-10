@@ -666,9 +666,13 @@ let CATS = [
       { id: 't3', name: 'Vendas de Alta Performance',  sigla: 'VAP', desc: 'Treinamento intensivo de vendas',     duration: '2 meses',  price: 12000, icon: 'trending_up' },
     ] },
   // APN: categoria de FLUXO PRÓPRIO (`flow: 'apn'`). Não tem produtos nem valor
-  // de tabela — o consultor informa o valor da venda. Por isso ela também não
-  // mora no KV: a definição de verdade está em functions/_lib/catalogo.js e o
-  // GET /api/catalogo a reinsere. Esta cópia é só a rede de segurança offline.
+  // de tabela — o consultor informa o valor da venda. Hoje ela é uma LINHA no
+  // banco, com `fluxo='apn'`, e vem pelo GET /api/catalogo como qualquer outra.
+  // Esta cópia é só a rede de segurança offline.
+  //
+  // (Na implementação anterior, em Cloudflare KV, a APN era constante de código
+  // e precisava de deploy para mudar. Não é mais o caso: mexe-se nela pelo
+  // /django-admin/.)
   { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', flow: 'apn', sigla: 'APN',
     desc: 'Aceleração de Performance de Negócios — valor definido na negociação.',
     products: [] },

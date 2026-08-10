@@ -33,7 +33,8 @@ def numero(valor) -> int | float:
 
 
 def serializa_produto(produto) -> dict:
-    """Espelha o produto normalizado do KV (`functions/_lib/catalogo.js:146-152`).
+    """Espelha o produto normalizado do KV (`functions/_lib/catalogo.js:146-152`,
+    removido da árvore — `git show 338e932`; ver a nota em `models.py`).
 
     `monthly`, `recurring` e `vigencia` só aparecem em produto recorrente — é
     assim que o front distingue os dois (`recurring` ausente = avulso), e é a

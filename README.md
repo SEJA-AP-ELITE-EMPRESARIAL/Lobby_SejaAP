@@ -17,7 +17,7 @@ reais da página de pré-contrato.
 | **`backend/`** | API em Django: o catálogo, a publicação da tabela e a autorização de negociação. |
 | **`deploy/`** | Dockerfiles do nginx e do túnel do banco, mais o vhost do host. |
 | **`docker-compose.yml`** | A stack como ela roda na `prod.solucoes`. |
-| `functions/` | ⚠️ **Superseded.** Implementação anterior em Cloudflare Pages Functions, com senha compartilhada e catálogo em KV. Nunca foi ao ar e não é mais usada — mantida só como referência histórica. |
+| ~~`functions/`~~ | **Removida.** Era a implementação anterior em Cloudflare Pages Functions, com senha compartilhada e catálogo em KV. Nunca foi ao ar. Ficava no repo como referência, mas a documentação passou a mandar editar a APN lá — então virou armadilha. Está no histórico: `git show 338e932 -- functions/`. |
 | `Lobby de Produtos.dc.html` | Fonte de design (protótipo no framework DC). Apenas referência visual. |
 | `_ds/` | Design system Conecta AP (tokens de cor/tipografia). Referência. |
 | `assets/logo-sejaap.svg` | Logo (também já embutido inline na página funcional). |
