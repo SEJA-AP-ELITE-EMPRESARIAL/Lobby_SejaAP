@@ -239,7 +239,14 @@ janela de indisponibilidade:
 
 - **Sem cache compartilhado.** O throttle das rotas anônimas usa `LocMemCache`, que é
   por processo do gunicorn (3 workers) e zera a cada deploy. Os tetos são contenção de
-  rajada, não limite exato. Basta preencher `LOBBY_REDIS_URL` para resolver.
+  rajada, não limite exato. Preencher `LOBBY_REDIS_URL` resolve — **mas não basta.**
+
+  > ⚠️ **Armadilha:** o pacote `redis` **não está** em `requirements.txt` nem em
+  > `requirements-prod.txt`. O `settings.py:146-152` troca para `RedisCache` assim
+  > que a variável existir, e o backend sobe normalmente — só morre no primeiro
+  > acesso ao cache, que é o **throttle do login**. Ao ligar a variável, adicione
+  > `redis>=5.1.0` ao `requirements-prod.txt` no mesmo commit (o 5.1.0 é o piso
+  > que o Django 6.0 exige).
 - **A trava do valor por venda ainda não tem efeito — mas o motivo mudou.** O lado do
   servidor está pronto e no ar: `/api/venda/comprovante` assina os valores e
   `/api/venda/validar` recusa comprovante forjado, reusado ou adulterado. Só que
