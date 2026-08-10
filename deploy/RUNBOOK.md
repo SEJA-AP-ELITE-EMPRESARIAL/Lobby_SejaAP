@@ -192,6 +192,11 @@ A coleta é pela **8096** (backend direto), nunca pela 8095 — ver *Topologia*.
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8096/metrics | head -5
 ```
 
+O arquivo de token do Prometheus (`/opt/monitoring/prometheus/lobby_token`) tem
+que ser **644**. O container roda como `nobody`: com 600 do root ele não abre o
+arquivo, o alvo fica DOWN com *permission denied* e o alerta de "fora do ar"
+toca com o Lobby de pé.
+
 Instalação, na ordem — os alertas antes do job fazem o Telegram tocar à toa,
 porque o "fora do ar" trata NoData como alerta:
 
