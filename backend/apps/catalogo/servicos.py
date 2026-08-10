@@ -1,8 +1,10 @@
 """
 Publicação da tabela de preços — o porte do `normalizaCatalogo` do KV.
 
-Origem: `functions/_lib/catalogo.js:102-165`. As mensagens de erro são as mesmas
-palavra por palavra, porque o `admin.html:231` as exibe cruas para a diretoria.
+Origem: `functions/_lib/catalogo.js:102-165` — arquivo removido da árvore, hoje
+só no histórico (`git show 338e932`); ver a nota em `models.py`. As mensagens de
+erro são as mesmas palavra por palavra, porque o `admin.html:231` as exibe cruas
+para a diretoria.
 
 UMA DIFERENÇA DELIBERADA em relação ao KV, e ela é grande:
 

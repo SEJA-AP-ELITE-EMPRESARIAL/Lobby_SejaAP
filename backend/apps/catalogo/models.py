@@ -1,10 +1,19 @@
 """
 O catálogo de produtos do Lobby.
 
-Substitui o array JSON que hoje mora no Cloudflare KV (`functions/_lib/catalogo.js`)
-e, antes disso, no literal `CATS` do próprio `index.html`. A migração para cá é
-o que permite responder "quem alterou este preço, e quando" — pergunta que um
-blob JSON com um único carimbo `atualizadoEm` nunca conseguiu responder.
+Substituiu o array JSON que morava no Cloudflare KV e, antes disso, o literal
+`CATS` do próprio `index.html`. A migração para cá é o que permite responder
+"quem alterou este preço, e quando" — pergunta que um blob JSON com um único
+carimbo `atualizadoEm` nunca conseguiu responder.
+
+SOBRE AS CITAÇÕES A `functions/...` NESTE APP
+
+Vários comentários daqui citam arquivos de `functions/`, a implementação em
+Cloudflare Pages Functions que este backend substituiu. Ela **não existe mais na
+árvore** — foi removida junto com esta nota. As citações continuam porque
+explicam de onde cada regra veio; para lê-las, use o git:
+
+    git show 338e932 -- functions/_lib/catalogo.js
 
 Duas decisões de modelagem que valem explicação, porque não são óbvias:
 

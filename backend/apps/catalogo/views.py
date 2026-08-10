@@ -9,7 +9,8 @@ GET e o `admin.html:222` faz PUT no mesmo caminho literal, e ambos são arquivos
 estáticos que não mudam junto com o backend. É por isso que aqui há uma classe
 com `get_permissions()` por método, em vez de duas views com `@api_view`.
 
-O contrato do envelope é o mesmo do KV (`functions/api/catalogo.js`):
+O contrato do envelope é o mesmo do KV (`functions/api/catalogo.js`, removido da
+árvore — `git show 338e932`; ver a nota em `models.py`):
 
     { "cats": [...], "atualizadoEm": "<ISO>|null", "origem": "banco" }
 
