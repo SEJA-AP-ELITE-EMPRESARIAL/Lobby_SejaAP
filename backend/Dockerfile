@@ -1,5 +1,14 @@
 # Backend do Lobby Seja AP — Django + gunicorn.
-FROM python:3.12-slim
+#
+# Python 3.14: é o topo do que o Django 6.1 suporta (3.12 a 3.14). A 3.12 é o
+# piso da 6.x, não uma escolha conservadora.
+#
+# ATENÇÃO ao mexer nesta linha: a imagem instala só `libpq5`, sem `libpq-dev` e
+# sem compilador. Se a base subir para uma versão de Python que ainda não tenha
+# wheel binário do psycopg, o pip tenta compilar e o BUILD FALHA — não degrada,
+# quebra. Antes de trocar, confira se `psycopg[binary]` tem wheel para a versão
+# nova.
+FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

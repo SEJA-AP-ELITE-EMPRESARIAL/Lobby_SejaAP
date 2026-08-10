@@ -212,11 +212,14 @@ class Produto(models.Model):
             # As duas metades da mesma invariante. Escritas como constraint, e não
             # como validação de formulário, porque o /django-admin/ e um shell
             # `manage.py` passam por fora de qualquer serializer.
-            # `check=` e não `condition=`: o kwarg foi renomeado no Django 5.1 e a
-            # casa está no 5.0.9. Trocar aqui quebra o import inteiro do app.
+            #
+            # `condition=` desde o Django 6.0. O kwarg antigo (`check=`) foi
+            # depreciado na 5.1 e REMOVIDO na 6.0 — nele, o import do app inteiro
+            # morre com TypeError. A migration 0001 também foi atualizada: ela não
+            # reexecuta, mas é importada toda vez que o Django carrega o histórico.
             models.CheckConstraint(
                 name="produto_recorrente_tem_mensalidade_e_vigencia",
-                check=models.Q(recorrente=False)
+                condition=models.Q(recorrente=False)
                 | models.Q(
                     recorrente=True,
                     mensalidade__isnull=False,
@@ -226,7 +229,7 @@ class Produto(models.Model):
             ),
             models.CheckConstraint(
                 name="produto_avulso_tem_valor",
-                check=models.Q(recorrente=True)
+                condition=models.Q(recorrente=True)
                 | models.Q(
                     recorrente=False,
                     valor__isnull=False,
