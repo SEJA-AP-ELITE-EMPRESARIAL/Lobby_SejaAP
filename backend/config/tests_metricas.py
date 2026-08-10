@@ -151,6 +151,43 @@ class AcessoTest(TestCase):
         self.assertEqual(resposta.status_code, 200)
 
 
+class RedirecionamentoTest(TestCase):
+    """O /metrics não pode ser redirecionado para https.
+
+    Esta é a falha que só aparecia em produção: com DEBUG=True o
+    SECURE_SSL_REDIRECT fica desligado, e a suíte passava inteira enquanto a
+    coleta real levava 301 na VPS — alvo DOWN para sempre e o alerta de "fora
+    do ar" tocando com o Lobby de pé.
+
+    O middleware é instanciado DENTRO do override porque ele lê o
+    SECURE_SSL_REDIRECT no __init__: com o handler já montado, o override não
+    chegaria nele e o teste passaria sem testar nada.
+    """
+
+    def resposta_do_middleware(self, caminho):
+        from django.http import HttpResponse
+        from django.middleware.security import SecurityMiddleware
+        from django.test import RequestFactory
+
+        middleware = SecurityMiddleware(lambda pedido: HttpResponse())
+        return middleware(RequestFactory().get(caminho))
+
+    @override_settings(SECURE_SSL_REDIRECT=True, SECURE_REDIRECT_EXEMPT=[r"^metrics$"])
+    def test_metrics_nao_e_redirecionado_com_o_redirect_ligado(self):
+        self.assertNotEqual(self.resposta_do_middleware("/metrics").status_code, 301)
+
+    @override_settings(SECURE_SSL_REDIRECT=True, SECURE_REDIRECT_EXEMPT=[r"^metrics$"])
+    def test_o_resto_do_site_continua_sendo_redirecionado(self):
+        """Contraprova: sem isto, o teste acima passaria com o redirect quebrado."""
+        self.assertEqual(self.resposta_do_middleware("/api/catalogo").status_code, 301)
+
+    def test_a_isencao_esta_configurada_no_settings(self):
+        """Prende o valor real, não só o comportamento sob override."""
+        from django.conf import settings
+
+        self.assertIn(r"^metrics$", settings.SECURE_REDIRECT_EXEMPT)
+
+
 class DesabilitadoTest(TestCase):
     """Sem token configurado o endpoint não existe — nem para dizer que existe."""
 
