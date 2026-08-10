@@ -7,7 +7,14 @@
 #
 #   1. Gerar o token, no servidor, sem imprimi-lo em log de sessão:
 #        openssl rand -hex 32 > /opt/monitoring/prometheus/lobby_token
-#        chmod 600 /opt/monitoring/prometheus/lobby_token
+#        chmod 644 /opt/monitoring/prometheus/lobby_token
+#
+#      644 e não 600, e isso não é desleixo: o container do Prometheus roda como
+#      `nobody` (uid 65534), então com 600 do root ele nem abre o arquivo — o
+#      alvo fica DOWN com "permission denied" e o alerta de "Lobby fora do ar"
+#      toca com o Lobby de pé. É a permissão que o identidade_token já usa.
+#      Nesta VPS 600 também não protegeria nada: o usuário `deploy` tem sudo sem
+#      senha e lê arquivo de root de qualquer jeito.
 #   2. Copiar o mesmo valor para LOBBY_METRICS_TOKEN em /opt/conecta/env/lobby.env
 #      e recriar o container:  docker compose up -d backend
 #   3. Colar o bloco abaixo em prometheus.yml
