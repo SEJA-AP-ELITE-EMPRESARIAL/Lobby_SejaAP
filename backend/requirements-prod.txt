@@ -1,4 +1,17 @@
-# Extras de produção — instalar junto com requirements.txt.
+# Dependências que só existem em produção (Postgres + servidor WSGI).
 -r requirements.txt
-psycopg[binary]==3.2.3
+
+# psycopg 3.2.13, e a versão importa por um motivo concreto: NÃO EXISTE wheel
+# binário de `psycopg-binary` 3.2.3 para o Python 3.14. A primeira da série com
+# cp314 é a 3.2.10. Como a imagem instala só `libpq5` — sem `libpq-dev` e sem
+# compilador —, o pip não tem como compilar e o BUILD FALHA:
+#
+#   ERROR: Could not find a version that satisfies the requirement
+#   psycopg-binary==3.2.3 ... (from versions: 3.2.10, 3.2.11, ...)
+#
+# Ficamos na 3.2.x (última da série) em vez de pular para a 3.3: é o menor passo
+# que destrava o 3.14, e num upgrade que existe para fechar exposição de
+# segurança não se troca o driver do banco de brinde.
+psycopg[binary]==3.2.13
+
 gunicorn==23.0.0

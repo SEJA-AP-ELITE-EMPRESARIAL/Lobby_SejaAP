@@ -1,8 +1,28 @@
 # Lobby Seja AP — backend (core).
 # Roda em dev com SQLite, zero dependência nativa.
 # Para Postgres/produção use também requirements-prod.txt.
-Django==5.0.9
-djangorestframework==3.15.2
+
+# Django 6.1, a release atual (suporte até dezembro/2027). Saímos da 5.0.9, que
+# estava SEM SUPORTE desde abril/2025 — e nem era o último patch da própria
+# série (o ramo 5.0 recebeu correções até a 5.0.14).
+#
+# A regra daqui em diante é acompanhar a release atual, não esperar o próximo
+# LTS: em 10/08/2026 o Django anunciou que está aposentando o rótulo LTS e que,
+# de janeiro/2028 em diante, toda release ganha três anos de suporte.
+# Próximo alvo natural: 6.2 (abril/2027), última do modelo antigo, até 2030.
+Django==6.1
+
+# 3.18 é PISO para o Django 6.1, não preferência: a 3.15.2 importa `cc_delim_re`
+# de django.utils.cache, um interno privado que a 6.1 removeu. Com ela o projeto
+# nem sobe — ImportError no import de rest_framework.views.
+djangorestframework==3.18.0
+
+# Estes dois seguem nas versões antigas DE PROPÓSITO. Os classifiers deles param
+# antes do Django 6.x, mas a suíte inteira passa com os dois na 6.1 e uma
+# varredura no código instalado não achou uso de API removida. Num upgrade que
+# existe para fechar exposição de segurança, cada pacote extra bumpado é uma
+# variável a mais caso algo apareça em produção. Ficam como dívida de matriz,
+# para subir numa rodada própria.
 djangorestframework-simplejwt==5.3.1
 python-dotenv==1.0.1
 whitenoise==6.7.0

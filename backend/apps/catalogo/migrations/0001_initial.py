@@ -85,10 +85,10 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='produto',
-            constraint=models.CheckConstraint(check=models.Q(('recorrente', False), models.Q(('mensalidade__isnull', False), ('recorrente', True), ('valor__isnull', True), ('vigencia_meses__isnull', False)), _connector='OR'), name='produto_recorrente_tem_mensalidade_e_vigencia'),
+            constraint=models.CheckConstraint(condition=models.Q(('recorrente', False), models.Q(('mensalidade__isnull', False), ('recorrente', True), ('valor__isnull', True), ('vigencia_meses__isnull', False)), _connector='OR'), name='produto_recorrente_tem_mensalidade_e_vigencia'),
         ),
         migrations.AddConstraint(
             model_name='produto',
-            constraint=models.CheckConstraint(check=models.Q(('recorrente', True), models.Q(('mensalidade__isnull', True), ('recorrente', False), ('valor__isnull', False), ('vigencia_meses__isnull', True)), _connector='OR'), name='produto_avulso_tem_valor'),
+            constraint=models.CheckConstraint(condition=models.Q(('recorrente', True), models.Q(('mensalidade__isnull', True), ('recorrente', False), ('valor__isnull', False), ('vigencia_meses__isnull', True)), _connector='OR'), name='produto_avulso_tem_valor'),
         ),
     ]
