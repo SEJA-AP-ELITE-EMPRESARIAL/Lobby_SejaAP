@@ -5,8 +5,9 @@ categorias, o consultor abre um fluxo de cadastro e contratação do cliente
 (Produto → Empresa → Pagamento → Resumo) que reutiliza os **webhooks n8n**
 reais da página de pré-contrato.
 
-> Hoje a única categoria ativa é **Elite**. As demais (Treinamentos, APN,
-> Palestras) aparecem como **"Em implementação"** (travadas) até serem liberadas.
+> Ativas hoje: **Elite** (4 planos) e **APN** (fluxo próprio, valor negociado).
+> Treinamentos e Palestras aparecem como **"Em implementação"** (travadas) até
+> serem liberadas — e liberar é desmarcar no `/django-admin/`, não deploy.
 
 ## Arquivos
 
@@ -57,13 +58,43 @@ serviço de identidade da empresa — o mesmo login do kanban, do CRM e do
 financeiro. Nenhuma senha mora neste repositório nem chega ao navegador.
 
 Os papéis (`gerente` / `diretoria`) são **deste app**, não do Conecta ID: lá o
-acesso é binário, e quem guarda permissão de negócio é cada sistema. Promover
-alguém:
+acesso é binário, e quem guarda permissão de negócio é cada sistema.
+
+#### Dar acesso a alguém — dois passos, nesta ordem
+
+**1.** Libere a pessoa para o app `lobby` **no Conecta ID**. Sem isso o comando
+abaixo não encontra ninguém — e está certo: quem decide quem entra na empresa é o
+Conecta ID, não este app.
+
+**2.** Dê o papel, aqui:
 
 ```bash
 docker exec lobby-backend python manage.py promover_no_lobby \
-    fulano@sejaap.com.br --papel diretoria
+    fulano@sejaap.com.br --papel diretoria     # ou --papel gerente
 ```
+
+O comando imprime a transição (`sem papel → diretoria`), é seguro rodar de novo e
+serve como consulta. Para tirar o papel: `--papel ""`.
+
+| Papel | Autoriza negociação | Publica a tabela | Entra no `/django-admin/` |
+|---|---|---|---|
+| *(vazio)* | não | não | não |
+| `gerente` | sim | não | não |
+| `diretoria` | sim | sim | sim |
+
+Ninguém nasce com papel — herdar permissão por padrão é o tipo de default que vira
+incidente.
+
+> ⚠️ **`AUTH_CENTRAL_ATIVO=false` não é rollback, é tranca.** Não há senha local
+> neste app; desligar tira todo mundo, inclusive a diretoria.
+
+#### Rotacionar a chave de aplicação
+
+O Conecta ID admite **2 chaves ativas** por app, o que permite rotacionar sem
+janela: emita a nova (`cadastrar_aplicacao lobby --emitir-chave`), atualize
+`IDENTIDADE_APP_KEY` em `/opt/conecta/env/lobby.env`, recrie o backend, confirme
+que o login funciona e **só então** revogue a antiga. Detalhe em
+[`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
 
 > **Não edite mais preços no `index.html`.** O array `CATS` lá continua existindo,
 > mas é só uma **rede de segurança**: se a API estiver fora do ar, o lobby abre com
@@ -121,6 +152,32 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 
 > Os webhooks precisam responder com cabeçalhos **CORS** para a chamada do navegador funcionar.
 
+### O comprovante de venda
+
+O webhook do n8n é público e não valida nada — então, até agosto de 2026, todo o
+controle de valor era cosmético: bastava abrir o DevTools, mudar `valor_total` e
+postar. Nenhuma mudança no front resolve isso; o código roda na máquina de quem se
+quer impedir.
+
+Hoje o servidor **assina** os valores antes do envio:
+
+```text
+navegador ──POST /api/venda/comprovante──► Lobby   (assina se os valores se sustentam:
+          ◄──── { comprovante, expira_em } ────┘    ou batem com a tabela, ou vêm com
+                                                     a credencial de quem autorizou)
+navegador ──POST──► webhook do n8n         (o comprovante vai junto no payload)
+n8n ──POST /api/venda/validar──► Lobby     (confere a assinatura, confere que os
+                                            valores não mudaram, consome o nonce)
+```
+
+Fecha três coisas: **forjar** (precisa da chave), **reusar** (nonce de uso único) e
+**adulterar** (a assinatura cobre o hash dos valores). Validade de 15 minutos.
+
+> ⚠️ **O efeito só existe depois do n8n.** Enquanto o fluxo não chamar
+> `/api/venda/validar`, a assinatura é emitida e ignorada. Passo a passo em
+> [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md). Para saber se já está
+> ligado, olhe o tile *"Vendas validadas pelo n8n"* no painel do Grafana.
+
 ## Personalização rápida
 
 - **Preços:** em **`/admin`**, com a credencial da diretoria. Não mexa no `CATS` do
@@ -153,8 +210,11 @@ Cloudflare (proxied, Full strict)
 
 - **Domínio:** <https://lobby.sejaap.com.br>. O DNS **precisa ficar proxiado** — em
   "DNS only" o navegador fala direto com a VPS e recusa o Origin Certificate.
-- **Porta de loopback:** 8095. As vizinhas já estão tomadas: 8090 CRM, 8091 kanban,
-  8092 kanban-mcp, 8093 formulários, 8094 identidade-api.
+- **Portas de loopback:** **8095** (container do front — é a que o vhost encaminha,
+  então tudo que responde ali é público) e **8096** (backend direto, só para o
+  Prometheus coletar o `/metrics`; sem caminho público). As vizinhas já estão
+  tomadas: 8090 CRM, 8091 kanban, 8092 kanban-mcp, 8093 formulários,
+  8094 identidade-api. **As duas do Lobby não são intercambiáveis.**
 - **Rede:** o backend entra na `identidade-net`, criada pela stack do Conecta ID, para
   alcançar `identidade-api:8000`. Ela é `external: true` — se o Conecta ID não estiver
   de pé, o `up` falha alto, e isso é proposital.
@@ -163,6 +223,27 @@ Cloudflare (proxied, Full strict)
 
 Passo a passo, portas, chaves de túnel e o procedimento de rotação da chave de
 aplicação ficam em [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
+
+> **Não há CD.** `git push` na `main` não publica nada — o deploy é manual por SSH,
+> como no CRM e no formulário financeiro.
+
+### Monitoramento
+
+O backend expõe `/metrics` ao Prometheus, fechado por token
+(`LOBBY_METRICS_TOKEN`). **Sem o token o endpoint responde 404**, que é o padrão:
+aberto, ele entrega o volume de vendas e quantas pessoas podem autorizar desconto.
+
+Cinco alertas no Grafana (pasta *Infra SEJA AP*, grupo `lobby`) e o painel
+**Lobby — vendas e catálogo**. Os dois alertas que ninguém adivinharia sozinho:
+
+- **Catálogo vazio** — o front *não* quebra: cai na tabela embutida e segue
+  vendendo com preço velho. Degradar em silêncio é pior que quebrar.
+- **O n8n parou de validar** — o comprovante continua sendo assinado e ninguém
+  confere.
+
+Arquivos versionados em [`deploy/monitoramento/`](deploy/monitoramento/). Instalar
+**nesta ordem**: job de coleta → confirmar o alvo UP → alertas. Ao contrário, o
+alerta de "fora do ar" trata NoData como alerta e o Telegram toca à toa.
 
 ### Se o backend cair
 
