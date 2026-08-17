@@ -154,20 +154,64 @@ function criaApi(token, aoExpirar) {
   };
 }
 
-/* Entrada de dinheiro: digita só números, formata como moeda. */
+/* Formatação e leitura de dinheiro — as MESMAS do `index.html`, de propósito.
+   Duas telas que aceitam preço não podem discordar sobre o que "13.500" significa. */
+const fmtMoneyPlain = (n) => Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function parseMoney(v) {
+  if (typeof v === 'number') return v;
+  let s = String(v == null ? '' : v).trim().replace(/[^\d.,-]/g, '');
+  if (!s) return NaN;
+  const hasComma = s.indexOf(',') > -1, hasDot = s.indexOf('.') > -1;
+  if (hasComma && hasDot) s = s.replace(/\./g, '').replace(',', '.');
+  else if (hasComma) s = s.replace(',', '.');
+  return Number(s);
+}
+
+/* Entrada de dinheiro.
+ *
+ * ENQUANTO O CAMPO ESTÁ EM FOCO, o que aparece é o TEXTO DIGITADO (`buf`); a
+ * formatação (`12.997,00`) só volta ao sair. É a mesma mecânica do `MoneyInput`
+ * do `index.html`, e existe por um motivo concreto.
+ *
+ * O QUE HAVIA ANTES, E POR QUE ERA UMA ARMADILHA
+ *
+ * A versão anterior guardava o texto num estado e o RESSINCRONIZAVA com a prop
+ * `value` num `useEffect([value])`. Como cada tecla chama `onChange`, o pai
+ * atualizava o valor, a prop voltava formatada e o efeito reescrevia o campo no
+ * meio da digitação:
+ *
+ *     digita "1"    → onChange(1) → prop 1 → campo vira "1,00", cursor no fim
+ *     digita "3"    → campo "1,003" → 1.003 → toFixed(2) → "1,00"  (o 3 sumiu)
+ *     digita "9"    → campo "1,009" → 1.009 → toFixed(2) → "1,01"  (subiu 1 centavo)
+ *
+ * Ou seja: só o primeiro dígito era aceito e o valor passava a subir de centavo
+ * em centavo, uma tecla por vez. Não havia como digitar 12997.
+ *
+ * A lição, para quem mexer aqui: campo de moeda controlado não pode reformatar
+ * enquanto se digita. Formatar é coisa do blur.
+ */
 function MoneyInput({ value, onChange, mudou }) {
-  const [txt, setTxt] = useState(value ? Number(value).toFixed(2).replace('.', ',') : '');
-  useEffect(() => { setTxt(value ? Number(value).toFixed(2).replace('.', ',') : ''); }, [value]);
-  const onInput = (e) => {
-    const bruto = e.target.value.replace(/[^\d,]/g, '');
-    setTxt(bruto);
-    const n = Number(bruto.replace(/\./g, '').replace(',', '.'));
-    onChange(isFinite(n) ? n : 0);
-  };
+  const [focado, setFocado] = useState(false);
+  const [buf, setBuf] = useState('');
+  const num = Number(value);
+  const temValor = Number.isFinite(num) && num > 0;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <span style={{ font: '600 13px var(--font-primary)', color: 'var(--text-muted)' }}>R$</span>
-      <input className={'inp' + (mudou ? ' mudou' : '')} value={txt} onChange={onInput} inputMode="decimal" placeholder="0,00" />
+      <input
+        className={'inp' + (mudou ? ' mudou' : '')}
+        inputMode="decimal" placeholder="0,00"
+        value={focado ? buf : (temValor ? fmtMoneyPlain(num) : '')}
+        onFocus={() => { setFocado(true); setBuf(temValor ? fmtMoneyPlain(num) : ''); }}
+        onBlur={() => setFocado(false)}
+        onChange={(e) => {
+          setBuf(e.target.value);
+          const p = parseMoney(e.target.value);
+          // Campo vazio ou ilegível vira 0, não NaN: é o que a tela usa para
+          // "sem valor" (o valor de referência da APN, por exemplo).
+          onChange(Number.isFinite(p) ? p : 0);
+        }}
+      />
     </div>
   );
 }
