@@ -12,6 +12,20 @@ consultor.
 
 Não "conserte" este arquivo copiando a saída do serializer. Ele só tem valor
 enquanto for cópia independente da verdade de produção.
+
+POR QUE A COMPARAÇÃO É POR ID, E NÃO DA LISTA INTEIRA
+
+A primeira versão fazia `assertEqual(cats, CATALOGO_EM_PRODUCAO)`. Isso confunde
+duas coisas muito diferentes: ALTERAR um produto que está sendo vendido (o que
+este arquivo existe para pegar) e ACRESCENTAR um produto novo (operação prevista,
+feita no /django-admin/ — a Elite está recebendo produtos novos). Com a igualdade
+de lista, a segunda derrubava a guarda da primeira, e o caminho de menor esforço
+para voltar ao verde era colar a saída do serializer aqui — matando o teste.
+
+Então: cada produto do literal é conferido campo a campo, pelo id, e a ordem
+relativa entre eles é conferida. Produto que NÃO está no literal é validado em
+`tests_produtos_novos.py`, contra as invariantes que o front exige de qualquer
+produto. Ninguém sai sem guarda.
 """
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -25,10 +39,16 @@ CATALOGO_EM_PRODUCAO = [
         "desc": "Consultoria individual contínua — os planos Elite da Seja AP.",
         "products": [
             {
-                "id": "prep", "name": "ELITE PREPARAÇÃO", "sigla": "PRE",
-                "desc": "O plano do Início", "duration": "12 meses",
-                "icon": "rocket_launch", "price": 9997 * 12,
-                "monthly": 9997, "recurring": True, "vigencia": 12,
+                "id": "pre", "name": "ELITE PRÉ", "sigla": "EPR",
+                "desc": "O plano do Primeiro Passo", "duration": "12 meses",
+                "icon": "start", "price": 2997 * 12,
+                "monthly": 2997, "recurring": True, "vigencia": 12,
+            },
+            {
+                "id": "base", "name": "ELITE BASE", "sigla": "BAS",
+                "desc": "O plano da Fundação", "duration": "12 meses",
+                "icon": "foundation", "price": 5997 * 12,
+                "monthly": 5997, "recurring": True, "vigencia": 12,
             },
             {
                 "id": "pro", "name": "ELITE PRO", "sigla": "PRO",
@@ -48,32 +68,25 @@ CATALOGO_EM_PRODUCAO = [
                 "icon": "diamond", "price": 29997 * 12,
                 "monthly": 29997, "recurring": True, "vigencia": 12,
             },
+            {
+                "id": "conselho", "name": "ELITE CONSELHO", "sigla": "CON",
+                "desc": "O plano do Conselho Consultivo", "duration": "12 meses",
+                "icon": "groups", "price": 49997 * 12,
+                "monthly": 49997, "recurring": True, "vigencia": 12,
+            },
         ],
     },
     {
+        # Travada e SEM produtos desde 17/08/2026: os três da semente nunca
+        # abriram para venda e foram removidos. A categoria fica, para o
+        # consultor ver que existe e ainda não abriu.
         "id": "treinamentos",
         "name": "Treinamentos",
         "icon": "school",
         "color": "gold",
         "desc": "Imersões e trilhas de desenvolvimento de líderes e equipes comerciais.",
         "locked": True,
-        "products": [
-            {
-                "id": "t1", "name": "Imersão Gestão 360", "sigla": "IMG",
-                "desc": "Imersão presencial de 3 dias", "duration": "3 dias",
-                "icon": "groups", "price": 18000,
-            },
-            {
-                "id": "t2", "name": "Trilha Líder Elite", "sigla": "TLE",
-                "desc": "Programa de formação de líderes", "duration": "6 meses",
-                "icon": "military_tech", "price": 24000,
-            },
-            {
-                "id": "t3", "name": "Vendas de Alta Performance", "sigla": "VAP",
-                "desc": "Treinamento intensivo de vendas", "duration": "2 meses",
-                "icon": "trending_up", "price": 12000,
-            },
-        ],
+        "products": [],
     },
     {
         "id": "apn",
@@ -86,29 +99,14 @@ CATALOGO_EM_PRODUCAO = [
         "products": [],
     },
     {
+        # Mesma história dos Treinamentos: travada, e agora sem produtos.
         "id": "palestras",
         "name": "Palestras",
         "icon": "campaign",
         "color": "green",
         "desc": "Palestras in company e eventos de alto impacto.",
         "locked": True,
-        "products": [
-            {
-                "id": "pl1", "name": "Palestra In Company", "sigla": "PIC",
-                "desc": "Palestra exclusiva na empresa", "duration": "1 evento",
-                "icon": "record_voice_over", "price": 15000,
-            },
-            {
-                "id": "pl2", "name": "Palestra Magna", "sigla": "PMA",
-                "desc": "Palestra para grandes públicos", "duration": "1 evento",
-                "icon": "stadium", "price": 25000,
-            },
-            {
-                "id": "pl3", "name": "Ciclo de Palestras Anual", "sigla": "CPA",
-                "desc": "Programa anual de palestras", "duration": "12 meses",
-                "icon": "event", "price": 80000,
-            },
-        ],
+        "products": [],
     },
 ]
 
@@ -119,10 +117,60 @@ class ContratoDoCatalogoTest(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    def test_get_publico_devolve_o_catalogo_de_producao(self):
+    def _servido(self):
         resposta = self.client.get("/api/catalogo")
         self.assertEqual(resposta.status_code, 200)
-        self.assertEqual(resposta.json()["cats"], CATALOGO_EM_PRODUCAO)
+        return resposta.json()["cats"]
+
+    def test_get_publico_devolve_o_catalogo_de_producao(self):
+        """Cada categoria e cada produto de produção, campo a campo."""
+        cats = {c["id"]: c for c in self._servido()}
+
+        for esperada in CATALOGO_EM_PRODUCAO:
+            servida = cats.get(esperada["id"])
+            self.assertIsNotNone(
+                servida, f'A categoria "{esperada["id"]}" desapareceu do catálogo.'
+            )
+
+            # Campos da categoria (tudo menos a lista de produtos), incluindo a
+            # AUSÊNCIA de chave: `locked` e `flow` só saem quando valem algo, e o
+            # front testa `!!c.locked` / `c.flow === 'apn'`.
+            self.assertEqual(
+                {k: v for k, v in servida.items() if k != "products"},
+                {k: v for k, v in esperada.items() if k != "products"},
+                f'Campos da categoria "{esperada["id"]}" mudaram.',
+            )
+
+            produtos = {p["id"]: p for p in servida["products"]}
+            for produto in esperada["products"]:
+                self.assertIn(
+                    produto["id"],
+                    produtos,
+                    f'O produto "{produto["id"]}" desapareceu de "{esperada["id"]}" — '
+                    "e produto vendido que sai do catálogo deixa protocolo órfão.",
+                )
+                self.assertEqual(
+                    produtos[produto["id"]],
+                    produto,
+                    f'O produto "{produto["id"]}" mudou em relação ao que está no ar.',
+                )
+
+    def test_ordem_relativa_dos_produtos_de_producao(self):
+        """Produto novo pode entrar; reordenar o que já está no ar, não.
+
+        O front lista `cat.products` na ordem em que vêm (`index.html`,
+        `renderProduto`). Trocar a ordem dos planos Elite é mudar a tela do
+        consultor sem ninguém ter pedido.
+        """
+        cats = {c["id"]: c for c in self._servido()}
+        for esperada in CATALOGO_EM_PRODUCAO:
+            servidos = [p["id"] for p in cats[esperada["id"]]["products"]]
+            conhecidos = [p["id"] for p in esperada["products"]]
+            self.assertEqual(
+                [i for i in servidos if i in conhecidos],
+                conhecidos,
+                f'A ordem dos produtos de "{esperada["id"]}" mudou.',
+            )
 
     def test_ordem_das_categorias_e_a_do_lobby(self):
         """O front faz `CATS.map` direto, sem ordenar (`index.html:1284`)."""
@@ -162,9 +210,20 @@ class ContratoDoCatalogoTest(TestCase):
             self.assertIsInstance(elite[campo], int, f"{campo} não é número")
 
     def test_produto_avulso_nao_tem_campos_de_recorrencia(self):
-        """`recurring` ausente é como o front distingue avulso de recorrente."""
+        """`recurring` ausente é como o front distingue avulso de recorrente.
+
+        O avulso é criado aqui porque a semente não tem mais nenhum: os de
+        Treinamentos e Palestras saíram em 17/08/2026. O contrato continua
+        valendo, e é dele que este teste trata.
+        """
+        from .tests_escrita import cria_avulso
+
+        cria_avulso()
         cats = self.client.get("/api/catalogo").json()["cats"]
-        avulso = cats[1]["products"][0]
+        elite = next(c for c in cats if c["id"] == "elite")
+        avulso = next(p for p in elite["products"] if p["id"] == "intensivo")
+
+        self.assertEqual(avulso["price"], 28000)
         for campo in ("monthly", "recurring", "vigencia"):
             self.assertNotIn(campo, avulso)
 

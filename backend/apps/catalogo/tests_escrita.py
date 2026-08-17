@@ -18,6 +18,28 @@ from apps.contas.models import Papel, VinculoIdentidade
 from .models import Produto, PublicacaoCatalogo
 
 
+def cria_avulso(slug="intensivo", valor=Decimal("28000")):
+    """Um produto de valor à vista, para os testes que precisam de um.
+
+    A semente não tem mais nenhum: os avulsos vinham de Treinamentos e Palestras,
+    removidos em 17/08/2026 por nunca terem aberto para venda.
+    """
+    from .models import Categoria
+
+    return Produto.objects.create(
+        categoria=Categoria.objects.get(slug="elite"),
+        slug=slug,
+        nome="ELITE INTENSIVO",
+        sigla="INT",
+        descricao="Encontro fechado de 2 dias",
+        duracao="2 dias",
+        icone="groups",
+        recorrente=False,
+        valor=valor,
+        ordem=99,
+    )
+
+
 def cria_pessoa(email, papel):
     """Usuário local + vínculo com papel, como nasceriam no primeiro login."""
     usuario = User.objects.create_user(username=email, email=email)
@@ -136,12 +158,15 @@ class PublicacaoTest(BaseEscrita):
         self.assertEqual(pro["price"], 120000)
 
     def test_altera_valor_de_produto_avulso(self):
+        """Produto avulso é criado aqui: desde 17/08/2026 a semente só tem
+        recorrentes (os avulsos de Treinamentos e Palestras foram removidos)."""
+        cria_avulso()
         cats = self.catalogo_atual()
-        self._acha(cats, "treinamentos", "t1")["price"] = 19500
+        self._acha(cats, "elite", "intensivo")["price"] = 19500
 
         resposta = self.autenticado().put("/api/catalogo", {"cats": cats}, format="json")
-        t1 = self._acha(resposta.json()["cats"], "treinamentos", "t1")
-        self.assertEqual(t1["price"], 19500)
+        avulso = self._acha(resposta.json()["cats"], "elite", "intensivo")
+        self.assertEqual(avulso["price"], 19500)
 
     def test_apn_volta_na_resposta_mesmo_sendo_descartada_na_escrita(self):
         """Se sumisse, ela desapareceria da tela do admin logo após publicar."""
@@ -197,8 +222,9 @@ class ValidacaoTest(BaseEscrita):
         self.assertEqual(self.publica(cats).status_code, 400)
 
     def test_valor_de_avulso_zero_e_recusado(self):
+        cria_avulso()
         cats = self.catalogo_atual()
-        self._acha(cats, "treinamentos", "t1")["price"] = 0
+        self._acha(cats, "elite", "intensivo")["price"] = 0
         resposta = self.publica(cats)
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("Valor inválido", resposta.json()["erro"])
@@ -223,12 +249,24 @@ class ValidacaoTest(BaseEscrita):
         self.assertEqual(resposta.status_code, 400)
         self.assertEqual(Produto.objects.count(), antes)
 
-    def test_categoria_sem_produtos_e_recusada(self):
+    def test_categoria_sem_a_lista_de_produtos_e_recusada(self):
+        """Corpo malformado — tela que perdeu metade do estado."""
         cats = self.catalogo_atual()
-        next(c for c in cats if c["id"] == "elite")["products"] = []
+        del next(c for c in cats if c["id"] == "elite")["products"]
         resposta = self.publica(cats)
         self.assertEqual(resposta.status_code, 400)
-        self.assertIn("está sem produtos", resposta.json()["erro"])
+        self.assertIn("sem a lista de produtos", resposta.json()["erro"])
+
+    def test_categoria_com_lista_vazia_e_aceita(self):
+        """Lista vazia é legítima desde 17/08/2026.
+
+        Treinamentos e Palestras existem travadas e SEM produto, esperando os de
+        verdade. Antes disso toda categoria tinha produto e o vazio só podia ser
+        erro — o guarda recusava os dois casos juntos.
+        """
+        cats = self.catalogo_atual()
+        self.assertEqual(next(c for c in cats if c["id"] == "treinamentos")["products"], [])
+        self.assertEqual(self.publica(cats).status_code, 200)
 
     def test_categoria_duplicada_e_recusada(self):
         cats = self.catalogo_atual()
@@ -250,13 +288,14 @@ class ValidacaoTest(BaseEscrita):
     def test_recusa_nao_deixa_publicacao_pela_metade(self):
         """A transação é a mesma promessa do `normalizaCatalogo`: tudo ou nada.
 
-        O produto inválido está na ÚLTIMA categoria, depois de uma alteração
-        válida na primeira — se a escrita não fosse atômica, a primeira teria
-        sido gravada.
+        O produto inválido vem DEPOIS de uma alteração válida — se a escrita não
+        fosse atômica, a primeira teria sido gravada. (Antes de 17/08/2026 o
+        inválido ficava na última categoria; Palestras não tem mais produto, então
+        o par agora é `pro` → `conselho`, o último da Elite.)
         """
         cats = self.catalogo_atual()
         self._acha(cats, "elite", "pro")["monthly"] = 15000
-        self._acha(cats, "palestras", "pl1")["price"] = -1
+        self._acha(cats, "elite", "conselho")["monthly"] = -1
 
         resposta = self.publica(cats)
         self.assertEqual(resposta.status_code, 400)

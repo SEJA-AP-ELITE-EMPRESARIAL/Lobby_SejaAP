@@ -32,8 +32,10 @@ from rest_framework.views import APIView
 
 from apps.contas.permissions import PodePublicarTabela
 
-from .models import Categoria, PublicacaoCatalogo
-from .serializers import serializa_catalogo
+from . import produtos as servico_produtos
+from .cobranca import CobrancaInvalida, estado_atual, publica_politica
+from .models import Categoria, PoliticaCobranca, PublicacaoCatalogo, Vigencia
+from .serializers import serializa_catalogo, serializa_politica, serializa_produto
 from .servicos import CatalogoInvalido, publica_catalogo
 from .throttling import CatalogoPublicoThrottle
 
@@ -76,7 +78,11 @@ class CatalogoView(APIView):
 
     @staticmethod
     def _cats():
-        return serializa_catalogo(Categoria.objects.prefetch_related("produtos").all())
+        # `politica_cobranca` no prefetch: sem ele, cada produto vira uma consulta
+        # a mais atrás de uma exceção que quase nenhum tem.
+        return serializa_catalogo(
+            Categoria.objects.prefetch_related("produtos__politica_cobranca").all()
+        )
 
     # ----- métodos -------------------------------------------------------
 
@@ -90,6 +96,12 @@ class CatalogoView(APIView):
             Response(
                 {
                     "cats": self._cats(),
+                    # A regra de data do cronograma. Vem no MESMO envelope do
+                    # preço porque o front precisa das duas coisas na mesma
+                    # abertura — uma chamada a mais no caminho crítico da venda
+                    # seria uma chance a mais de o consultor cotar com metade da
+                    # configuração.
+                    "cobranca": serializa_politica(PoliticaCobranca.geral_atual()),
                     "atualizadoEm": self._atualizado_em(),
                     # Ninguém lê, mas o envelope do KV tinha o campo. Mantido para
                     # que a migração não seja o momento de descobrir um consumidor
@@ -120,8 +132,140 @@ class CatalogoView(APIView):
                 {
                     "ok": True,
                     "cats": catalogo,
+                    "cobranca": serializa_politica(PoliticaCobranca.geral_atual()),
                     "atualizadoEm": self._atualizado_em(),
                     "alteracoes": [str(a) for a in alteracoes],
                 }
             )
         )
+
+
+class CobrancaView(APIView):
+    """A regra de data do cronograma — leitura pública, escrita da diretoria.
+
+    Leitura pública pelo mesmo motivo do catálogo: o consultor não faz login, e
+    sem a política ele não consegue montar cronograma nenhum. Na prática o
+    `index.html` lê a política junto do catálogo, num envelope só; esta rota
+    existe para a TELA da diretoria, que também precisa das exceções e das opções
+    válidas de cada campo.
+
+    Escrita é diretoria, e não gerente: a data de cobrança vale para todas as
+    vendas seguintes — mesmo alcance da tabela de preços. Mudar a data de UMA
+    venda continua sendo autorização de gerente, na tela do consultor.
+    """
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAuthenticated(), PodePublicarTabela()]
+
+    def get_throttles(self):
+        return [CatalogoPublicoThrottle()] if self.request.method == "GET" else []
+
+    @staticmethod
+    def _sem_cache(resposta):
+        resposta["Cache-Control"] = "no-store"
+        return resposta
+
+    def get(self, request):
+        return self._sem_cache(Response(estado_atual()))
+
+    def put(self, request):
+        try:
+            estado = publica_politica(request.data or {}, autor=request.user)
+        except CobrancaInvalida as erro:
+            return self._sem_cache(
+                Response({"erro": str(erro)}, status=status.HTTP_400_BAD_REQUEST)
+            )
+        return self._sem_cache(Response({"ok": True, **estado}))
+
+
+class ProdutosView(APIView):
+    """Criar produto. Só diretoria.
+
+    Fica separada do `PUT /api/catalogo` porque as duas operações têm garantias
+    diferentes: publicar preço não cria nem apaga linha, por desenho (ver
+    `servicos.py`). Misturar as duas no mesmo endpoint faria a promessa mais forte
+    depender de qual campo veio no corpo.
+    """
+
+    permission_classes = [IsAuthenticated, PodePublicarTabela]
+
+    def post(self, request):
+        try:
+            produto = servico_produtos.cria(request.data or {}, autor=request.user)
+        except servico_produtos.ProdutoInvalido as erro:
+            return Response({"erro": str(erro)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"ok": True, "produto": serializa_produto(produto)},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ProdutoView(APIView):
+    """Editar um produto existente. Só diretoria.
+
+    Não há DELETE, e é decisão: produto vendido aparece no protocolo de vendas
+    fechadas. Ver o cabeçalho de `produtos.py`.
+    """
+
+    permission_classes = [IsAuthenticated, PodePublicarTabela]
+
+    def patch(self, request, categoria_slug, slug):
+        try:
+            produto = servico_produtos.edita(
+                categoria_slug, slug, request.data or {}, autor=request.user
+            )
+        except servico_produtos.ProdutoInvalido as erro:
+            return Response({"erro": str(erro)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"ok": True, "produto": serializa_produto(produto)})
+
+
+class HistoricoView(APIView):
+    """A linha do tempo: o que valeu, quando, e por decisão de quem.
+
+    Fechada para a diretoria. Não é dado sensível como senha, mas é a série
+    histórica de preço da empresa inteira — e o resto do app não precisa dela
+    para funcionar, então não há motivo para deixá-la anônima como o catálogo.
+    """
+
+    permission_classes = [IsAuthenticated, PodePublicarTabela]
+
+    LIMITE_PADRAO = 200
+    LIMITE_MAX = 1000
+
+    def get(self, request):
+        consulta = Vigencia.objects.all()
+
+        chave = (request.query_params.get("chave") or "").strip()
+        if chave:
+            consulta = consulta.filter(chave=chave)
+        campo = (request.query_params.get("campo") or "").strip()
+        if campo:
+            consulta = consulta.filter(campo=campo)
+
+        try:
+            limite = min(int(request.query_params.get("limite") or self.LIMITE_PADRAO), self.LIMITE_MAX)
+        except (TypeError, ValueError):
+            limite = self.LIMITE_PADRAO
+
+        rotulos = dict(Vigencia.Campo.choices)
+        registros = [
+            {
+                "chave": v.chave,
+                "rotulo": v.rotulo,
+                "campo": v.campo,
+                "campo_rotulo": rotulos.get(v.campo, v.campo),
+                "valor": v.valor,
+                "vigente_de": v.vigente_de.isoformat(),
+                "vigente_ate": v.vigente_ate.isoformat() if v.vigente_ate else None,
+                "vigente": v.vigente_ate is None,
+                # Sem autor = semente ou migração. A tela mostra "sistema", e é
+                # honesto: não houve pessoa.
+                "autor": v.autor_email or None,
+            }
+            for v in consulta.select_related("autor")[: max(1, limite)]
+        ]
+        resposta = Response({"registros": registros, "total": len(registros)})
+        resposta["Cache-Control"] = "no-store"
+        return resposta

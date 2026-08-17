@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#141412">
 <meta name="robots" content="noindex, nofollow">
-<title>Valores de tabela · Lobby · Conecta AP</title>
+<title>Configuração · Lobby · Conecta AP</title>
 <link rel="icon" href="data:,">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
 
@@ -32,7 +32,7 @@
 *{box-sizing:border-box;}
 html,body{margin:0;height:100%;}
 body{background:var(--background);color:var(--text);font-family:var(--font-secondary);-webkit-font-smoothing:antialiased;}
-input,button{font-family:'Roboto',sans-serif;}
+input,button,select,textarea{font-family:'Roboto',sans-serif;}
 button{font-family:var(--font-primary);}
 @keyframes slideUpFade{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
 @keyframes spin{to{transform:rotate(360deg);}}
@@ -41,28 +41,50 @@ button{font-family:var(--font-primary);}
 .inp{width:100%;height:44px;padding:0 12px;border-radius:8px;background:var(--surface-elevated);border:1px solid var(--border-light);color:var(--text);font:400 14px 'Roboto';outline:none;transition:border-color .15s,box-shadow .15s;}
 .inp:focus{border-color:var(--primary);box-shadow:var(--focus-ring);}
 .inp.mudou{border-color:var(--warning);}
+.inp.sm{height:38px;font-size:13px;}
 .lbl{display:block;font:500 12px var(--font-primary);color:var(--text-secondary);margin-bottom:6px;}
+.lbl .dica{font:400 11px var(--font-secondary);color:var(--text-muted);margin-left:6px;}
 .card{background:var(--surface);border:1px solid var(--border-light);border-radius:14px;padding:22px;animation:slideUpFade .4s both;}
 .btn-prim{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:46px;padding:0 28px;border-radius:10px;border:none;cursor:pointer;background:var(--gradient-primary);color:#1A1A18;font:700 14px var(--font-primary);letter-spacing:.03em;box-shadow:0 4px 14px rgba(199,164,68,.3);transition:transform .2s,box-shadow .2s,opacity .2s;}
 .btn-prim:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 22px rgba(199,164,68,.4);}
 .btn-prim:disabled{background:var(--surface-light);color:var(--text-muted);cursor:not-allowed;opacity:.6;box-shadow:none;}
+.btn-prim.sm{height:38px;padding:0 18px;font-size:13px;}
 .btn-ghost{display:inline-flex;align-items:center;gap:7px;height:46px;padding:0 20px;border-radius:10px;border:1px solid var(--border-light);background:transparent;color:var(--text-secondary);font:600 13.5px var(--font-primary);cursor:pointer;transition:border-color .2s,color .2s;}
 .btn-ghost:hover:not(:disabled){border-color:var(--primary);color:var(--primary);}
 .btn-ghost:disabled{opacity:.5;cursor:not-allowed;}
+.btn-ghost.sm{height:38px;padding:0 14px;font-size:12.5px;}
+.btn-perigo{color:#F1969E;border-color:rgba(220,53,69,.35);}
+.btn-perigo:hover:not(:disabled){border-color:var(--danger);color:#F1969E;}
 .chip{display:inline-flex;align-items:center;gap:5px;font:600 11.5px var(--font-primary);color:var(--primary);background:var(--primary-subtle);border:1px solid rgba(199,164,68,.35);padding:4px 10px;border-radius:7px;}
+.chip.neutro{color:var(--text-muted);background:var(--surface-light);border-color:var(--border-light);}
 .prod{display:grid;grid-template-columns:1fr 200px 200px;gap:16px;align-items:end;padding:16px 0;border-bottom:1px solid var(--border-light);}
 .prod:last-child{border-bottom:none;}
 .aviso{display:flex;align-items:flex-start;gap:10px;padding:14px 16px;border-radius:10px;font:400 13.5px var(--font-secondary);line-height:1.5;}
+.sec-title{font:600 12px var(--font-primary);letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);}
+/* Abas */
+.abas{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--border-light);margin-bottom:22px;}
+.aba{display:inline-flex;align-items:center;gap:7px;height:42px;padding:0 16px;border:none;background:transparent;color:var(--text-muted);font:600 13px var(--font-primary);cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s;}
+.aba:hover{color:var(--text-secondary);}
+.aba.on{color:var(--primary);border-bottom-color:var(--primary);}
+/* Linha do tempo */
+.tl{display:grid;grid-template-columns:150px 1fr 140px 190px;gap:12px;align-items:center;padding:11px 4px;border-bottom:1px solid rgba(255,255,255,.05);font:400 13px var(--font-secondary);}
+.tl.cab{font:600 10.5px var(--font-primary);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border-light);}
+.linha{display:grid;grid-template-columns:1fr 120px 150px 130px 96px;gap:12px;align-items:center;padding:12px 4px;border-bottom:1px solid rgba(255,255,255,.05);}
+.linha.cab{font:600 10.5px var(--font-primary);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border-light);padding-bottom:8px;}
 *::-webkit-scrollbar{width:10px;}
 *::-webkit-scrollbar-thumb{background:var(--surface-light);border-radius:10px;border:2px solid var(--background);}
-@media (max-width:820px){ .prod{grid-template-columns:1fr;gap:10px;} }
+@media (max-width:900px){
+  .prod{grid-template-columns:1fr;gap:10px;}
+  .tl,.linha{grid-template-columns:1fr;gap:6px;}
+  .tl.cab,.linha.cab{display:none;}
+}
 </style>
 </head>
 <body>
 <div id="root"></div>
 
 <script type="text/babel" data-presets="env,react">
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useCallback } = React;
 
 /* ============================================================================
  * Esta tela é o OUTRO mecanismo de credencial do Lobby, e a diferença importa.
@@ -70,15 +92,29 @@ const { useState, useEffect, useMemo } = React;
  * No lobby (index.html) a credencial autoriza UMA negociação e morre com ela —
  * não há sessão, porque quem digita é o gerente no aparelho do consultor.
  *
- * Aqui é sessão de verdade: publicar a tabela de preços é trabalho continuado,
- * feito no próprio computador de quem faz. O token fica no sessionStorage e
- * some ao fechar a aba.
+ * Aqui é sessão de verdade: configurar o catálogo é trabalho continuado, feito
+ * no próprio computador de quem faz. O token fica no sessionStorage e some ao
+ * fechar a aba.
  *
- * Publicar exige papel de DIRETORIA. Gerente entra no lobby e autoriza
- * negociação, mas não muda o preço que todo consultor enxerga.
+ * Tudo aqui exige papel de DIRETORIA. Gerente entra no lobby e autoriza
+ * negociação — alcance de uma venda; o que se configura aqui vale para todas as
+ * próximas.
+ *
+ * O QUE MUDOU EM 17/08/2026
+ *
+ * A tela era só preço: um número por produto. Passou a ter quatro abas, e a
+ * razão é a mesma nas três novas — o caminho de menor esforço para mexer no
+ * catálogo era o /django-admin/, que não deixa rastro nenhum:
+ *
+ *   Valores   — a tela de sempre (mensalidade / valor à vista).
+ *   Cobrança  — o dia do vencimento e a regra da 1ª parcela, que até então eram
+ *               constantes no index.html: mudar a data era deploy do front.
+ *   Produtos  — criar e editar produto, com histórico.
+ *   Histórico — a linha do tempo: o que valeu, quando, por decisão de quem.
  * ========================================================================== */
 const CHAVE_TOKEN = 'lobby_sessao_diretoria';
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const dataHora = (iso) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
 const sessao = {
   ler() {
@@ -92,6 +128,31 @@ const sessao = {
   gravar(dados) { try { sessionStorage.setItem(CHAVE_TOKEN, JSON.stringify(dados)); } catch {} },
   limpar() { try { sessionStorage.removeItem(CHAVE_TOKEN); } catch {} },
 };
+
+/* Toda chamada autenticada passa por aqui: um lugar só para tratar o 401, que
+   significa sessão expirada e derruba a tela em vez de mostrar erro genérico. */
+function criaApi(token, aoExpirar) {
+  return async function api(caminho, opcoes = {}) {
+    let r;
+    try {
+      r = await fetch(caminho, {
+        ...opcoes,
+        cache: 'no-store',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(opcoes.headers || {}),
+        },
+      });
+    } catch {
+      throw new Error('Sem conexão. Verifique a internet e tente de novo.');
+    }
+    if (r.status === 401) { sessao.limpar(); aoExpirar(); throw new Error('Sessão expirada.'); }
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.erro || 'Não foi possível concluir a operação.');
+    return d;
+  };
+}
 
 /* Entrada de dinheiro: digita só números, formata como moeda. */
 function MoneyInput({ value, onChange, mudou }) {
@@ -107,6 +168,21 @@ function MoneyInput({ value, onChange, mudou }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <span style={{ font: '600 13px var(--font-primary)', color: 'var(--text-muted)' }}>R$</span>
       <input className={'inp' + (mudou ? ' mudou' : '')} value={txt} onChange={onInput} inputMode="decimal" placeholder="0,00" />
+    </div>
+  );
+}
+
+function Aviso({ tipo, children }) {
+  const cores = {
+    ok: { background: 'rgba(40,167,69,.1)', color: '#8FD79E', icone: 'check_circle' },
+    erro: { background: 'rgba(220,53,69,.1)', color: '#F1969E', icone: 'error' },
+    atencao: { background: 'rgba(255,193,7,.1)', color: 'var(--text-secondary)', icone: 'warning' },
+    info: { background: 'var(--primary-subtle)', color: 'var(--text-secondary)', icone: 'info' },
+  }[tipo] || {};
+  return (
+    <div className="aviso" style={{ background: cores.background, color: cores.color, border: tipo === 'info' ? '1px solid rgba(199,164,68,.3)' : 'none', marginBottom: 18 }}>
+      <span className="ms-icon" style={{ fontSize: 20, color: tipo === 'info' ? 'var(--primary)' : 'inherit' }}>{cores.icone}</span>
+      <span>{children}</span>
     </div>
   );
 }
@@ -135,11 +211,11 @@ function Login({ onEntrar }) {
       }
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.erro || 'Não foi possível entrar.');
-      // Só a diretoria publica tabela. Gerente entra no lobby e autoriza
-      // negociação, mas aqui não teria o que fazer — e descobrir isso só ao
-      // clicar em "Publicar", depois de editar tudo, seria péssimo.
+      // Só a diretoria configura. Gerente entra no lobby e autoriza negociação,
+      // mas aqui não teria o que fazer — e descobrir isso só ao clicar em
+      // "Publicar", depois de editar tudo, seria péssimo.
       if (!d.podePublicarTabela) {
-        throw new Error('Sua conta não tem permissão para alterar a tabela de preços. Esta área é da diretoria.');
+        throw new Error('Sua conta não tem permissão para configurar o catálogo. Esta área é da diretoria.');
       }
       sessao.gravar(d);
       onEntrar(d);
@@ -157,7 +233,7 @@ function Login({ onEntrar }) {
       <form onSubmit={entrar} className="card" style={{ width: '100%', maxWidth: 400 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
           <span className="ms-icon" style={{ color: 'var(--primary)' }}>lock</span>
-          <h1 style={{ font: '700 19px var(--font-primary)', margin: 0 }}>Valores de tabela</h1>
+          <h1 style={{ font: '700 19px var(--font-primary)', margin: 0 }}>Configuração do Lobby</h1>
         </div>
         <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 22px', lineHeight: 1.5 }}>
           Área restrita à diretoria. Entre com o seu e-mail e senha do Conecta ID —
@@ -189,33 +265,19 @@ function Login({ onEntrar }) {
   );
 }
 
-/* ===== Editor de valores ===== */
-function Editor({ sessao: sess, aoSair }) {
-  const token = sess.token;
-  const [cats, setCats] = useState(null);
-  const [original, setOriginal] = useState(null);
-  const [atualizadoEm, setAtualizadoEm] = useState(null);
-  const [estado, setEstado] = useState('carregando'); // carregando | pronto | salvando | erro
+/* ===== Aba 1: valores de tabela =========================================== */
+function AbaValores({ api, catalogo, atualizadoEm, aoPublicar }) {
+  const [cats, setCats] = useState(() => JSON.parse(JSON.stringify(catalogo)));
+  const [original, setOriginal] = useState(() => JSON.parse(JSON.stringify(catalogo)));
+  const [estado, setEstado] = useState('pronto');
   const [msg, setMsg] = useState('');
 
-  useEffect(() => { carregar(); }, []);
+  // O catálogo pode ter mudado noutra aba (produto novo, por exemplo).
+  useEffect(() => {
+    setCats(JSON.parse(JSON.stringify(catalogo)));
+    setOriginal(JSON.parse(JSON.stringify(catalogo)));
+  }, [catalogo]);
 
-  const carregar = async () => {
-    setEstado('carregando'); setMsg('');
-    try {
-      const r = await fetch('/api/catalogo', { cache: 'no-store' });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.erro || 'Falha ao carregar o catálogo.');
-      setCats(d.cats);
-      setOriginal(JSON.parse(JSON.stringify(d.cats)));
-      setAtualizadoEm(d.atualizadoEm);
-      setEstado('pronto');
-    } catch (err) {
-      setMsg(err.message); setEstado('erro');
-    }
-  };
-
-  // Valor de um produto: mensalidade se recorrente, valor à vista se não.
   const setValor = (catId, prodId, valor) => {
     setCats((cs) => cs.map((c) => c.id !== catId ? c : {
       ...c,
@@ -229,14 +291,26 @@ function Editor({ sessao: sess, aoSair }) {
     setMsg('');
   };
 
+  // Categoria de fluxo próprio (a APN) não tem produto: o que se edita nela é o
+  // valor com que a tela do consultor ABRE. `null` = abre em branco.
+  const setValorReferencia = (catId, valor) => {
+    setCats((cs) => cs.map((c) => c.id !== catId ? c : { ...c, valor_referencia: valor > 0 ? valor : null }));
+    setMsg('');
+  };
+
   const valorDe = (p) => (p.recurring ? p.monthly : p.price);
   const achaOriginal = (catId, prodId) =>
     original?.find((c) => c.id === catId)?.products.find((p) => p.id === prodId);
+  const catOriginal = (catId) => original?.find((c) => c.id === catId);
 
   const alteracoes = useMemo(() => {
     if (!cats || !original) return [];
     const out = [];
     for (const c of cats) {
+      const oc = catOriginal(c.id);
+      if (oc && (oc.valor_referencia ?? null) !== (c.valor_referencia ?? null)) {
+        out.push({ cat: c.name, prod: `${c.name} (referência)`, de: oc.valor_referencia, para: c.valor_referencia });
+      }
       for (const p of c.products) {
         const o = achaOriginal(c.id, p.id);
         if (o && valorDe(o) !== valorDe(p)) out.push({ cat: c.name, prod: p.name, de: valorDe(o), para: valorDe(p), recorrente: !!p.recurring });
@@ -247,170 +321,110 @@ function Editor({ sessao: sess, aoSair }) {
 
   const salvar = async () => {
     if (!alteracoes.length) return;
-    const resumo = alteracoes.map((a) => `• ${a.prod}: ${fmt(a.de)} → ${fmt(a.para)}${a.recorrente ? '/mês' : ''}`).join('\n');
+    // `— ` e não `R$ 0,00` quando não havia valor: o valor de referência da APN
+    // pode ser configurado pela primeira vez, e zero ali não é o que aconteceu.
+    const oValor = (v) => (v == null ? '—' : fmt(v));
+    const resumo = alteracoes.map((a) => `• ${a.prod}: ${oValor(a.de)} → ${oValor(a.para)}${a.recorrente ? '/mês' : ''}`).join('\n');
     if (!confirm(`Confirmar ${alteracoes.length} alteração(ões)?\n\n${resumo}\n\nOs novos valores passam a valer imediatamente para todos os consultores.`)) return;
 
     setEstado('salvando'); setMsg('');
     try {
-      const r = await fetch('/api/catalogo', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ cats }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (r.status === 401) { sessao.limpar(); aoSair(); return; }
-      if (!r.ok) throw new Error(d.erro || 'Falha ao salvar.');
-      setCats(d.cats);
-      setOriginal(JSON.parse(JSON.stringify(d.cats)));
-      setAtualizadoEm(d.atualizadoEm);
-      setEstado('pronto');
+      const d = await api('/api/catalogo', { method: 'PUT', body: JSON.stringify({ cats }) });
+      aoPublicar(d);
       setMsg('ok');
     } catch (err) {
-      setMsg(err.message); setEstado('pronto');
+      setMsg(err.message);
+    } finally {
+      setEstado('pronto');
     }
   };
 
   const descartar = () => { setCats(JSON.parse(JSON.stringify(original))); setMsg(''); };
-
-  if (estado === 'carregando') {
-    return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--text-muted)' }}>
-        <span className="ms-icon rot" style={{ fontSize: 30 }}>progress_activity</span>
-      </div>
-    );
-  }
-  if (estado === 'erro') {
-    return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
-        <div className="card" style={{ maxWidth: 440, textAlign: 'center' }}>
-          <span className="ms-icon" style={{ fontSize: 34, color: 'var(--danger)' }}>cloud_off</span>
-          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-secondary)', lineHeight: 1.55 }}>{msg}</p>
-          <button className="btn-ghost" onClick={carregar} style={{ margin: '0 auto' }}>
-            <span className="ms-icon" style={{ fontSize: 19 }}>refresh</span>Tentar de novo
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   const sujo = alteracoes.length > 0;
 
   return (
-    <div style={{ minHeight: '100vh', paddingBottom: sujo ? 110 : 40 }}>
-      {/* Topo */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, height: 64, padding: '0 28px', background: 'rgba(20,20,18,.92)', backdropFilter: 'blur(8px)', borderBottom: '1px solid var(--border-light)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="ms-icon" style={{ color: 'var(--primary)' }}>sell</span>
-          <strong style={{ font: '700 15px var(--font-primary)' }}>Valores de tabela</strong>
-          <span className="chip">{sess.nome || sess.email}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <a href="/" style={{ font: '600 12.5px var(--font-primary)', color: 'var(--text-muted)', textDecoration: 'none' }}>Ir para o lobby</a>
-          <button className="btn-ghost" style={{ height: 38, padding: '0 14px' }} onClick={() => { sessao.limpar(); aoSair(); }}>
-            <span className="ms-icon" style={{ fontSize: 18 }}>logout</span>Sair
-          </button>
-        </div>
-      </div>
+    <div style={{ paddingBottom: sujo ? 90 : 0 }}>
+      <Aviso tipo="info">
+        Estes são os valores <strong>de tabela</strong> — o que o consultor vê ao abrir o produto.
+        Salvar publica na hora, sem deploy, e fica registrado quem publicou.
+        Desconto pontual por venda é outra coisa: acontece no próprio lobby, autorizado
+        venda a venda por um gerente ou pela diretoria.
+        {atualizadoEm && <><br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>Última publicação: {dataHora(atualizadoEm)}</span></>}
+      </Aviso>
 
-      <div style={{ maxWidth: 940, margin: '0 auto', padding: '28px 24px' }}>
-        {/* Senha marcada para troca no Conecta ID. Não bloqueia nada — quem
-            define senha é o kanban, o único app com gestão de identidades —
-            mas precisa ser dito onde a pessoa vai olhar. */}
-        {sess.precisaTrocarSenha && (
-          <div className="aviso" style={{ background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.3)', color: 'var(--text-secondary)', marginBottom: 18 }}>
-            <span className="ms-icon" style={{ fontSize: 20, color: 'var(--warning)' }}>key</span>
-            <span>
-              A sua senha do Conecta ID está marcada para troca — provavelmente é a senha inicial.
-              Peça o link de definição de senha no <strong>kanban</strong>, que é onde as contas da
-              empresa são gerenciadas. Você pode continuar publicando normalmente.
-            </span>
+      {msg === 'ok' && <Aviso tipo="ok">Valores publicados. Os consultores já veem os novos preços ao recarregar o lobby.</Aviso>}
+      {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+
+      {cats.map((c) => (
+        <div key={c.id} className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>{c.icon}</span>
+            <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>{c.name}</h2>
+            {c.locked && <span className="chip neutro">Em implementação</span>}
           </div>
-        )}
 
-        <div className="aviso" style={{ background: 'var(--primary-subtle)', border: '1px solid rgba(199,164,68,.3)', color: 'var(--text-secondary)', marginBottom: 22 }}>
-          <span className="ms-icon" style={{ fontSize: 20, color: 'var(--primary)' }}>info</span>
-          <span>
-            Estes são os valores <strong>de tabela</strong> — o que o consultor vê ao abrir o produto.
-            Salvar publica na hora, sem deploy, e fica registrado quem publicou.
-            Desconto pontual por venda é outra coisa: acontece no próprio lobby, autorizado
-            venda a venda por um gerente ou pela diretoria.
-            {atualizadoEm && <><br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>Última alteração: {new Date(atualizadoEm).toLocaleString('pt-BR')}</span></>}
-          </span>
-        </div>
-
-        {msg === 'ok' && (
-          <div className="aviso" style={{ background: 'rgba(40,167,69,.1)', color: '#8FD79E', marginBottom: 18 }}>
-            <span className="ms-icon" style={{ fontSize: 20 }}>check_circle</span>
-            Valores publicados. Os consultores já veem os novos preços ao recarregar o lobby.
-          </div>
-        )}
-        {msg && msg !== 'ok' && (
-          <div className="aviso" style={{ background: 'rgba(220,53,69,.1)', color: '#F1969E', marginBottom: 18 }}>
-            <span className="ms-icon" style={{ fontSize: 20 }}>error</span>{msg}
-          </div>
-        )}
-
-        {cats.map((c) => (
-          <div key={c.id} className="card" style={{ marginBottom: 18 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>{c.icon}</span>
-              <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>{c.name}</h2>
-              {c.locked && (
-                <span style={{ font: '600 11px var(--font-primary)', color: 'var(--text-muted)', background: 'var(--surface-light)', padding: '3px 9px', borderRadius: 6 }}>
-                  Em implementação
-                </span>
-              )}
-            </div>
-
-            {/* Categoria de fluxo próprio (APN): o valor é definido em cada venda,
-                não há tabela para editar aqui. Aparece só para a diretoria saber
-                que ela existe e está no ar. */}
-            {c.flow && (
-              <div style={{ font: '400 13px/1.55 var(--font-secondary)', color: 'var(--text-muted)', paddingTop: 4 }}>
-                Sem valor de tabela — o consultor informa o valor da venda no próprio lobby.
+          {c.flow && (
+            <div style={{ paddingTop: 10 }}>
+              <p style={{ font: '400 13px/1.55 var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 14px' }}>
+                Venda de <strong>valor negociado</strong>: não há tabela de preços. O valor abaixo é o
+                que a tela do consultor <strong>abre preenchido</strong> — ele continua livre para
+                alterar, venda a venda. Deixe em branco para abrir sem valor, como antes.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 16, alignItems: 'center' }}>
+                <div>
+                  <label className="lbl">Valor de referência</label>
+                  <MoneyInput
+                    value={c.valor_referencia || 0}
+                    mudou={(catOriginal(c.id)?.valor_referencia ?? null) !== (c.valor_referencia ?? null)}
+                    onChange={(v) => setValorReferencia(c.id, v)}
+                  />
+                </div>
+                <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', paddingTop: 18 }}>
+                  {c.valor_referencia
+                    ? <>A venda abre em <strong style={{ color: 'var(--text-secondary)' }}>{fmt(c.valor_referencia)}</strong>.</>
+                    : 'Sem referência — a venda abre com o campo em branco.'}
+                </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {c.products.map((p) => {
-              const o = achaOriginal(c.id, p.id);
-              const mudou = o && valorDe(o) !== valorDe(p);
-              return (
-                <div className="prod" key={p.id}>
-                  <div>
-                    <div style={{ font: '600 14.5px var(--font-primary)' }}>{p.name}</div>
-                    <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>
-                      {p.desc} · {p.duration}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="lbl">{p.recurring ? 'Mensalidade' : 'Valor à vista'}</label>
-                    <MoneyInput value={valorDe(p)} mudou={mudou} onChange={(v) => setValor(c.id, p.id, v)} />
-                  </div>
-                  <div>
-                    <label className="lbl">Total do contrato</label>
-                    <div style={{ height: 44, display: 'flex', alignItems: 'center', font: '600 14px var(--font-secondary)', color: mudou ? 'var(--warning)' : 'var(--text-secondary)' }}>
-                      {fmt(p.price)}
-                      {p.recurring && (
-                        <span style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)', marginLeft: 6 }}>
-                          ({p.vigencia}×)
-                        </span>
-                      )}
-                    </div>
+          {c.products.map((p) => {
+            const o = achaOriginal(c.id, p.id);
+            const mudou = o && valorDe(o) !== valorDe(p);
+            return (
+              <div className="prod" key={p.id}>
+                <div>
+                  <div style={{ font: '600 14.5px var(--font-primary)' }}>{p.name}</div>
+                  <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>
+                    {p.desc} · {p.duration}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
+                <div>
+                  <label className="lbl">{p.recurring ? 'Mensalidade' : 'Valor à vista'}</label>
+                  <MoneyInput value={valorDe(p)} mudou={mudou} onChange={(v) => setValor(c.id, p.id, v)} />
+                </div>
+                <div>
+                  <label className="lbl">Total do contrato</label>
+                  <div style={{ height: 44, display: 'flex', alignItems: 'center', font: '600 14px var(--font-secondary)', color: mudou ? 'var(--warning)' : 'var(--text-secondary)' }}>
+                    {fmt(p.price)}
+                    {p.recurring && (
+                      <span style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)', marginLeft: 6 }}>
+                        ({p.vigencia}×)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
 
-      {/* Barra de salvar — só aparece quando há mudança pendente. */}
       {sujo && (
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
           <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
             <strong style={{ color: 'var(--warning)' }}>{alteracoes.length}</strong>{' '}
-            {alteracoes.length === 1 ? 'valor alterado' : 'valores alterados'}, ainda não publicado
-            {alteracoes.length === 1 ? '' : 's'}.
+            {alteracoes.length === 1 ? 'valor alterado' : 'valores alterados'}, ainda não publicado{alteracoes.length === 1 ? '' : 's'}.
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <button className="btn-ghost" onClick={descartar} disabled={estado === 'salvando'}>Descartar</button>
@@ -426,13 +440,637 @@ function Editor({ sessao: sess, aoSair }) {
   );
 }
 
+/* ===== Aba 2: datas de cobrança =========================================== */
+
+// Explica a regra com a data de hoje, porque "mes_seguinte" não diz nada a quem
+// só quer saber quando o cliente vai ser cobrado.
+function exemploDeCronograma(regra) {
+  const hoje = new Date();
+  const dia = regra.dia_vencimento;
+  const antecipa = regra.primeiro_vencimento === 'proximo' && hoje.getDate() < dia ? 1 : 0;
+  const entrada = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() + (regra.entrada_prazo_dias || 0));
+  const parcelas = [0, 1, 2].map((i) => new Date(hoje.getFullYear(), hoje.getMonth() + 1 - antecipa + i, dia));
+  const br = (d) => d.toLocaleDateString('pt-BR');
+  return { entrada: br(entrada), parcelas: parcelas.map(br) };
+}
+
+function CamposDaRegra({ regra, opcoes, onChange, compacto }) {
+  const num = (campo, valor) => {
+    const n = Math.round(Number(valor));
+    onChange({ ...regra, [campo]: Number.isFinite(n) ? n : 0 });
+  };
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: compacto ? '110px 1fr 130px' : '160px 1fr 180px', gap: 12 }}>
+      <div>
+        <label className="lbl">Dia do vencimento</label>
+        <input className={'inp' + (compacto ? ' sm' : '')} type="number" min={opcoes.dia_vencimento.min} max={opcoes.dia_vencimento.max}
+          value={regra.dia_vencimento} onChange={(e) => num('dia_vencimento', e.target.value)} />
+      </div>
+      <div>
+        <label className="lbl">Primeira parcela</label>
+        <select className={'inp' + (compacto ? ' sm' : '')} value={regra.primeiro_vencimento} onChange={(e) => onChange({ ...regra, primeiro_vencimento: e.target.value })}>
+          {opcoes.primeiro_vencimento.map((o) => <option key={o.valor} value={o.valor}>{o.rotulo}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="lbl">Prazo da entrada<span className="dica">dias</span></label>
+        <input className={'inp' + (compacto ? ' sm' : '')} type="number" min="0" max={opcoes.entrada_prazo_dias.max}
+          value={regra.entrada_prazo_dias} onChange={(e) => num('entrada_prazo_dias', e.target.value)} />
+      </div>
+    </div>
+  );
+}
+
+function AbaCobranca({ api, catalogo, aoPublicar }) {
+  const [dados, setDados] = useState(null);
+  const [original, setOriginal] = useState(null);
+  const [estado, setEstado] = useState('carregando');
+  const [msg, setMsg] = useState('');
+  const [novoProduto, setNovoProduto] = useState('');
+
+  const carregar = useCallback(async () => {
+    setEstado('carregando'); setMsg('');
+    try {
+      const d = await api('/api/cobranca');
+      setDados(d);
+      setOriginal(JSON.parse(JSON.stringify(d)));
+      setEstado('pronto');
+    } catch (err) { setMsg(err.message); setEstado('erro'); }
+  }, [api]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  if (estado === 'carregando') return <Carregando />;
+  if (estado === 'erro') return <Falhou msg={msg} aoTentar={carregar} />;
+
+  const opcoes = dados.opcoes;
+  const sujo = JSON.stringify({ geral: dados.geral, excecoes: dados.excecoes }) !== JSON.stringify({ geral: original.geral, excecoes: original.excecoes });
+
+  // Produtos que ainda não têm exceção — só eles podem ser acrescentados.
+  const semExcecao = [];
+  for (const c of catalogo) {
+    if (c.flow) continue;
+    for (const p of c.products) {
+      if (!dados.excecoes.some((e) => e.categoria_id === c.id && e.produto_id === p.id)) {
+        semExcecao.push({ categoria_id: c.id, produto_id: p.id, nome: `${c.name} · ${p.name}` });
+      }
+    }
+  }
+
+  const acrescentaExcecao = () => {
+    const alvo = semExcecao.find((p) => `${p.categoria_id}/${p.produto_id}` === novoProduto);
+    if (!alvo) return;
+    setDados({
+      ...dados,
+      excecoes: [...dados.excecoes, {
+        categoria_id: alvo.categoria_id, produto_id: alvo.produto_id,
+        produto_nome: alvo.nome, ...dados.geral,
+      }],
+    });
+    setNovoProduto(''); setMsg('');
+  };
+
+  const mudaExcecao = (indice, regra) => setDados({
+    ...dados,
+    excecoes: dados.excecoes.map((e, i) => i === indice ? { ...e, ...regra } : e),
+  });
+
+  const removeExcecao = (indice) => setDados({
+    ...dados, excecoes: dados.excecoes.filter((_, i) => i !== indice),
+  });
+
+  const salvar = async () => {
+    setEstado('salvando'); setMsg('');
+    try {
+      const d = await api('/api/cobranca', {
+        method: 'PUT',
+        body: JSON.stringify({ geral: dados.geral, excecoes: dados.excecoes }),
+      });
+      setDados({ ...dados, ...d });
+      setOriginal(JSON.parse(JSON.stringify({ ...dados, ...d })));
+      setMsg('ok');
+      aoPublicar();
+    } catch (err) { setMsg(err.message); }
+    finally { setEstado('pronto'); }
+  };
+
+  const exemplo = exemploDeCronograma(dados.geral);
+
+  return (
+    <div style={{ paddingBottom: sujo ? 90 : 0 }}>
+      <Aviso tipo="info">
+        Estas datas valem para <strong>todas as vendas a partir de agora</strong> — é com elas que o
+        cronograma abre na tela do consultor. Mudar a data de UMA venda continua sendo
+        autorização de gerente, no próprio lobby.
+      </Aviso>
+
+      {msg === 'ok' && <Aviso tipo="ok">Datas publicadas. O próximo consultor a abrir o lobby já monta o cronograma com elas.</Aviso>}
+      {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+
+      <div className="card" style={{ marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>event_repeat</span>
+          <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>Regra do Lobby</h2>
+          <span className="chip neutro">vale para todo produto sem exceção</span>
+        </div>
+
+        <CamposDaRegra regra={dados.geral} opcoes={opcoes} onChange={(g) => { setDados({ ...dados, geral: g }); setMsg(''); }} />
+
+        <div style={{ marginTop: 18, padding: '14px 16px', borderRadius: 10, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)' }}>
+          <div className="sec-title" style={{ marginBottom: 8 }}>Como fica uma venda fechada hoje</div>
+          <div style={{ font: '400 13.5px/1.7 var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            Entrada em <strong style={{ color: 'var(--primary)' }}>{exemplo.entrada}</strong>
+            {' '}· parcelas em <strong style={{ color: 'var(--primary)' }}>{exemplo.parcelas.join(', ')}</strong>…
+          </div>
+          <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 6 }}>
+            O dia do vencimento vai até {opcoes.dia_vencimento.max}: 29, 30 e 31 não existem em todo mês,
+            e o ponto de fixar o dia é ter uma data única de cobrança.
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>rule</span>
+          <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>Exceções por produto</h2>
+        </div>
+        <p style={{ font: '400 13px/1.55 var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 16px' }}>
+          Produto sem exceção segue a regra do Lobby. Remover a exceção devolve o produto
+          à regra geral — e o histórico registra até quando ela valeu.
+        </p>
+
+        {dados.excecoes.length === 0 && (
+          <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', padding: '10px 0 18px' }}>
+            Nenhuma exceção — todos os produtos cobram no dia {dados.geral.dia_vencimento}.
+          </div>
+        )}
+
+        {dados.excecoes.map((e, i) => (
+          <div key={`${e.categoria_id}/${e.produto_id}`} style={{ padding: '14px 0', borderTop: i ? '1px solid var(--border-light)' : 'none' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+              <strong style={{ font: '600 14px var(--font-primary)' }}>{e.produto_nome || `${e.categoria_id}/${e.produto_id}`}</strong>
+              <button className="btn-ghost sm btn-perigo" onClick={() => removeExcecao(i)}>
+                <span className="ms-icon" style={{ fontSize: 17 }}>close</span>Remover exceção
+              </button>
+            </div>
+            <CamposDaRegra compacto regra={e} opcoes={opcoes} onChange={(r) => mudaExcecao(i, r)} />
+          </div>
+        ))}
+
+        {semExcecao.length > 0 && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 280, flex: 1 }}>
+              <label className="lbl">Acrescentar exceção</label>
+              <select className="inp sm" value={novoProduto} onChange={(ev) => setNovoProduto(ev.target.value)}>
+                <option value="">Escolha o produto…</option>
+                {semExcecao.map((p) => (
+                  <option key={`${p.categoria_id}/${p.produto_id}`} value={`${p.categoria_id}/${p.produto_id}`}>{p.nome}</option>
+                ))}
+              </select>
+            </div>
+            <button className="btn-ghost sm" onClick={acrescentaExcecao} disabled={!novoProduto}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>add</span>Acrescentar
+            </button>
+          </div>
+        )}
+      </div>
+
+      {sujo && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
+          <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            Datas de cobrança alteradas, ainda não publicadas.
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button className="btn-ghost" onClick={() => { setDados(JSON.parse(JSON.stringify(original))); setMsg(''); }} disabled={estado === 'salvando'}>Descartar</button>
+            <button className="btn-prim" onClick={salvar} disabled={estado === 'salvando'}>
+              {estado === 'salvando'
+                ? <><span className="ms-icon rot" style={{ fontSize: 19 }}>progress_activity</span>Publicando…</>
+                : <><span className="ms-icon" style={{ fontSize: 19 }}>cloud_upload</span>Publicar datas</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===== Aba 3: produtos ==================================================== */
+const PRODUTO_VAZIO = {
+  categoria_id: '', nome: '', sigla: '', descricao: '', duracao: '', icone: 'workspace_premium',
+  recorrente: true, mensalidade: '', vigencia_meses: 12, valor: '',
+};
+
+function FormularioProduto({ inicial, categorias, novo, onSalvar, onCancelar, salvando }) {
+  const [f, setF] = useState(inicial);
+  useEffect(() => { setF(inicial); }, [inicial]);
+  const campo = (k) => ({ value: f[k] ?? '', onChange: (e) => setF({ ...f, [k]: e.target.value }) });
+
+  const total = f.recorrente
+    ? (Number(String(f.mensalidade).replace(',', '.')) || 0) * (Number(f.vigencia_meses) || 0)
+    : (Number(String(f.valor).replace(',', '.')) || 0);
+
+  return (
+    <div className="card" style={{ marginBottom: 18, borderColor: 'rgba(199,164,68,.35)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+        <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>{novo ? 'add_circle' : 'edit'}</span>
+        <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>
+          {novo ? 'Novo produto' : `Editando ${inicial.nome}`}
+        </h2>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 14 }}>
+        {novo && (
+          <div>
+            <label className="lbl">Categoria</label>
+            <select className="inp" {...campo('categoria_id')}>
+              <option value="">Escolha…</option>
+              {categorias.filter((c) => !c.flow).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div style={{ gridColumn: novo ? 'auto' : 'span 2' }}>
+          <label className="lbl">Nome</label>
+          <input className="inp" placeholder="ELITE MASTER" {...campo('nome')} />
+        </div>
+        <div>
+          <label className="lbl">Sigla<span className="dica">3 letras, no protocolo</span></label>
+          <input className="inp" maxLength={3} placeholder="MAS" {...campo('sigla')} style={{ textTransform: 'uppercase' }} />
+        </div>
+        <div style={{ gridColumn: 'span 2' }}>
+          <label className="lbl">Descrição</label>
+          <input className="inp" placeholder="O plano do Domínio" {...campo('descricao')} />
+        </div>
+        <div>
+          <label className="lbl">Duração<span className="dica">texto</span></label>
+          <input className="inp" placeholder="12 meses" {...campo('duracao')} />
+        </div>
+        <div>
+          <label className="lbl">Ícone<span className="dica">Material Symbol</span></label>
+          <input className="inp" placeholder="shield" {...campo('icone')} />
+        </div>
+        <div>
+          <label className="lbl">Cobrança</label>
+          <select className="inp" value={f.recorrente ? 'sim' : 'nao'} onChange={(e) => setF({ ...f, recorrente: e.target.value === 'sim' })}>
+            <option value="sim">Recorrente (mensalidade)</option>
+            <option value="nao">Avulso (valor à vista)</option>
+          </select>
+        </div>
+        {f.recorrente ? (
+          <>
+            <div>
+              <label className="lbl">Mensalidade (R$)</label>
+              <input className="inp" inputMode="decimal" placeholder="39997" {...campo('mensalidade')} />
+            </div>
+            <div>
+              <label className="lbl">Vigência<span className="dica">meses</span></label>
+              <input className="inp" type="number" min="1" max="120" {...campo('vigencia_meses')} />
+            </div>
+          </>
+        ) : (
+          <div>
+            <label className="lbl">Valor à vista (R$)</label>
+            <input className="inp" inputMode="decimal" placeholder="28000" {...campo('valor')} />
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginTop: 18, flexWrap: 'wrap' }}>
+        <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>
+          Total do contrato: <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong>
+          {f.recorrente && <span> ({f.vigencia_meses || 0}× de {fmt(Number(String(f.mensalidade).replace(',', '.')) || 0)})</span>}
+          {' · '}o cronograma abre com entrada + {Math.max(0, (f.recorrente ? Number(f.vigencia_meses) || 12 : 12) - 1)} parcelas.
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn-ghost sm" onClick={onCancelar} disabled={salvando}>Cancelar</button>
+          <button className="btn-prim sm" onClick={() => onSalvar(f)} disabled={salvando || !f.nome.trim()}>
+            {salvando
+              ? <><span className="ms-icon rot" style={{ fontSize: 18 }}>progress_activity</span>Salvando…</>
+              : <><span className="ms-icon" style={{ fontSize: 18 }}>check</span>{novo ? 'Criar produto' : 'Salvar'}</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AbaProdutos({ api, catalogo, aoPublicar }) {
+  const [editando, setEditando] = useState(null);   // {categoria_id, slug, ...} ou 'novo'
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const paraFormulario = (c, p) => ({
+    categoria_id: c.id, slug: p.id, nome: p.name, sigla: p.sigla, descricao: p.desc,
+    duracao: p.duration, icone: p.icon, recorrente: !!p.recurring,
+    mensalidade: p.recurring ? String(p.monthly) : '', vigencia_meses: p.vigencia || 12,
+    valor: p.recurring ? '' : String(p.price),
+  });
+
+  const salvar = async (f) => {
+    setSalvando(true); setMsg('');
+    const corpo = {
+      categoria_id: f.categoria_id, nome: f.nome.trim(), sigla: f.sigla, descricao: f.descricao,
+      duracao: f.duracao, icone: f.icone, recorrente: f.recorrente,
+      ...(f.recorrente
+        ? { mensalidade: String(f.mensalidade).replace(',', '.'), vigencia_meses: Number(f.vigencia_meses) }
+        : { valor: String(f.valor).replace(',', '.') }),
+    };
+    try {
+      if (editando === 'novo') await api('/api/produtos', { method: 'POST', body: JSON.stringify(corpo) });
+      else await api(`/api/produtos/${f.categoria_id}/${f.slug}`, { method: 'PATCH', body: JSON.stringify(corpo) });
+      setEditando(null);
+      setMsg('ok');
+      aoPublicar();
+    } catch (err) { setMsg(err.message); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div>
+      <Aviso tipo="info">
+        Criar e editar produto aqui <strong>fica registrado</strong>: cada mudança de valor abre uma
+        vigência na aba Histórico, com o seu nome. O mesmo pelo <code>/django-admin/</code> não deixa
+        rastro nenhum — use-o só para conserto.
+        <br />
+        <span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>
+          Não há remoção: produto vendido aparece no protocolo de vendas já fechadas, e apagá-lo
+          deixaria esses protocolos órfãos. Para tirar de circulação, trave a categoria.
+        </span>
+      </Aviso>
+
+      {msg === 'ok' && <Aviso tipo="ok">Catálogo atualizado. Os consultores já veem a mudança ao recarregar o lobby.</Aviso>}
+      {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+
+      {editando && (
+        <FormularioProduto
+          novo={editando === 'novo'}
+          inicial={editando === 'novo' ? PRODUTO_VAZIO : editando}
+          categorias={catalogo}
+          salvando={salvando}
+          onSalvar={salvar}
+          onCancelar={() => { setEditando(null); setMsg(''); }}
+        />
+      )}
+
+      {!editando && (
+        <button className="btn-prim" style={{ marginBottom: 18 }} onClick={() => { setEditando('novo'); setMsg(''); }}>
+          <span className="ms-icon" style={{ fontSize: 19 }}>add</span>Novo produto
+        </button>
+      )}
+
+      {catalogo.map((c) => (
+        <div key={c.id} className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>{c.icon}</span>
+            <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>{c.name}</h2>
+            {c.locked && <span className="chip neutro">Em implementação</span>}
+            {c.flow && <span className="chip neutro">Fluxo próprio · sem tabela</span>}
+          </div>
+
+          {c.flow ? (
+            <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>
+              O consultor informa o valor da venda. Não há produto a cadastrar aqui.
+            </div>
+          ) : (
+            <>
+              <div className="linha cab">
+                <div>Produto</div><div>Sigla</div><div>Valor</div><div>Cobrança</div><div></div>
+              </div>
+              {c.products.map((p) => (
+                <div className="linha" key={p.id}>
+                  <div>
+                    <div style={{ font: '600 14px var(--font-primary)' }}>{p.name}</div>
+                    <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>
+                      {p.desc}{p.duration ? ` · ${p.duration}` : ''} · id <code>{p.id}</code>
+                    </div>
+                  </div>
+                  <div><span className="chip">{p.sigla}</span></div>
+                  <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                    {p.recurring ? <>{fmt(p.monthly)}<span style={{ color: 'var(--text-muted)' }}>/mês</span></> : fmt(p.price)}
+                  </div>
+                  <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
+                    {p.recurring ? `${p.vigencia} meses` : 'à vista'}
+                    {p.cobranca && <div style={{ color: 'var(--primary)' }}>dia {p.cobranca.dia_vencimento} (exceção)</div>}
+                  </div>
+                  <div>
+                    <button className="btn-ghost sm" onClick={() => { setEditando(paraFormulario(c, p)); setMsg(''); }}>
+                      <span className="ms-icon" style={{ fontSize: 17 }}>edit</span>Editar
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {c.products.length === 0 && (
+                <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', padding: '8px 0' }}>
+                  Nenhum produto nesta categoria ainda.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ===== Aba 4: histórico =================================================== */
+function AbaHistorico({ api, catalogo }) {
+  const [registros, setRegistros] = useState(null);
+  const [estado, setEstado] = useState('carregando');
+  const [msg, setMsg] = useState('');
+  const [filtro, setFiltro] = useState('');
+
+  const carregar = useCallback(async (chave) => {
+    setEstado('carregando'); setMsg('');
+    try {
+      const d = await api('/api/historico' + (chave ? `?chave=${encodeURIComponent(chave)}` : ''));
+      setRegistros(d.registros);
+      setEstado('pronto');
+    } catch (err) { setMsg(err.message); setEstado('erro'); }
+  }, [api]);
+
+  useEffect(() => { carregar(filtro); }, [carregar, filtro]);
+
+  const alvos = [{ chave: 'geral', nome: 'Política de cobrança' }];
+  for (const c of catalogo) for (const p of c.products) alvos.push({ chave: p.id, nome: `${c.name} · ${p.name}` });
+
+  // Dinheiro é guardado como texto ("12997.00") porque a mesma coluna serve para
+  // dia do mês e para escolha de regra. A tela sabe o tipo pelo campo.
+  const mostraValor = (r) => {
+    if (r.campo === 'mensalidade' || r.campo === 'valor') return fmt(Number(r.valor));
+    if (r.campo === 'primeiro_vencimento') return r.valor === 'proximo' ? 'primeiro dia depois da venda' : 'mês seguinte';
+    if (r.campo === 'dia_vencimento') return `dia ${r.valor}`;
+    if (r.campo === 'entrada_prazo_dias') return Number(r.valor) === 0 ? 'no dia da venda' : `${r.valor} dias`;
+    if (r.campo === 'vigencia_meses') return `${r.valor} meses`;
+    return r.valor;
+  };
+
+  return (
+    <div>
+      <Aviso tipo="info">
+        Cada valor e cada data com o período em que <strong>valeu de fato</strong> — é o que responde
+        "quanto custava em março" sem precisar reconstruir nada. Registros sem autor vieram da
+        semente inicial do catálogo: não houve pessoa, houve migração.
+      </Aviso>
+
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 14, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 300 }}>
+            <label className="lbl">Filtrar</label>
+            <select className="inp sm" value={filtro} onChange={(e) => setFiltro(e.target.value)}>
+              <option value="">Tudo</option>
+              {alvos.map((a) => <option key={a.chave} value={a.chave}>{a.nome}</option>)}
+            </select>
+          </div>
+          <button className="btn-ghost sm" onClick={() => carregar(filtro)}>
+            <span className="ms-icon" style={{ fontSize: 17 }}>refresh</span>Atualizar
+          </button>
+        </div>
+
+        {estado === 'carregando' && <Carregando />}
+        {estado === 'erro' && <Falhou msg={msg} aoTentar={() => carregar(filtro)} />}
+
+        {estado === 'pronto' && (
+          registros.length === 0
+            ? <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', padding: '10px 0' }}>Nada registrado ainda.</div>
+            : (
+              <>
+                <div className="tl cab">
+                  <div>Período</div><div>O quê</div><div>Valor</div><div>Quem publicou</div>
+                </div>
+                {registros.map((r, i) => (
+                  <div className="tl" key={i}>
+                    <div style={{ color: r.vigente ? 'var(--primary)' : 'var(--text-muted)', font: r.vigente ? "600 12.5px 'Roboto'" : "400 12.5px 'Roboto'" }}>
+                      {dataHora(r.vigente_de).split(',')[0]}
+                      <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>
+                        {r.vigente ? 'até hoje' : `até ${dataHora(r.vigente_ate).split(',')[0]}`}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ font: '500 13px var(--font-secondary)' }}>{r.rotulo}</span>
+                      <div style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)' }}>{r.campo_rotulo}</div>
+                    </div>
+                    <div style={{ font: "600 13px 'Roboto'", color: r.vigente ? 'var(--text)' : 'var(--text-muted)' }}>{mostraValor(r)}</div>
+                    <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)' }}>{r.autor || 'sistema'}</div>
+                  </div>
+                ))}
+              </>
+            )
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===== Estados compartilhados ============================================= */
+function Carregando() {
+  return (
+    <div style={{ display: 'grid', placeItems: 'center', padding: 40, color: 'var(--text-muted)' }}>
+      <span className="ms-icon rot" style={{ fontSize: 30 }}>progress_activity</span>
+    </div>
+  );
+}
+
+function Falhou({ msg, aoTentar }) {
+  return (
+    <div className="card" style={{ maxWidth: 440, margin: '0 auto', textAlign: 'center' }}>
+      <span className="ms-icon" style={{ fontSize: 34, color: 'var(--danger)' }}>cloud_off</span>
+      <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-secondary)', lineHeight: 1.55 }}>{msg}</p>
+      <button className="btn-ghost" onClick={aoTentar} style={{ margin: '0 auto' }}>
+        <span className="ms-icon" style={{ fontSize: 19 }}>refresh</span>Tentar de novo
+      </button>
+    </div>
+  );
+}
+
+/* ===== Casca: abas, sessão e o catálogo compartilhado ===================== */
+const ABAS = [
+  { id: 'valores', rotulo: 'Valores', icone: 'sell' },
+  { id: 'cobranca', rotulo: 'Cobrança', icone: 'event_repeat' },
+  { id: 'produtos', rotulo: 'Produtos', icone: 'inventory_2' },
+  { id: 'historico', rotulo: 'Histórico', icone: 'history' },
+];
+
+function Editor({ sessao: sess, aoSair }) {
+  const [aba, setAba] = useState('valores');
+  const [catalogo, setCatalogo] = useState(null);
+  const [atualizadoEm, setAtualizadoEm] = useState(null);
+  const [estado, setEstado] = useState('carregando');
+  const [msg, setMsg] = useState('');
+
+  const api = useMemo(() => criaApi(sess.token, aoSair), [sess.token, aoSair]);
+
+  // O catálogo vive aqui, e não em cada aba: criar produto numa aba tem que
+  // aparecer nas outras sem recarregar a página.
+  const carregar = useCallback(async () => {
+    setEstado('carregando'); setMsg('');
+    try {
+      const d = await api('/api/catalogo');
+      setCatalogo(d.cats);
+      setAtualizadoEm(d.atualizadoEm);
+      setEstado('pronto');
+    } catch (err) { setMsg(err.message); setEstado('erro'); }
+  }, [api]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const aoPublicar = useCallback((d) => {
+    if (d?.cats) { setCatalogo(d.cats); setAtualizadoEm(d.atualizadoEm); }
+    else carregar();
+  }, [carregar]);
+
+  return (
+    <div style={{ minHeight: '100vh' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, height: 64, padding: '0 28px', background: 'rgba(20,20,18,.92)', backdropFilter: 'blur(8px)', borderBottom: '1px solid var(--border-light)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)' }}>tune</span>
+          <strong style={{ font: '700 15px var(--font-primary)' }}>Configuração do Lobby</strong>
+          <span className="chip">{sess.nome || sess.email}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <a href="/" style={{ font: '600 12.5px var(--font-primary)', color: 'var(--text-muted)', textDecoration: 'none' }}>Ir para o lobby</a>
+          <button className="btn-ghost" style={{ height: 38, padding: '0 14px' }} onClick={() => { sessao.limpar(); aoSair(); }}>
+            <span className="ms-icon" style={{ fontSize: 18 }}>logout</span>Sair
+          </button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1000, margin: '0 auto', padding: '24px 24px 48px' }}>
+        {sess.precisaTrocarSenha && (
+          <Aviso tipo="atencao">
+            A sua senha do Conecta ID está marcada para troca — provavelmente é a senha inicial.
+            Peça o link de definição de senha no <strong>kanban</strong>, que é onde as contas da
+            empresa são gerenciadas. Você pode continuar publicando normalmente.
+          </Aviso>
+        )}
+
+        <div className="abas">
+          {ABAS.map((a) => (
+            <button key={a.id} className={'aba' + (aba === a.id ? ' on' : '')} onClick={() => setAba(a.id)}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>{a.icone}</span>{a.rotulo}
+            </button>
+          ))}
+        </div>
+
+        {estado === 'carregando' && <Carregando />}
+        {estado === 'erro' && <Falhou msg={msg} aoTentar={carregar} />}
+        {estado === 'pronto' && (
+          <>
+            {aba === 'valores' && <AbaValores api={api} catalogo={catalogo} atualizadoEm={atualizadoEm} aoPublicar={aoPublicar} />}
+            {aba === 'cobranca' && <AbaCobranca api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
+            {aba === 'produtos' && <AbaProdutos api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
+            {aba === 'historico' && <AbaHistorico api={api} catalogo={catalogo} />}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
-  // `sessao` agora guarda o objeto inteiro (token, nome, e-mail, papel), não só
-  // o token — é o que permite mostrar quem está publicando no cabeçalho.
+  // `sessao` guarda o objeto inteiro (token, nome, e-mail, papel), não só o
+  // token — é o que permite mostrar quem está publicando no cabeçalho.
   const [sess, setSess] = useState(sessao.ler());
-  return sess
-    ? <Editor sessao={sess} aoSair={() => setSess(null)} />
-    : <Login onEntrar={setSess} />;
+  const sair = useCallback(() => setSess(null), []);
+  return sess ? <Editor sessao={sess} aoSair={sair} /> : <Login onEntrar={setSess} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);

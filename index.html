@@ -378,19 +378,87 @@ function parseMoney(v) {
 // ===== Datas =====
 const pad2 = (n) => String(n).padStart(2, '0');
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
-function addMonthsISO(iso, n) {
-  const p = String(iso || todayISO()).split('-').map(Number);
-  const dt = new Date(p[0], (p[1] - 1) + n, 1);
-  const last = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
-  dt.setDate(Math.min(p[2], last));
+const dmy = (iso) => { const p = String(iso || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : '—'; };
+// Partes ano/mês/dia de um ISO, caindo em hoje se vier vazio ou malformado (o
+// `<input type="date">` devolve '' quando a pessoa limpa o campo).
+function ymd(iso) {
+  const p = String(iso || '').split('-').map(Number);
+  if (p.length === 3 && p.every((n) => Number.isFinite(n))) return p;
+  return String(todayISO()).split('-').map(Number);
+}
+
+/* ===== Regra de cobrança (vem do banco) =====================================
+ *
+ * Até 17/08/2026 o dia do vencimento e o mês da primeira parcela eram constantes
+ * aqui. Mudar a data de cobrança era deploy do front — e essa data acompanha
+ * calendário de cobrança, ou seja, muda com frequência e sempre com pressa.
+ *
+ * Agora ela vem do `GET /api/catalogo`, junto do preço, e é editada em /admin
+ * pela diretoria. O que sobrou neste arquivo é o FALLBACK: os valores com que o
+ * lobby abre quando a API não responde. Não edite aqui para mudar a regra — use
+ * o /admin. Mexa aqui só se o padrão de emergência precisar ser outro.
+ *
+ * Como a regra se lê hoje (dia 15, mês seguinte):
+ *
+ *   venda 03/09 → entrada 03/09 · P1 15/10 · P2 15/11 · P3 15/12 …
+ *   venda 15/09 → entrada 15/09 · P1 15/10 · P2 15/11 · P3 15/12 …
+ *   venda 30/09 → entrada 30/09 · P1 15/10 · P2 15/11 · P3 15/12 …
+ *
+ * `primeiro_vencimento` tem duas leituras possíveis, e a diferença só aparece
+ * quando a venda acontece ANTES do dia do vencimento:
+ *
+ *   'mes_seguinte' — venda 03/09 → 15/10. Um pagamento por mês, sempre: a
+ *                    entrada cobre o mês da venda, cada parcela cobre um seguinte.
+ *   'proximo'      — venda 03/09 → 15/09. A parcela vem antes, mas o mês da venda
+ *                    fica com duas cobranças e o contrato de 12 se paga em 11.
+ *
+ * O dia do vencimento é limitado a 28 no backend: 29, 30 e 31 não existem em todo
+ * mês, e trariam de volta o "cair no último dia" que esta regra eliminou.
+ * ========================================================================== */
+let COBRANCA = { dia_vencimento: 15, primeiro_vencimento: 'mes_seguinte', entrada_prazo_dias: 0 };
+
+// Um campo faltando é pior do que a resposta inteira faltar: `dia_vencimento:
+// undefined` viraria `Invalid Date` em todo o cronograma, sem erro nenhum na
+// tela. Por isso cada campo cai no padrão individualmente.
+function normalizaCobranca(bruta, padrao) {
+  const base = padrao || COBRANCA;
+  const inteiro = (v, minimo, maximo, alternativa) => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) && n >= minimo && n <= maximo ? n : alternativa;
+  };
+  const regra = String((bruta && bruta.primeiro_vencimento) || '');
+  return {
+    dia_vencimento: inteiro(bruta && bruta.dia_vencimento, 1, 28, base.dia_vencimento),
+    primeiro_vencimento: (regra === 'mes_seguinte' || regra === 'proximo') ? regra : base.primeiro_vencimento,
+    entrada_prazo_dias: inteiro(bruta && bruta.entrada_prazo_dias, 0, 90, base.entrada_prazo_dias),
+  };
+}
+
+// A regra que vale para um produto: a exceção dele, se houver, ou a geral.
+const cobrancaDoProduto = (product) => (product && product.cobranca)
+  ? normalizaCobranca(product.cobranca, COBRANCA)
+  : COBRANCA;
+
+// Vencimento da parcela `idx` (0-based), a partir da data da entrada.
+function parcelaVencimento(baseISO, idx, cobranca) {
+  const cob = cobranca || COBRANCA;
+  const [ano, mes, dia] = ymd(baseISO);
+  // `mes` é 1-based e o Date é 0-based, então `mes` já aponta para o mês
+  // SEGUINTE ao da venda. Em 'proximo', volta um mês quando o dia do vencimento
+  // ainda não passou.
+  const antecipa = cob.primeiro_vencimento === 'proximo' && dia < cob.dia_vencimento ? 1 : 0;
+  const dt = new Date(ano, mes - antecipa + idx, cob.dia_vencimento);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(cob.dia_vencimento)}`;
+}
+
+// Data em que a entrada é paga: o dia da venda, salvo prazo configurado.
+function dataDaEntrada(cobranca) {
+  const cob = cobranca || COBRANCA;
+  if (!cob.entrada_prazo_dias) return todayISO();
+  const [ano, mes, dia] = ymd(todayISO());
+  const dt = new Date(ano, mes - 1, dia + cob.entrada_prazo_dias);
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
-// Vencimento das parcelas: uma cobrança por mês, a partir da data de contratação
-// (data da entrada). A parcela i (1-based) vence no mesmo dia, i meses depois.
-// Quando o dia não existe no mês (ex.: dia 31 em fevereiro), cai no ÚLTIMO dia do
-// mês — assim fevereiro também é cobrado, em vez de "pular" para março.
-// Ex.: entrada 31/01 → parcela 1 = 28/02 (não 02/03).
-const parcelaVencimento = (baseISO, idx) => addMonthsISO(baseISO, idx + 1);
 
 // ===== Formas de pagamento =====
 // `code`: dígito usado no código da venda (protocolo) enviado ao webhook.
@@ -444,10 +512,10 @@ function redistributeSchedule(parcelas, total, entrada) {
   });
   return arr;
 }
-function buildSchedule(count, total, entrada, startISO) {
+function buildSchedule(count, total, entrada, startISO, cobranca) {
   const n = Math.max(1, Math.round(Number(count) || 1));
   const start = startISO || todayISO();
-  const arr = Array.from({ length: n }, (_, i) => ({ valor: 0, data: parcelaVencimento(start, i), forma: 'boleto', manual: false }));
+  const arr = Array.from({ length: n }, (_, i) => ({ valor: 0, data: parcelaVencimento(start, i, cobranca), forma: 'boleto', manual: false }));
   return redistributeSchedule(arr, total, entrada);
 }
 function scheduleTotal(entrada, parcelas) {
@@ -634,55 +702,44 @@ function normalizePixResponse(raw) {
 /* ============================================================================
  * CATÁLOGO — categorias e produtos do lobby.
  *
- * ATENÇÃO: esta lista NÃO é mais a fonte de verdade dos preços. Ela é a REDE DE
- * SEGURANÇA. Os valores de tabela vivem no Cloudflare KV e são editados em
- * /admin (senha da diretoria), sem deploy — veja `boot()` no fim do arquivo.
+ * ATENÇÃO: esta lista NÃO é a fonte de verdade dos preços. Ela é a REDE DE
+ * SEGURANÇA. O catálogo vive no Postgres e é editado em /admin (login do Conecta
+ * ID, diretoria), sem deploy — veja `boot()` no fim do arquivo.
  *
- * Esta cópia só entra em cena se GET /api/catalogo falhar (KV fora do ar, Function
- * com erro, página aberta via file://). Nesse caso o lobby abre com estes valores
- * em vez de quebrar — o consultor nunca fica sem conseguir vender.
+ * Esta cópia só entra em cena se GET /api/catalogo falhar (backend fora do ar,
+ * página aberta via file://). Nesse caso o lobby abre com estes valores em vez de
+ * quebrar — o consultor nunca fica sem conseguir vender.
  *
- * Portanto: NÃO edite os preços aqui para mudar o valor de um evento (use /admin).
- * Mexa aqui só ao adicionar/remover um produto, para manter o fallback coerente.
+ * Portanto: NÃO edite os preços aqui (use /admin). Ao criar ou remover produto,
+ * regenere o bloco inteiro em vez de transcrever à mão:
+ *
+ *     docker exec lobby-backend python manage.py exportar_cats_do_front
  *
  *  campos: { id, name, desc, duration, price (TOTAL do contrato), icon,
- *            recurring?, monthly?, vigencia? }
+ *            recurring?, monthly?, vigencia?, cobranca? }
  * ========================================================================== */
 let CATS = [
-  // Elite é a única categoria ativa hoje. As demais ficam "Em implementação" (locked).
+  // Gerado por `manage.py exportar_cats_do_front`. Elite é a única categoria
+  // ativa; as demais ficam "Em implementação" (locked) e sem produtos.
   { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
     desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
     products: [
-      { id: 'prep',   name: 'ELITE PREPARAÇÃO', sigla: 'PRE', desc: 'O plano do Início', duration: '12 meses', monthly: 9997,  price: 9997 * 12,  recurring: true, vigencia: 12, icon: 'rocket_launch' },
-      { id: 'pro',    name: 'ELITE PRO',    sigla: 'PRO', desc: 'O plano da Estrutura', duration: '12 meses', monthly: 12997, price: 12997 * 12, recurring: true, vigencia: 12, icon: 'workspace_premium' },
-      { id: 'gestao', name: 'ELITE GESTÃO', sigla: 'GES', desc: 'O plano da Escala',    duration: '12 meses', monthly: 19997, price: 19997 * 12, recurring: true, vigencia: 12, icon: 'insights' },
-      { id: 'evo',    name: 'ELITE EVO',    sigla: 'EVO', desc: 'O plano do Legado',    duration: '12 meses', monthly: 29997, price: 29997 * 12, recurring: true, vigencia: 12, icon: 'diamond' },
+      { id: 'pre', name: 'ELITE PRÉ', sigla: 'EPR', desc: 'O plano do Primeiro Passo', duration: '12 meses', monthly: 2997, price: 35964, recurring: true, vigencia: 12, icon: 'start' },
+      { id: 'base', name: 'ELITE BASE', sigla: 'BAS', desc: 'O plano da Fundação', duration: '12 meses', monthly: 5997, price: 71964, recurring: true, vigencia: 12, icon: 'foundation' },
+      { id: 'pro', name: 'ELITE PRO', sigla: 'PRO', desc: 'O plano da Estrutura', duration: '12 meses', monthly: 12997, price: 155964, recurring: true, vigencia: 12, icon: 'workspace_premium' },
+      { id: 'gestao', name: 'ELITE GESTÃO', sigla: 'GES', desc: 'O plano da Escala', duration: '12 meses', monthly: 19997, price: 239964, recurring: true, vigencia: 12, icon: 'insights' },
+      { id: 'evo', name: 'ELITE EVO', sigla: 'EVO', desc: 'O plano do Legado', duration: '12 meses', monthly: 29997, price: 359964, recurring: true, vigencia: 12, icon: 'diamond' },
+      { id: 'conselho', name: 'ELITE CONSELHO', sigla: 'CON', desc: 'O plano do Conselho Consultivo', duration: '12 meses', monthly: 49997, price: 599964, recurring: true, vigencia: 12, icon: 'groups' },
     ] },
   { id: 'treinamentos', name: 'Treinamentos', icon: 'school', color: 'gold', locked: true,
     desc: 'Imersões e trilhas de desenvolvimento de líderes e equipes comerciais.',
-    products: [
-      { id: 't1', name: 'Imersão Gestão 360',          sigla: 'IMG', desc: 'Imersão presencial de 3 dias',       duration: '3 dias',   price: 18000, icon: 'groups' },
-      { id: 't2', name: 'Trilha Líder Elite',          sigla: 'TLE', desc: 'Programa de formação de líderes',     duration: '6 meses',  price: 24000, icon: 'military_tech' },
-      { id: 't3', name: 'Vendas de Alta Performance',  sigla: 'VAP', desc: 'Treinamento intensivo de vendas',     duration: '2 meses',  price: 12000, icon: 'trending_up' },
-    ] },
-  // APN: categoria de FLUXO PRÓPRIO (`flow: 'apn'`). Não tem produtos nem valor
-  // de tabela — o consultor informa o valor da venda. Hoje ela é uma LINHA no
-  // banco, com `fluxo='apn'`, e vem pelo GET /api/catalogo como qualquer outra.
-  // Esta cópia é só a rede de segurança offline.
-  //
-  // (Na implementação anterior, em Cloudflare KV, a APN era constante de código
-  // e precisava de deploy para mudar. Não é mais o caso: mexe-se nela pelo
-  // /django-admin/.)
+    products: [] },
   { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', flow: 'apn', sigla: 'APN',
     desc: 'Aceleração de Performance de Negócios — valor definido na negociação.',
     products: [] },
   { id: 'palestras', name: 'Palestras', icon: 'campaign', color: 'green', locked: true,
     desc: 'Palestras in company e eventos de alto impacto.',
-    products: [
-      { id: 'pl1', name: 'Palestra In Company',     sigla: 'PIC', desc: 'Palestra exclusiva na empresa',  duration: '1 evento',  price: 15000, icon: 'record_voice_over' },
-      { id: 'pl2', name: 'Palestra Magna',          sigla: 'PMA', desc: 'Palestra para grandes públicos', duration: '1 evento',  price: 25000, icon: 'stadium' },
-      { id: 'pl3', name: 'Ciclo de Palestras Anual', sigla: 'CPA', desc: 'Programa anual de palestras',    duration: '12 meses', price: 80000, icon: 'event' },
-    ] },
+    products: [] },
 ];
 const COLORS = {
   gold:   { iconBg: 'rgba(199,164,68,0.12)', iconFg: '#E8B84B', orb: '#C7A444' },
@@ -700,12 +757,25 @@ const stepsDaCategoria = (c) => (c && c.flow === 'apn' ? STEPS_APN : STEPS);
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
 
-// Monta o cronograma padrão de um produto (entrada + 11 parcelas, total = price).
+// Nº de cobranças em que o contrato é dividido: a vigência do produto recorrente
+// (uma por mês), 12 no produto avulso. A primeira delas é a ENTRADA, então o
+// cronograma tem `mesesDeCobranca - 1` parcelas.
+//
+// Não é 12 fixo: produto recorrente novo pode ter vigência diferente (6, 24…), e
+// aí `entrada + 11 parcelas` dividiria o contrato inteiro em 12 cobranças — cada
+// parcela saindo pelo dobro da mensalidade num plano de 24 meses.
+const mesesDeCobranca = (product) => (product && product.recurring ? (product.vigencia || 12) : 12);
+
+// Monta o cronograma padrão de um produto (entrada + parcelas, total = price),
+// pela regra de cobrança que vale para ele — a exceção dele, ou a geral.
 function initPayment(product) {
   const total = product.price;
-  const entrada = product.recurring ? product.monthly : round2(total / 12);
-  const parcelas = buildSchedule(11, total, entrada, todayISO());
-  return { entradaForma: 'pix', entradaValor: entrada, entradaData: todayISO(), parcelas, editMode: false };
+  const meses = mesesDeCobranca(product);
+  const cob = cobrancaDoProduto(product);
+  const entrada = product.recurring ? product.monthly : round2(total / meses);
+  const entradaData = dataDaEntrada(cob);
+  const parcelas = buildSchedule(meses - 1, total, entrada, entradaData, cob);
+  return { entradaForma: 'pix', entradaValor: entrada, entradaData, parcelas, editMode: false };
 }
 
 /* ===== Logo ===== */
@@ -995,7 +1065,17 @@ function App() {
   // AQUELE registro. Sem isso, liberar um desconto no produto A deixaria o
   // produto B destravado logo em seguida, no mesmo aparelho.
   const goLobby = () => patch({ screen: 'lobby', autorizacao: null, priceEdit: false, editMode: false });
-  const onCategory = (id) => patch({ screen: 'flow', step: 0, catId: id, product: null, autorizacao: null });
+  // Ao abrir a APN, o valor já vem preenchido com o de referência configurado em
+  // /admin (quando há). NÃO é trava: a APN é venda de valor negociado, e o campo
+  // segue livre — o de referência só evita começar do zero em toda venda.
+  const onCategory = (id) => patch(() => {
+    const cat = getCat(id);
+    const referencia = cat && Number.isFinite(Number(cat.valor_referencia)) ? Number(cat.valor_referencia) : NaN;
+    return {
+      screen: 'flow', step: 0, catId: id, product: null, autorizacao: null,
+      ...(cat && cat.flow === 'apn' ? { apnValor: referencia } : {}),
+    };
+  });
   const onProduct = (p) => patch({ product: p, priceEdit: false, editMode: false, autorizacao: null, unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) });
   const next = () => patch((d) => ({ step: Math.min(ultimoStep, d.step + 1) }));
   const back = () => { if (s.step === 0) patch({ screen: 'lobby' }); else patch((d) => ({ step: d.step - 1 })); };
@@ -1047,18 +1127,22 @@ function App() {
   // unitValue = mensalidade (produtos recorrentes) ou valor à vista (eventos).
   const unitValue = Number(s.unitValue) || 0;
   const total = product ? (product.recurring ? round2(unitValue * (product.vigencia || 12)) : unitValue) : 0;
+  // A regra de cobrança deste produto: a exceção dele, se tiver, ou a geral.
+  const cobranca = cobrancaDoProduto(product);
   const setEntradaValor = (n) => patch((d) => { const v = Number.isFinite(n) ? Math.max(0, n) : 0; return { entradaValor: v, parcelas: redistributeSchedule(d.parcelas, total, v) }; });
   const setEntradaForma = (v) => patch({ entradaForma: v });
-  // Ao mudar a data de contratação (entrada), recalcula os vencimentos das
-  // parcelas: cada uma 30 dias após a anterior, a partir da nova data.
+  // Ao mudar a data de contratação (entrada), recalcula os vencimentos: as
+  // parcelas continuam no dia configurado, mas o MÊS da primeira depende da data
+  // da venda (ver `parcelaVencimento`). Vencimento editado à mão é reescrito aqui
+  // — mudar a data da venda refaz o cronograma, é o que se espera dela.
   const setEntradaData = (v) => patch((d) => ({
     entradaData: v,
-    parcelas: d.parcelas.map((p, i) => ({ ...p, data: parcelaVencimento(v || todayISO(), i) })),
+    parcelas: d.parcelas.map((p, i) => ({ ...p, data: parcelaVencimento(v || todayISO(), i, cobranca) })),
   }));
   const setCount = (raw) => patch((d) => {
     const n = Math.max(0, Math.min(60, Math.round(Number(raw) || 0)));
     const start = d.entradaData || todayISO();
-    const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: parcelaVencimento(start, i), forma: 'boleto', manual: false });
+    const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: parcelaVencimento(start, i, cobranca), forma: 'boleto', manual: false });
     return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) };
   });
   const incParcela = () => { if (s.editMode) setCount(s.parcelas.length + 1); };
@@ -1100,10 +1184,11 @@ function App() {
   const equalizarNao = () => patch({ showEqualizar: false });
 
   // ----- Edição do VALOR do produto (mensalidade / valor à vista) -----
-  // Ao alterar o valor, o cronograma volta ao padrão (entrada + 11 parcelas) sobre o novo total.
+  // Ao alterar o valor, o cronograma volta ao padrão (entrada + parcelas) sobre o novo total.
   const rebuildDefault = (newTotal) => {
-    const entrada = product.recurring ? round2(newTotal / (product.vigencia || 12)) : round2(newTotal / 12);
-    return { entradaValor: entrada, parcelas: buildSchedule(11, newTotal, entrada, s.entradaData || todayISO()), editMode: false };
+    const meses = mesesDeCobranca(product);
+    const entrada = round2(newTotal / meses);
+    return { entradaValor: entrada, parcelas: buildSchedule(meses - 1, newTotal, entrada, s.entradaData || dataDaEntrada(cobranca), cobranca), editMode: false };
   };
   const setUnitValue = (n) => patch(() => {
     const val = Number.isFinite(n) ? n : 0;
@@ -1704,7 +1789,7 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
           <div>
             <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Configuração de pagamento</h2>
-            <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada + 11 parcelas iguais. Habilite a edição para personalizar.</p>
+            <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada {cobranca.entrada_prazo_dias ? `em ${cobranca.entrada_prazo_dias} dias` : 'no dia da venda'} + {Math.max(0, mesesDeCobranca(product) - 1)} parcelas iguais, todas no dia {cobranca.dia_vencimento}. Habilite a edição para personalizar.</p>
           </div>
           <EditToggle on={s.editMode} onToggle={toggleEdit} label="Editar valores" restrito={!autorizado} />
         </div>
@@ -1742,6 +1827,7 @@ function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>event_repeat</span>
               <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Parcelas</span>
+              <span title={product && product.cobranca ? 'Este produto tem regra própria de cobrança' : 'Regra de cobrança do Lobby'} style={{ font: '500 11px var(--font-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-light)', borderRadius: 6, padding: '3px 8px' }}>vencimento todo dia {cobranca.dia_vencimento}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ font: '500 12px var(--font-secondary)', color: 'var(--text-muted)' }}>Quantidade</span>
@@ -1770,7 +1856,15 @@ function App() {
                 <select className="inp" style={{ height: 40 }} value={p.forma} onChange={(e) => setParcelaForma(i, e.target.value)}>
                   {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
-                <input className="inp" style={{ height: 40 }} type="date" value={p.data || ''} onChange={(e) => setParcelaData(i, e.target.value)} />
+                {/* Vencimento travado no dia 15. Só quem tem autorização (que é o
+                    que liga `editMode`) pode mexer, igual aos valores. */}
+                {notEdit ? (
+                  <div title={`Vencimento travado no dia ${cobranca.dia_vencimento}`} style={{ display: 'flex', alignItems: 'center', gap: 5, height: 40, font: "500 13px 'Roboto'", color: 'var(--text-secondary)' }}>
+                    <span className="ms-icon" style={{ fontSize: 15, color: 'var(--text-muted)' }}>lock</span>{dmy(p.data)}
+                  </div>
+                ) : (
+                  <input className="inp" style={{ height: 40 }} type="date" value={p.data || ''} onChange={(e) => setParcelaData(i, e.target.value)} />
+                )}
                 <button onClick={() => p.manual && unlockParcela(i)} disabled={notEdit || !p.manual} title={p.manual ? 'Valor fixado — clique para voltar ao automático' : 'Valor automático'} style={{ width: 34, height: 34, borderRadius: 8, border: 'none', background: 'transparent', color: p.manual ? 'var(--primary)' : 'var(--text-muted)', cursor: (notEdit || !p.manual) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span className="ms-icon" style={{ fontSize: 18 }}>{p.manual ? 'lock' : 'auto_mode'}</span>
                 </button>
@@ -1954,6 +2048,15 @@ function App() {
               <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
               <MoneyInput className="" value={s.apnValor} onChangeNumber={(n) => patch({ apnValor: n })} placeholder="0,00" />
             </div>
+            {/* Referência configurada em /admin. Aparece como orientação, não como
+                trava: a APN é venda de valor negociado e o campo continua livre. */}
+            {cat && Number.isFinite(Number(cat.valor_referencia)) && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, font: '400 11.5px var(--font-secondary)', color: round2(apnValor) === round2(Number(cat.valor_referencia)) ? 'var(--text-muted)' : 'var(--primary)' }}>
+                <span className="ms-icon" style={{ fontSize: 14 }}>sell</span>
+                Referência: {fmt(Number(cat.valor_referencia))}
+                {apnValorOk && round2(apnValor) !== round2(Number(cat.valor_referencia)) && ' · valor ajustado'}
+              </div>
+            )}
           </div>
           <div>
             <label className="lbl">Forma de pagamento<span style={{ color: 'var(--primary)' }}> *</span></label>
@@ -2453,11 +2556,11 @@ function App() {
 }
 
 /* ============================================================================
- * BOOT — busca os valores de tabela antes de montar a tela.
+ * BOOT — busca valores de tabela E regra de cobrança antes de montar a tela.
  *
- * Os preços vêm do KV via GET /api/catalogo (editáveis em /admin, sem deploy).
- * Se essa chamada falhar por qualquer motivo, seguimos com o CATS embutido no
- * arquivo: o lobby abre com os últimos valores versionados em vez de quebrar.
+ * Os dois vêm do mesmo GET /api/catalogo (editáveis em /admin, sem deploy). Se a
+ * chamada falhar por qualquer motivo, seguimos com o CATS e a COBRANCA embutidos
+ * no arquivo: o lobby abre com os últimos valores versionados em vez de quebrar.
  * Vender com um preço possivelmente desatualizado é ruim; não conseguir abrir a
  * página no meio de um evento é pior.
  * ========================================================================== */
@@ -2467,6 +2570,10 @@ async function boot() {
     if (r.ok) {
       const d = await r.json();
       if (Array.isArray(d?.cats) && d.cats.length) CATS = d.cats;
+      // `normalizaCobranca` porque um campo faltando é pior do que a resposta
+      // inteira faltar: `dia_vencimento: undefined` produziria `Invalid Date` em
+      // todo o cronograma, em silêncio.
+      if (d?.cobranca) COBRANCA = normalizaCobranca(d.cobranca, COBRANCA);
     }
   } catch (e) {
     console.warn('[lobby] catálogo remoto indisponível; usando os valores embutidos.', e);
