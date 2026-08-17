@@ -180,19 +180,42 @@ Fecha três coisas: **forjar** (precisa da chave), **reusar** (nonce de uso úni
 
 ## Personalização rápida
 
-- **Preços:** em **`/admin`**, com a credencial da diretoria. Não mexa no `CATS` do
-  `index.html` (veja *O lobby é anônimo — a negociação não*, acima).
-- **Produtos e categorias novas:** pelo **`/django-admin/`**, sem deploy. Crie a
-  categoria, os produtos e a ordem; a APN é a única com `fluxo` preenchido, o que a
-  torna somente leitura para o `/admin` e manda o consultor para o wizard curto.
-  Para liberar uma categoria travada, desmarque *em implementação*.
-  O `CATS` do `index.html` é só o fallback offline — vale sincronizá-lo quando a
-  mudança for estrutural, mas ele não é a fonte de verdade.
+O **`/admin`** é a tela de configuração da diretoria (login do Conecta ID), com
+quatro abas — e tudo o que se faz por lá fica registrado com autor e período:
+
+| Aba | O que configura |
+|---|---|
+| **Valores** | Mensalidade / valor à vista de cada produto. |
+| **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — geral e por produto. |
+| **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
+| **Histórico** | O que valeu, de quando até quando, e quem publicou. |
+
+- **Preços e datas:** em **`/admin`**, com a credencial da diretoria. Não mexa no
+  `CATS` nem nas constantes do `index.html` (veja *O lobby é anônimo — a
+  negociação não*, acima).
+- **Categorias novas, ou destravar uma:** ainda pelo **`/django-admin/`**, sem
+  deploy — desmarque *em implementação*. A APN é a única com `fluxo` preenchido,
+  o que a torna somente leitura para o `/admin` e manda o consultor para o wizard
+  curto.
+- **Produtos:** pelo `/admin` → aba Produtos. O `/django-admin/` também cria, mas
+  **por fora do histórico** — use-o só para conserto.
+  A `sigla` de 3 letras é **única no catálogo inteiro** (é o `SSS` do protocolo da
+  venda): o sistema recusa repetida, inclusive contra a sigla da APN.
+  O `CATS` do `index.html` é só o fallback offline — para sincronizá-lo, gere o
+  bloco com `manage.py exportar_cats_do_front` em vez de transcrever à mão.
 - **Valor por evento/negociação:** na etapa *Produto*, **"Editar valor"** libera a
   mensalidade (recorrentes) ou o valor à vista (avulsos); o total e o cronograma
   recalculam sozinhos. Pede autorização de um gerente ou da diretoria.
 - **Pagamento:** na etapa *Pagamento*, **"Editar valores"** libera entrada, número de
-  parcelas, valores, datas e formas, com o total como âncora. Também pede autorização.
+  parcelas, valores, vencimentos e formas, com o total como âncora. Também pede
+  autorização.
+- **Vencimento das parcelas:** travado no **dia 15** (`DIA_VENCIMENTO`). A entrada é
+  no dia da venda e cobre aquele mês; a 1ª parcela cai no dia 15 do **mês seguinte**
+  e as demais seguem uma por mês — um pagamento por mês, sempre. Sem autorização o
+  consultor não edita esse campo: vê a data travada.
+- **Quantas parcelas:** o padrão é entrada + `vigência − 1` parcelas (`mesesDeCobranca`),
+  ou seja, uma cobrança por mês de contrato. Nos planos Elite de 12 meses são as
+  conhecidas 11; um plano de 24 meses abre com 23.
 
 ## Deploy
 

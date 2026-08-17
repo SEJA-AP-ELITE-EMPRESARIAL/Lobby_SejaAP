@@ -32,9 +32,27 @@ Duas decisões de modelagem que valem explicação, porque não são óbvias:
    `flow` que o front realmente lê (`index.html:597`, `:828`, `:1297`); ele
    nunca compara o id com 'apn'. Manter a regra presa ao slug seria copiar um
    detalhe de implementação em vez do contrato.
+
+3. `sigla` é ÚNICA no catálogo inteiro, produtos e categorias juntos.
+   Ela é o `SSS` do protocolo da venda (`SSS-YYMMDDPRRRRR`), e o protocolo é o
+   que o n8n, o Omie e a planilha do comercial usam para saber O QUE foi
+   vendido. Duas linhas com a mesma sigla não dão erro em lugar nenhum: geram
+   protocolos indistinguíveis, e a ambiguidade só aparece meses depois, na
+   conciliação. Como o catálogo é editado à mão no /django-admin/ e crescer é o
+   caminho normal (a Elite vai receber produtos novos), a garantia tem que estar
+   no banco, não na atenção de quem digita.
+
+4. A REGRA DE DATA do cronograma é dado, não código.
+   Até 17/08/2026 o dia do vencimento (15) e o mês da primeira parcela viviam em
+   constantes do `index.html`: mudar o dia de cobrança era deploy do front. Como
+   essa data muda com frequência — e sempre com pressa, porque acompanha
+   calendário de cobrança — ela virou `PoliticaCobranca`, editável na tela da
+   diretoria. O front lê a política do mesmo `GET /api/catalogo` de onde já lê
+   preço; as constantes que sobraram lá são só o fallback offline.
 """
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 
@@ -48,10 +66,29 @@ VALOR_MAX = Decimal("100000000")
 
 CENTAVO = Decimal("0.01")
 
+# O dia do vencimento para em 28 de propósito. O ponto de fixar um dia é ter UMA
+# data de cobrança em lote; 29, 30 e 31 não existem em todo mês e reintroduziriam
+# a regra de "cair no último dia" que a mudança de 17/08/2026 justamente eliminou.
+DIA_VENCIMENTO_MIN = 1
+DIA_VENCIMENTO_MAX = 28
+# Teto do adiamento da entrada. Entrada é o ato de fechar a venda: prazo longo
+# deixa de ser entrada e vira parcela, e o cronograma não saberia disso.
+ENTRADA_PRAZO_MAX = 90
+
 
 def arredonda(valor) -> Decimal:
     """Equivalente ao `round2` do KV (`catalogo.js:88`), em aritmética decimal."""
     return Decimal(valor).quantize(CENTAVO, rounding=ROUND_HALF_UP)
+
+
+def normaliza_sigla(valor) -> str:
+    """Sigla sempre em maiúsculas e sem espaço em volta.
+
+    Digitar `pre` no /django-admin/ é distração de digitação, não erro de
+    conteúdo — e sem isto o validador devolveria "use exatamente 3 letras
+    maiúsculas" para quem escreveu a sigla certa em minúscula.
+    """
+    return str(valor or "").strip().upper()
 
 
 class Cor(models.TextChoices):
@@ -108,7 +145,19 @@ class Categoria(models.Model):
         default="",
         validators=[RegexValidator(r"^[A-Z]{3}$", "Use exatamente 3 letras maiúsculas.")],
         help_text="Só usada em categoria de fluxo próprio, onde não há produto "
-        "para tirar a sigla do protocolo da venda.",
+        "para tirar a sigla do protocolo da venda. Não pode repetir a sigla de "
+        "nenhum produto nem de outra categoria.",
+    )
+    valor_referencia = models.DecimalField(
+        "valor de referência",
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(CENTAVO), MaxValueValidator(VALOR_MAX)],
+        help_text="Só em categoria de fluxo próprio (a APN). É o valor com que a "
+        "tela do consultor ABRE — ele continua livre para alterar, porque a APN é "
+        "venda de valor negociado. Vazio = a tela abre em branco, como antes.",
     )
     ordem = models.PositiveIntegerField("ordem", default=0)
 
@@ -119,9 +168,33 @@ class Categoria(models.Model):
         verbose_name = "categoria"
         verbose_name_plural = "categorias"
         ordering = ("ordem", "id")
+        constraints = [
+            # Valor de referência só faz sentido onde não há produto de tabela.
+            # Numa categoria comum ele seria um número que ninguém lê — e o
+            # primeiro a lê-lo por engano estaria cotando errado.
+            models.CheckConstraint(
+                name="valor_referencia_so_em_fluxo_proprio",
+                condition=models.Q(valor_referencia__isnull=True)
+                | ~models.Q(fluxo=""),
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.nome
+
+    def clean_fields(self, exclude=None):
+        self.sigla = normaliza_sigla(self.sigla)
+        super().clean_fields(exclude=exclude)
+
+    def clean(self):
+        conflito = sigla_em_conflito(self.sigla, ignorando_categoria=self.pk)
+        if conflito:
+            raise ValidationError({"sigla": f"A sigla {self.sigla} já é de {conflito}."})
+
+    def save(self, *args, **kwargs):
+        # Também no save: shell, migration e script não passam por full_clean().
+        self.sigla = normaliza_sigla(self.sigla)
+        super().save(*args, **kwargs)
 
     @property
     def gerenciada_em_codigo(self) -> bool:
@@ -150,8 +223,10 @@ class Produto(models.Model):
     sigla = models.CharField(
         "sigla",
         max_length=3,
+        unique=True,
         validators=[RegexValidator(r"^[A-Z]{3}$", "Use exatamente 3 letras maiúsculas.")],
-        help_text="Alimenta o protocolo da venda (SSS-YYMMDDPRRRRR).",
+        help_text="Alimenta o protocolo da venda (SSS-YYMMDDPRRRRR). Única no "
+        "catálogo inteiro: é por ela que se sabe, meses depois, o que foi vendido.",
     )
     descricao = models.CharField("descrição", max_length=240, blank=True, default="")
     duracao = models.CharField(
@@ -242,6 +317,22 @@ class Produto(models.Model):
     def __str__(self) -> str:
         return f"{self.categoria.slug}/{self.slug}"
 
+    def clean_fields(self, exclude=None):
+        self.sigla = normaliza_sigla(self.sigla)
+        super().clean_fields(exclude=exclude)
+
+    def clean(self):
+        # Produto contra produto já é o `unique=True` do campo (e um índice no
+        # banco). Aqui falta o outro lado: a sigla de uma categoria de fluxo
+        # próprio, que ocupa o mesmo espaço de nomes no protocolo.
+        conflito = sigla_em_conflito(self.sigla, ignorando_produto=self.pk)
+        if conflito:
+            raise ValidationError({"sigla": f"A sigla {self.sigla} já é de {conflito}."})
+
+    def save(self, *args, **kwargs):
+        self.sigla = normaliza_sigla(self.sigla)
+        super().save(*args, **kwargs)
+
     @property
     def preco(self) -> Decimal:
         """O total do contrato — `price` no JSON.
@@ -252,6 +343,158 @@ class Produto(models.Model):
         if self.recorrente:
             return arredonda(self.mensalidade * self.vigencia_meses)
         return arredonda(self.valor)
+
+
+def sigla_em_conflito(sigla, *, ignorando_produto=None, ignorando_categoria=None):
+    """Quem já usa esta sigla no catálogo — ou `None` se ela está livre.
+
+    Produtos e categorias dividem UM espaço de nomes, porque o protocolo da venda
+    tem um só campo `SSS`: ele vem da sigla do produto no fluxo padrão e da sigla
+    da categoria no fluxo próprio (`index.html`, `buildProtocol`). Uma sigla que
+    aparece nos dois lados produz protocolos que ninguém consegue desempatar.
+
+    Devolve texto pronto para a mensagem de erro ('o produto "ELITE PRO"'), e não
+    o objeto: quem chama só quer dizer à pessoa o que está no caminho.
+    """
+    sigla = normaliza_sigla(sigla)
+    if not sigla:
+        return None
+
+    produtos = Produto.objects.filter(sigla=sigla)
+    if ignorando_produto:
+        produtos = produtos.exclude(pk=ignorando_produto)
+    produto = produtos.first()
+    if produto:
+        return f'o produto "{produto.nome}"'
+
+    categorias = Categoria.objects.exclude(sigla="").filter(sigla=sigla)
+    if ignorando_categoria:
+        categorias = categorias.exclude(pk=ignorando_categoria)
+    categoria = categorias.first()
+    if categoria:
+        return f'a categoria "{categoria.nome}"'
+
+    return None
+
+
+class PrimeiroVencimento(models.TextChoices):
+    """Em que mês cai a PRIMEIRA parcela.
+
+    As duas leituras possíveis de "vencimento no dia N", e a diferença aparece só
+    quando a venda acontece antes do dia N:
+
+    - MES_SEGUINTE: venda 03/09 → 15/10. Um pagamento por mês, sempre: a entrada
+      cobre o mês da venda e cada parcela cobre um mês seguinte.
+    - PROXIMO: venda 03/09 → 15/09. A primeira parcela vem antes, mas o mês da
+      venda fica com duas cobranças (entrada + parcela) e um contrato de 12 meses
+      se paga em 11.
+    """
+
+    MES_SEGUINTE = "mes_seguinte", "Dia do vencimento do mês SEGUINTE ao da venda"
+    PROXIMO = "proximo", "Primeiro dia do vencimento DEPOIS da venda"
+
+
+class PoliticaCobranca(models.Model):
+    """Como o cronograma de uma venda nasce — o que era constante no `index.html`.
+
+    Uma linha vale para o Lobby inteiro (`geral=True`); cada produto pode ter a
+    sua, e o que não for preenchido lá herda a geral. Foi a forma escolhida com o
+    usuário: o caso comum é uma regra só, e a exceção não pode exigir deploy.
+
+    Não confundir com NEGOCIAÇÃO. Isto é o padrão com que o cronograma abre, e
+    vale para todas as vendas seguintes — por isso é da diretoria, mesmo alcance
+    da tabela de preços. Mudar a data de UMA venda continua sendo autorização de
+    gerente, na própria tela do consultor.
+    """
+
+    geral = models.BooleanField(
+        "política geral",
+        default=False,
+        help_text="A política que vale para todo produto sem exceção própria. "
+        "Existe uma, e só uma.",
+    )
+    produto = models.OneToOneField(
+        Produto,
+        on_delete=models.CASCADE,
+        related_name="politica_cobranca",
+        null=True,
+        blank=True,
+        verbose_name="produto",
+        help_text="Vazio na política geral. Preenchido, é a exceção deste produto.",
+    )
+
+    dia_vencimento = models.PositiveSmallIntegerField(
+        "dia do vencimento",
+        default=15,
+        validators=[
+            MinValueValidator(DIA_VENCIMENTO_MIN),
+            MaxValueValidator(DIA_VENCIMENTO_MAX),
+        ],
+        help_text=f"Dia do mês em que TODA parcela vence ({DIA_VENCIMENTO_MIN} a "
+        f"{DIA_VENCIMENTO_MAX}). Para em 28 porque 29, 30 e 31 não existem em "
+        "todo mês, e o ponto de fixar o dia é ter uma data única de cobrança.",
+    )
+    primeiro_vencimento = models.CharField(
+        "primeira parcela",
+        max_length=20,
+        choices=PrimeiroVencimento.choices,
+        default=PrimeiroVencimento.MES_SEGUINTE,
+    )
+    entrada_prazo_dias = models.PositiveSmallIntegerField(
+        "prazo da entrada (dias)",
+        default=0,
+        validators=[MaxValueValidator(ENTRADA_PRAZO_MAX)],
+        help_text="0 = a entrada é paga no dia da venda (o padrão). Acima disso, "
+        "a data da entrada abre com este tanto de dias à frente.",
+    )
+
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "política de cobrança"
+        verbose_name_plural = "políticas de cobrança"
+        ordering = ("-geral", "produto__categoria", "produto__ordem", "id")
+        constraints = [
+            # Uma única política geral. `fields=["geral"]` com a condição faz um
+            # índice PARCIAL: só as linhas com geral=True disputam a unicidade,
+            # então as exceções por produto (geral=False) convivem à vontade.
+            models.UniqueConstraint(
+                fields=["geral"],
+                condition=models.Q(geral=True),
+                name="uma_unica_politica_geral",
+            ),
+            # As duas metades: geral não tem produto, exceção tem. Sem isto, uma
+            # linha com os dois (ou nenhum) passaria despercebida e o front leria
+            # uma política que não é de ninguém.
+            models.CheckConstraint(
+                name="politica_geral_ou_de_produto",
+                condition=models.Q(geral=True, produto__isnull=True)
+                | models.Q(geral=False, produto__isnull=False),
+            ),
+        ]
+
+    def __str__(self) -> str:
+        alvo = self.produto.nome if self.produto else "todos os produtos"
+        return f"dia {self.dia_vencimento} · {alvo}"
+
+    @classmethod
+    def geral_atual(cls) -> "PoliticaCobranca":
+        """A política do Lobby. Cria com os padrões se ainda não existir.
+
+        `get_or_create` e não `get`: um banco sem a linha (ambiente novo, banco
+        de teste montado à mão) não pode derrubar o `GET /api/catalogo`, que é a
+        chamada de todo consultor abrindo o app.
+        """
+        politica, _ = cls.objects.get_or_create(geral=True, defaults={"produto": None})
+        return politica
+
+    def como_dicionario(self) -> dict:
+        return {
+            "dia_vencimento": self.dia_vencimento,
+            "primeiro_vencimento": self.primeiro_vencimento,
+            "entrada_prazo_dias": self.entrada_prazo_dias,
+        }
 
 
 class PublicacaoCatalogo(models.Model):
@@ -302,3 +545,106 @@ class PublicacaoCatalogo(models.Model):
     def __str__(self) -> str:
         quem = self.autor_email or "semente"
         return f"{self.publicado_em:%d/%m/%Y %H:%M} — {quem}"
+
+
+class Vigencia(models.Model):
+    """Um valor que valeu por um período — a resposta para "quanto custava em março".
+
+    O QUE ISTO ACRESCENTA AO `PublicacaoCatalogo`
+
+    A publicação registra um EVENTO: "em 06/08 às 09:31, Mathias mudou o ELITE PRO
+    de 11.500 para 12.997". Para saber quanto custava numa data, é preciso ler os
+    eventos em ordem e reconstruir — o que ninguém faz olhando uma tela, e que não
+    dá para consultar de fora.
+
+    Esta tabela registra o ESTADO: "12.997 valeu de 06/08 até hoje". Uma consulta
+    responde a pergunta, e a linha do tempo da tela sai daqui direto.
+
+    POR QUE NÃO HÁ CHAVE ESTRANGEIRA PARA `Produto`
+
+    Histórico não pode depender de linha viva. Se o produto for renomeado, o
+    registro tem que continuar dizendo o nome que ele tinha na época — senão a
+    trilha mente sobre o passado, que é a única coisa que ela existe para contar.
+    Por isso `chave` é o slug (documentado como imutável depois de publicado) e
+    `rotulo` é uma FOTOGRAFIA do nome no momento do registro.
+    """
+
+    class Campo(models.TextChoices):
+        MENSALIDADE = "mensalidade", "Mensalidade"
+        VALOR = "valor", "Valor à vista"
+        VALOR_REFERENCIA = "valor_referencia", "Valor de referência"
+        VIGENCIA_MESES = "vigencia_meses", "Vigência (meses)"
+        DIA_VENCIMENTO = "dia_vencimento", "Dia do vencimento"
+        PRIMEIRO_VENCIMENTO = "primeiro_vencimento", "Primeira parcela"
+        ENTRADA_PRAZO_DIAS = "entrada_prazo_dias", "Prazo da entrada (dias)"
+
+    # 'geral' para a política do Lobby; o slug do produto para o resto.
+    CHAVE_GERAL = "geral"
+
+    chave = models.CharField(
+        "chave",
+        max_length=40,
+        db_index=True,
+        help_text="O slug do produto, ou 'geral' para a política de cobrança.",
+    )
+    rotulo = models.CharField(
+        "rótulo",
+        max_length=120,
+        help_text="Como o alvo se chamava quando o registro foi criado. "
+        "Fotografia, não referência: renomear o produto não reescreve o passado.",
+    )
+    campo = models.CharField("campo", max_length=30, choices=Campo.choices)
+    valor = models.CharField(
+        "valor",
+        max_length=40,
+        help_text="Texto, porque a mesma tabela guarda dinheiro, dia do mês e "
+        "escolha de regra. Quem lê sabe o tipo pelo `campo`.",
+    )
+
+    vigente_de = models.DateTimeField("vigente de", db_index=True)
+    vigente_ate = models.DateTimeField(
+        "vigente até",
+        null=True,
+        blank=True,
+        help_text="Nulo = é o valor que está valendo agora.",
+    )
+
+    autor = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="vigencias",
+        verbose_name="autor",
+    )
+    autor_email = models.EmailField(
+        "e-mail do autor",
+        blank=True,
+        default="",
+        help_text="Cópia no momento do registro — a conta pode ser desativada "
+        "depois, e o histórico não pode perder quem assinou.",
+    )
+
+    class Meta:
+        verbose_name = "vigência de valor"
+        verbose_name_plural = "vigências de valor"
+        ordering = ("-vigente_de", "chave", "campo")
+        constraints = [
+            # No máximo um valor ABERTO por campo. É a invariante da tabela: com
+            # dois, "quanto custava em março" passa a ter duas respostas e a
+            # trilha deixa de servir para o que foi feita.
+            models.UniqueConstraint(
+                fields=["chave", "campo"],
+                condition=models.Q(vigente_ate__isnull=True),
+                name="um_unico_valor_vigente_por_campo",
+            ),
+        ]
+        indexes = [models.Index(fields=["chave", "campo", "-vigente_de"])]
+
+    def __str__(self) -> str:
+        ate = "agora" if self.vigente_ate is None else f"{self.vigente_ate:%d/%m/%Y}"
+        return f"{self.rotulo} · {self.get_campo_display()}: {self.valor} ({self.vigente_de:%d/%m/%Y} → {ate})"
+
+    @property
+    def vigente(self) -> bool:
+        return self.vigente_ate is None

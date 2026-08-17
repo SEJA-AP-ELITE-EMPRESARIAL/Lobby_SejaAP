@@ -1,21 +1,28 @@
 """
 Administração do catálogo.
 
-Divisão de trabalho, e ela é intencional:
+Divisão de trabalho, e ela mudou em 17/08/2026:
 
-- A tela `/admin` (o `admin.html`, React) é onde a diretoria mexe em PREÇO. Ela
-  edita um número por produto e mais nada, e toda publicação passa pelo serviço,
-  que grava histórico com autor.
-- Este `/django-admin/` é onde se faz MUDANÇA ESTRUTURAL: criar produto, mudar
-  nome, reordenar, travar categoria. É raro, é consciente, e não é o caminho do
-  dia a dia.
+- A tela `/admin` (o `admin.html`, React) é onde a diretoria trabalha. Ela edita
+  PREÇO, as DATAS de cobrança e agora também cria e edita PRODUTO — tudo pelo
+  serviço, que grava publicação, autor e vigência.
+- Este `/django-admin/` virou o caminho de CONSERTO: mexer em categoria, corrigir
+  o que a tela não alcança, olhar o histórico cru. Continua útil, mas não é mais
+  o único jeito de criar produto — era essa a distorção, porque o caminho de
+  menor esforço era justamente o que não deixava rastro.
 
-Por isso os campos de valor aparecem aqui, mas com o aviso: alteração feita
-por aqui NÃO entra no histórico de publicações.
+O aviso que segue valendo: alteração feita por aqui **não** entra no histórico de
+publicações nem abre vigência. Para o valor de um produto, use o `/admin`.
 """
 from django.contrib import admin
 
-from .models import Categoria, Produto, PublicacaoCatalogo
+from .models import (
+    Categoria,
+    PoliticaCobranca,
+    Produto,
+    PublicacaoCatalogo,
+    Vigencia,
+)
 
 
 class ProdutoInline(admin.TabularInline):
@@ -84,6 +91,43 @@ class ProdutoAdmin(admin.ModelAdmin):
     @admin.display(description="total do contrato")
     def preco(self, obj):
         return obj.preco
+
+
+@admin.register(PoliticaCobranca)
+class PoliticaCobrancaAdmin(admin.ModelAdmin):
+    """A regra de data do cronograma. O caminho normal é o `/admin`."""
+
+    list_display = ("__str__", "geral", "produto", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
+    list_filter = ("geral", "primeiro_vencimento")
+
+    def has_delete_permission(self, request, obj=None):
+        # A política geral não pode sumir: sem ela o front não monta cronograma.
+        # Exceção de produto se remove no /admin, que fecha a vigência junto.
+        return False
+
+
+@admin.register(Vigencia)
+class VigenciaAdmin(admin.ModelAdmin):
+    """Somente leitura: é registro do que aconteceu, não formulário.
+
+    Editar uma vigência à mão é reescrever o passado — e a tabela existe
+    exatamente para que o passado não seja reescrito.
+    """
+
+    list_display = ("vigente_de", "vigente_ate", "rotulo", "campo", "valor", "autor_email")
+    list_filter = ("campo", "chave")
+    search_fields = ("chave", "rotulo", "valor", "autor_email")
+    ordering = ("-vigente_de",)
+    readonly_fields = tuple(f.name for f in Vigencia._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(PublicacaoCatalogo)

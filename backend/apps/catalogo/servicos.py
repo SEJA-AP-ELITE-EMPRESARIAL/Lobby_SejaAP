@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.utils import timezone
 
 from .models import (
     MENSALIDADE_MAX,
@@ -38,6 +39,7 @@ from .models import (
     arredonda,
 )
 from .serializers import serializa_catalogo
+from .vigencias import registrar_categoria, registrar_produto
 
 
 class CatalogoInvalido(Exception):
@@ -111,6 +113,46 @@ def _valor_publicado(bruto: dict, produto: Produto) -> Decimal:
     return total
 
 
+def _publica_valor_referencia(bruta: dict, alteracoes: list, *, autor, quando):
+    """Aplica o valor de referência de uma categoria de fluxo próprio (a APN).
+
+    O campo é OPCIONAL nos dois sentidos: ausente no corpo significa "não mexi
+    nisto" e é ignorado; presente e vazio significa "quero limpar", e a tela do
+    consultor volta a abrir em branco. Sem essa distinção não haveria como
+    desfazer um valor de referência depois de configurado.
+    """
+    if "valor_referencia" not in bruta:
+        return
+
+    slug = bruta.get("id")
+    try:
+        categoria = Categoria.objects.select_for_update().get(slug=slug)
+    except Categoria.DoesNotExist:
+        raise CatalogoInvalido(f'Categoria "{slug}" não existe. Recarregue a página.')
+
+    bruto = bruta.get("valor_referencia")
+    if bruto in (None, ""):
+        novo = None
+    else:
+        novo = arredonda(_numero(bruto))
+        if not (Decimal(0) < novo <= VALOR_MAX):
+            raise CatalogoInvalido(f'Valor de referência inválido em "{categoria.nome}".')
+
+    if novo == categoria.valor_referencia:
+        return
+
+    alteracoes.append(
+        Alteracao(
+            produto=f"{categoria.nome} (valor de referência)",
+            de=categoria.valor_referencia,
+            para=novo,
+        )
+    )
+    categoria.valor_referencia = novo
+    categoria.save(update_fields=["valor_referencia", "atualizado_em"])
+    registrar_categoria(categoria, autor=autor, quando=quando)
+
+
 def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Alteracao]]:
     """Aplica os valores recebidos e grava uma publicação no histórico.
 
@@ -121,21 +163,29 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
     if not isinstance(cats_recebidas, list):
         raise CatalogoInvalido("O catálogo precisa ser uma lista com ao menos uma categoria.")
 
-    # Categorias de fluxo próprio são descartadas na escrita: o /admin devolve a
-    # APN no PUT porque a recebeu no GET, mas ela não tem tabela para editar.
-    # O KV filtrava por id (`catalogo.js:76`); aqui o critério é o fluxo, que é o
-    # que o front de fato lê.
+    # Categoria de fluxo próprio (a APN) não tem tabela de PRODUTOS para editar —
+    # ela fica fora do laço de produtos, abaixo. O KV a descartava por inteiro
+    # (`catalogo.js:76`); desde 17/08/2026 ela tem um campo editável, o VALOR DE
+    # REFERÊNCIA com que a tela do consultor abre, então é separada em vez de
+    # jogada fora. O critério continua sendo o `fluxo`, não o slug, porque é
+    # `flow` que o front de fato lê.
     slugs_em_codigo = set(
         Categoria.objects.exclude(fluxo="").values_list("slug", flat=True)
     )
-    editaveis = [
-        c for c in cats_recebidas
-        if isinstance(c, dict) and c.get("id") not in slugs_em_codigo
-    ]
+    editaveis, de_fluxo_proprio = [], []
+    for c in cats_recebidas:
+        if not isinstance(c, dict):
+            continue
+        (de_fluxo_proprio if c.get("id") in slugs_em_codigo else editaveis).append(c)
+
+    # O corpo precisa trazer o catálogo de verdade. Só a APN significa tela
+    # desatualizada ou requisição truncada — e publicar em cima disso, mesmo sem
+    # apagar nada, é aplicar uma decisão que ninguém tomou.
     if not editaveis:
         raise CatalogoInvalido("O catálogo precisa ser uma lista com ao menos uma categoria.")
 
     alteracoes: list[Alteracao] = []
+    agora = timezone.now()
 
     with transaction.atomic():
         produtos_por_chave = {
@@ -154,8 +204,17 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
             vistos.add(slug_cat)
 
             produtos_brutos = bruta.get("products")
-            if not isinstance(produtos_brutos, list) or not produtos_brutos:
-                raise CatalogoInvalido(f'Categoria "{nome_cat}" está sem produtos.')
+            if not isinstance(produtos_brutos, list):
+                # Sem a chave, ou com outra coisa no lugar da lista, é corpo
+                # malformado — e aceitar isso seria publicar sobre uma tela que
+                # perdeu metade do estado.
+                raise CatalogoInvalido(f'Categoria "{nome_cat}" está sem a lista de produtos.')
+            if not produtos_brutos:
+                # Lista VAZIA é legítima desde 17/08/2026: Treinamentos e Palestras
+                # existem travadas e sem produto nenhum, esperando os de verdade.
+                # Antes disso toda categoria tinha produto, e o vazio só podia ser
+                # erro — por isso este caso era recusado junto com o malformado.
+                continue
 
             for bruto in produtos_brutos:
                 if not isinstance(bruto, dict) or not bruto.get("id") or not bruto.get("name"):
@@ -180,9 +239,18 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
                     else:
                         produto.valor = novo
                     produto.save(update_fields=["mensalidade", "valor", "atualizado_em"])
+                    # Fecha a vigência do valor antigo e abre a do novo. Todos os
+                    # produtos da mesma publicação compartilham `agora`: uma
+                    # publicação é um instante, não uma sequência de instantes —
+                    # senão a linha do tempo mostraria a tabela mudando "aos
+                    # poucos" numa ordem que é só a do laço.
+                    registrar_produto(produto, autor=autor, quando=agora)
+
+        for bruta in de_fluxo_proprio:
+            _publica_valor_referencia(bruta, alteracoes, autor=autor, quando=agora)
 
         catalogo = serializa_catalogo(
-            Categoria.objects.prefetch_related("produtos").all()
+            Categoria.objects.prefetch_related("produtos__politica_cobranca").all()
         )
 
         PublicacaoCatalogo.objects.create(

@@ -155,6 +155,13 @@ não montados por volume — editar o arquivo na VPS não muda o que o nginx ser
 Migrations **nunca** rodam no boot. É o padrão da casa, e existe para que uma
 migration ruim não suba junto com o container num horário movimentado.
 
+**Migration que confere dado antes de mexer no schema.** A
+`catalogo/0003_sigla_unica_no_catalogo` torna a sigla do produto única e, antes de
+criar o índice, procura sigla repetida. Se achar, ela **para com a lista do que
+está repetido** em vez de deixar o Postgres reclamar de um índice sem dizer qual
+linha é o problema. Nesse caso: corrija as siglas pelo `/django-admin/` e rode o
+`migrate` de novo — nada foi aplicado pela metade (é uma transação).
+
 ## Verificações
 
 ```bash

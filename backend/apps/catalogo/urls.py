@@ -16,8 +16,24 @@ proxy de `/api/` para cá. É por isso que este projeto não instala
 """
 from django.urls import path
 
-from .views import CatalogoView
+from .views import (
+    CatalogoView,
+    CobrancaView,
+    HistoricoView,
+    ProdutoView,
+    ProdutosView,
+)
 
 urlpatterns = [
     path("catalogo", CatalogoView.as_view(), name="catalogo"),
+    # Sem barra final, como o resto: o `APPEND_SLASH` transformaria um PUT em 301
+    # e o corpo se perderia no caminho.
+    path("cobranca", CobrancaView.as_view(), name="cobranca"),
+    path("produtos", ProdutosView.as_view(), name="produtos"),
+    path(
+        "produtos/<slug:categoria_slug>/<slug:slug>",
+        ProdutoView.as_view(),
+        name="produto",
+    ),
+    path("historico", HistoricoView.as_view(), name="historico"),
 ]

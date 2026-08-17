@@ -32,13 +32,28 @@ def numero(valor) -> int | float:
     return int(dec) if dec == dec.to_integral_value() else float(dec)
 
 
-def serializa_produto(produto) -> dict:
+def serializa_politica(politica) -> dict:
+    """A regra de data do cronograma, do jeito que o front a consome.
+
+    Chaves em português, ao contrário do resto deste arquivo. É deliberado: o
+    catálogo herdou nomes em inglês do KV e mudá-los quebraria o `index.html` em
+    produção; a política nasce agora, e não há motivo para inventar um segundo
+    idioma. O front lê `cobranca.dia_vencimento` direto.
+    """
+    return politica.como_dicionario()
+
+
+def serializa_produto(produto, politica=None) -> dict:
     """Espelha o produto normalizado do KV (`functions/_lib/catalogo.js:146-152`,
     removido da árvore — `git show 338e932`; ver a nota em `models.py`).
 
     `monthly`, `recurring` e `vigencia` só aparecem em produto recorrente — é
     assim que o front distingue os dois (`recurring` ausente = avulso), e é a
     forma que o KV emitia.
+
+    `cobranca` segue a mesma lógica: só sai quando o produto TEM exceção. Produto
+    que herda a política geral fica byte a byte igual ao que o front recebe hoje,
+    e o resolvedor do lado de lá é um `||` — `produto.cobranca || cobrancaGeral`.
     """
     dados = {
         "id": produto.slug,
@@ -53,6 +68,13 @@ def serializa_produto(produto) -> dict:
         dados["monthly"] = numero(produto.mensalidade)
         dados["recurring"] = True
         dados["vigencia"] = produto.vigencia_meses
+
+    if politica is None:
+        # `politica_cobranca` é OneToOne reverso: sem exceção, acessar levanta
+        # RelatedObjectDoesNotExist em vez de devolver None.
+        politica = getattr(produto, "politica_cobranca", None)
+    if politica is not None:
+        dados["cobranca"] = serializa_politica(politica)
     return dados
 
 
@@ -84,6 +106,10 @@ def serializa_categoria(categoria, produtos=None) -> dict:
         dados["flow"] = categoria.fluxo
     if categoria.sigla:
         dados["sigla"] = categoria.sigla
+    # Só sai quando existe: categoria sem referência mantém o contrato de hoje,
+    # e o front distingue "não configurado" de "configurado como zero".
+    if categoria.valor_referencia is not None:
+        dados["valor_referencia"] = numero(categoria.valor_referencia)
     dados["products"] = [serializa_produto(p) for p in produtos]
     return dados
 
@@ -93,6 +119,10 @@ def serializa_catalogo(categorias) -> list[dict]:
 
     A ordem importa: o front faz `CATS.map` direto, sem ordenar
     (`index.html:1284`). No KV ela era a ordem do array; aqui é `Categoria.ordem`.
+
+    Quem chama precisa ter feito `prefetch_related("produtos__politica_cobranca")`
+    — ver `CatalogoView._cats`. Sem isso, cada produto vira uma consulta a mais
+    procurando uma exceção que quase nunca existe.
     """
     return [
         serializa_categoria(cat, list(cat.produtos.all()))
