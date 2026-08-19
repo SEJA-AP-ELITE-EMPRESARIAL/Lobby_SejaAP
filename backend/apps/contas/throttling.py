@@ -18,3 +18,16 @@ from rest_framework.throttling import AnonRateThrottle
 
 class LoginThrottle(AnonRateThrottle):
     scope = "login"
+
+
+class DefinicaoSenhaThrottle(AnonRateThrottle):
+    """Teto do `POST /api/senha/definir`.
+
+    Separado do login porque o custo é outro: cada chamada vale uma tentativa
+    de adivinhar um token de 32 bytes. Adivinhar é inviável mesmo sem teto, mas
+    um endpoint anônimo que grava credencial sem limite nenhum é convite para
+    virar alvo de varredura — e a varredura sozinha consumiria a cota do app no
+    Conecta ID, derrubando o login de quem está vendendo.
+    """
+
+    scope = "definir_senha"

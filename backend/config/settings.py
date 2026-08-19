@@ -224,6 +224,10 @@ REST_FRAMEWORK = {
         # reenviada algumas vezes. Existe para o endpoint não virar oráculo
         # de "qual valor passa na conferência".
         "comprovante": os.environ.get("LOBBY_RATE_COMPROVANTE", "120/hour"),
+        # Definição de senha por link. Baixo de propósito: o caminho normal é
+        # uma pessoa usando um link uma vez. Sobra folga para quem erra a
+        # política de senha algumas vezes seguidas e tenta de novo.
+        "definir_senha": os.environ.get("LOBBY_RATE_DEFINIR_SENHA", "20/hour"),
     },
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }

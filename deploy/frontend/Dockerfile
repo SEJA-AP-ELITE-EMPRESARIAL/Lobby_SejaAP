@@ -1,4 +1,4 @@
-# Front do Lobby — nginx servindo dois arquivos HTML.
+# Front do Lobby — nginx servindo três arquivos HTML.
 #
 # O contexto de build é a RAIZ do repositório, não esta pasta: `index.html` e
 # `admin.html` continuam onde sempre estiveram. Isso é de propósito — o projeto
@@ -12,5 +12,6 @@ COPY deploy/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 # Babel vêm de CDN e o SVG do logo está inline no próprio HTML.
 COPY index.html /usr/share/nginx/html/index.html
 COPY admin.html /usr/share/nginx/html/admin.html
+COPY definir-senha.html /usr/share/nginx/html/definir-senha.html
 
 EXPOSE 80

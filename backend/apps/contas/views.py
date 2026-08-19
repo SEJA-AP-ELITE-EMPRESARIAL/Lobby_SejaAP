@@ -51,12 +51,14 @@ from identidade_client import (
     IdentidadeIndisponivel,
     NaoEncontrado,
     SemAcessoAoApp,
+    SenhaFraca,
+    TokenInvalido,
     central_ativa,
 )
 
 from .identidade import resolver_usuario
 from .models import papel_de
-from .throttling import LoginThrottle
+from .throttling import DefinicaoSenhaThrottle, LoginThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,10 @@ MSG_SEM_PAPEL = (
 MSG_BLOQUEADO = "Muitas tentativas. Aguarde alguns minutos e tente de novo."
 MSG_INDISPONIVEL = (
     "O sistema de login está indisponível no momento. Tente em instantes."
+)
+MSG_LINK_MORTO = (
+    "Este link não vale mais. Ele expira em 48 horas e só pode ser usado uma "
+    "vez — peça um novo a quem administra."
 )
 
 
@@ -172,3 +178,53 @@ def sessao_atual(request):
             "precisaTrocarSenha": bool(vinculo and vinculo.precisa_trocar_senha),
         }
     )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([DefinicaoSenhaThrottle])
+def definir_senha(request):
+    """POST /api/senha/definir — {token, senha_nova}.
+
+    O outro lado do link que o admin do Conecta ID gera: o administrador
+    entrega o link, e é aqui que a pessoa escolhe a própria senha. Nem o
+    administrador conhece o resultado.
+
+    Existe porque, sem ela, o Lobby era o único app da empresa em que a senha
+    do Conecta ID não podia ser definida — o aviso de troca mandava o gerente
+    pedir o link no kanban, um sistema em que boa parte de quem vende não
+    entra. O login já era 100% central; faltava esta metade do ciclo.
+
+    Anônima de propósito: quem chega aqui ainda não consegue entrar. E sem eco
+    no erro do token — inexistente, expirado e já usado devolvem a mesma frase,
+    porque diferenciar contaria a quem chuta que aquele formato de token
+    existe. Quem valida e grava é o Conecta ID; daqui não passa nada perto de
+    banco de senha.
+    """
+    if not central_ativa():
+        # Mesmo desfecho do login: sem a central não há senha nenhuma para
+        # definir, e falhar alto evita a pessoa achar que definiu.
+        logger.error("AUTH_CENTRAL_ATIVO desligado — definição de senha indisponível")
+        return _resposta(MSG_INDISPONIVEL, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    dados_entrada = request.data or {}
+    token = (dados_entrada.get("token") or "").strip()
+    senha = dados_entrada.get("senha_nova") or ""
+    if not token or not senha:
+        return _resposta(
+            "Informe o link completo e a senha nova.", status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        ClienteIdentidade().definir_senha(token, senha)
+    except TokenInvalido:
+        return _resposta(MSG_LINK_MORTO, status.HTTP_400_BAD_REQUEST)
+    except SenhaFraca as erro:
+        # Aqui a mensagem detalhada É útil, ao contrário do erro de token: é a
+        # pessoa escolhendo a senha dela, e ela precisa saber o que corrigir.
+        return _resposta(str(erro), status.HTTP_400_BAD_REQUEST)
+    except IdentidadeIndisponivel:
+        logger.exception("Conecta ID indisponível na definição de senha")
+        return _resposta(MSG_INDISPONIVEL, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    return Response({"ok": True, "mensagem": "Senha definida. Você já pode entrar."})
