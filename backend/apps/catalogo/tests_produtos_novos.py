@@ -181,13 +181,13 @@ class ProdutoNovoNaEliteTest(TestCase):
             recorrente=True,
             mensalidade=Decimal("16000"),
             vigencia_meses=12,
-            ordem=1,  # mesma ordem do BASE; o desempate é o id
+            ordem=1,  # mesma ordem do PRÉ; o desempate é o id
         )
 
-        # Ordem 1 é a mesma do ELITE BASE; o desempate é o id, e o BASE é mais
+        # Ordem 1 é a mesma do ELITE PRÉ; o desempate é o id, e o PRÉ é mais
         # antigo. O plano novo entra logo depois dele.
         ids = [p["id"] for p in self._elite_servida()["products"]]
-        self.assertEqual(ids[:4], ["pre", "base", "plus", "pro"])
+        self.assertEqual(ids[:4], ["base", "pre", "plus", "pro"])
 
 
 class SiglaDoProdutoNovoTest(TestCase):

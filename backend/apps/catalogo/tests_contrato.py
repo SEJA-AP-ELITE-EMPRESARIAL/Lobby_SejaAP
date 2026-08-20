@@ -39,16 +39,16 @@ CATALOGO_EM_PRODUCAO = [
         "desc": "Consultoria individual contínua — os planos Elite da Seja AP.",
         "products": [
             {
-                "id": "pre", "name": "ELITE PRÉ", "sigla": "EPR",
-                "desc": "O plano do Primeiro Passo", "duration": "12 meses",
-                "icon": "start", "price": 2997 * 12,
-                "monthly": 2997, "recurring": True, "vigencia": 12,
-            },
-            {
                 "id": "base", "name": "ELITE BASE", "sigla": "BAS",
                 "desc": "O plano da Fundação", "duration": "12 meses",
                 "icon": "foundation", "price": 5997 * 12,
                 "monthly": 5997, "recurring": True, "vigencia": 12,
+            },
+            {
+                "id": "pre", "name": "ELITE PRÉ", "sigla": "EPR",
+                "desc": "O plano do Primeiro Passo", "duration": "12 meses",
+                "icon": "start", "price": 2997 * 12,
+                "monthly": 2997, "recurring": True, "vigencia": 12,
             },
             {
                 "id": "pro", "name": "ELITE PRO", "sigla": "PRO",
