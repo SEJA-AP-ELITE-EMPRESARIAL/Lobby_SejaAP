@@ -127,24 +127,33 @@ estabilizar — basta reapontar o DNS de volta.
 ## Deploy do dia a dia
 
 **Não existe deploy automático.** Não há GitHub Actions neste repo: push em `main`
-publica no GitHub e mais nada. Enquanto ninguém rodar o comando abaixo, produção
-continua servindo o build anterior.
+publica no GitHub e mais nada. Enquanto ninguém rodar os comandos abaixo,
+produção continua servindo o build anterior.
+
+**Qual dos três roteiros usar** — a diferença é só se há migration nova:
+
+| Mudou | Roteiro |
+|---|---|
+| Só `index.html` / `admin.html` | [Só o front](#só-o-front) |
+| Backend, **sem** migration nova | [Front + backend](#front--backend) |
+| Backend, **com** migration nova | [Com migration](#com-migration-a-ordem-importa) — a ordem é outra, e importa |
+
+Os três começam no mesmo lugar:
 
 ```bash
 ssh prod.solucoes.sejaap
 cd /opt/conecta/app/Lobby_SejaAP
-git pull --ff-only origin main
-sudo docker compose up -d --build
-sudo docker compose exec backend python manage.py migrate   # só se houver migration nova
 ```
 
-**O `sudo` não é opcional.** O `.env` é um link para `/opt/conecta/env/lobby.env`,
-que é `root:600` — sem sudo o compose morre com `permission denied` antes de
-construir qualquer coisa. O usuário `deploy` está no grupo sudo e passa sem senha.
+**O `sudo` não é opcional** em nenhum deles. O `.env` é um link para
+`/opt/conecta/env/lobby.env`, que é `root:600` — sem sudo o compose morre com
+`permission denied` antes de construir qualquer coisa. O usuário `deploy` está no
+grupo sudo e passa sem senha.
 
-Mudança só de `index.html` ou `admin.html` não precisa mexer no backend:
+### Só o front
 
 ```bash
+git pull --ff-only origin main
 sudo docker compose up -d --build --no-deps frontend
 ```
 
@@ -152,15 +161,72 @@ O `--no-deps` evita recriar backend e túnel por nada. E o `--build` é obrigat�
 os dois HTML são **copiados para dentro da imagem** (`deploy/frontend/Dockerfile`),
 não montados por volume — editar o arquivo na VPS não muda o que o nginx serve.
 
-Migrations **nunca** rodam no boot. É o padrão da casa, e existe para que uma
-migration ruim não suba junto com o container num horário movimentado.
+### Front + backend
 
-**Migration que confere dado antes de mexer no schema.** A
-`catalogo/0003_sigla_unica_no_catalogo` torna a sigla do produto única e, antes de
-criar o índice, procura sigla repetida. Se achar, ela **para com a lista do que
-está repetido** em vez de deixar o Postgres reclamar de um índice sem dizer qual
-linha é o problema. Nesse caso: corrija as siglas pelo `/django-admin/` e rode o
-`migrate` de novo — nada foi aplicado pela metade (é uma transação).
+```bash
+git pull --ff-only origin main
+sudo docker compose up -d --build
+```
+
+### Com migration: a ordem importa
+
+Migrations **nunca** rodam no boot. É o padrão da casa, e existe para que uma
+migration ruim não suba junto com o container num horário movimentado. O que
+segue é COMO rodá-las sem derrubar o lobby no meio.
+
+```bash
+git pull --ff-only origin main
+
+# 1. Rede de segurança: nomeie as imagens que estão no ar ANTES de sobrescrevê-las
+sudo docker tag lobby-sejaap-backend:latest  lobby-sejaap-backend:$(git rev-parse --short HEAD@{1})
+sudo docker tag lobby-sejaap-frontend:latest lobby-sejaap-frontend:$(git rev-parse --short HEAD@{1})
+
+# 2. Construir SEM trocar o que está servindo
+sudo docker compose build
+
+# 3. Migrar com a imagem NOVA, ainda sem trocar os containers
+sudo docker compose run --rm --no-deps backend python manage.py migrate
+
+# 4. Só agora trocar
+sudo docker compose up -d
+```
+
+**Por que não é `up -d --build` e depois `migrate`.** Essa ordem — que este
+runbook mandou fazer até 25/08/2026 — põe o **código novo servindo tráfego contra
+o schema velho**. Basta o código novo ler uma coluna que a migration ainda não
+criou para `GET /api/catalogo` responder 500 **para todo consultor em campo** até
+o migrate terminar. Aconteceria na entrega do Formulário DH, que acrescentou
+`Produto.fluxo` e o lê no serializer.
+
+**E por que não dá para migrar antes do `build`.** O `compose exec backend` roda
+o código da imagem que está no ar — a **velha**, que não contém as migrations
+novas. Daí o `compose run` do passo 3: ele sobe um container efêmero **com a
+imagem recém-construída**, aplica as migrations e sai, sem tocar no que está
+servindo. O `--rm` remove o container ao fim; o `--no-deps` evita recriar o túnel,
+que já está de pé (e é dele que o backend precisa para achar o banco).
+
+**O passo 1 não é zelo.** O `build` sobrescreve o `:latest`; sem taguear antes, a
+imagem anterior vira dangling e o rollback vira caça por ID. `HEAD@{1}` é o commit
+em que a VPS estava **antes** do `pull` (conferido na VPS em 25/08/2026: depois
+do pull para `8fea667`, ele resolvia para `795853f`) — se preferir não depender
+do reflog, use o SHA que o `git log --oneline -1` mostrava antes.
+
+**Rollback não desfaz migration.** Voltar a imagem devolve o código anterior, não
+o schema. Migration com `desfazer` (as deste repo têm) se reverte à mão:
+`sudo docker compose run --rm --no-deps backend python manage.py migrate <app> <número anterior>`.
+Confira o `desfazer` antes: algumas se recusam a reverter de propósito — a
+`catalogo/0007` não recria o produto que apagou, e a `0010` para se achar venda.
+
+**Migration que confere dado antes de mexer no schema** é comum aqui, e é
+deliberado: ela para com a mensagem em português em vez de deixar o Postgres
+reclamar de um índice sem dizer qual linha é o problema. Nada fica pela metade
+(é uma transação). Duas que fazem isso:
+
+- `catalogo/0003` procura sigla de produto repetida antes de criar o índice único;
+- `catalogo/0010` procura venda emitida na categoria `palestras` antes de
+  renomear o slug dela para `produtos`.
+
+Nesses casos: corrija o dado (pelo `/django-admin/`) e rode o `migrate` de novo.
 
 ## Verificações
 
@@ -170,6 +236,17 @@ curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/           
 curl -s https://lobby.sejaap.com.br/api/catalogo | head -c 200                   # JSON público
 curl -s -o /dev/null -w '%{http_code}\n' -X PUT https://lobby.sejaap.com.br/api/catalogo  # 401
 ```
+
+Com migration nova, confirme também que ela subiu. Aqui o `exec` é o certo — o
+container que está no ar já é o da imagem nova:
+
+```bash
+sudo docker compose exec backend python manage.py showmigrations catalogo vendas | tail -5
+curl -s https://lobby.sejaap.com.br/api/catalogo | head -c 300    # o campo novo aparece?
+```
+
+A segunda linha vale mais que a primeira: `showmigrations` diz o que a tabela
+`django_migrations` registra, e o que interessa é o que a aplicação **responde**.
 
 **Confirme que o build novo está no ar**, e não o anterior. Container saudável
 não quer dizer HTML novo — a imagem pode ter sido construída antes do `git pull`:
