@@ -42,7 +42,16 @@ Duas decisões de modelagem que valem explicação, porque não são óbvias:
    caminho normal (a Elite vai receber produtos novos), a garantia tem que estar
    no banco, não na atenção de quem digita.
 
-4. A REGRA DE DATA do cronograma é dado, não código.
+4. FLUXO PRÓPRIO existe em DOIS níveis, e eles não são o mesmo.
+   `Categoria.fluxo` é a APN: a categoria inteira não tem tabela e não tem
+   produto a escolher. `Produto.fluxo` (17/08/2026 → 25/08/2026) é o
+   Recrutamento e Seleção: a categoria "Produtos" lista produtos normalmente, e
+   é o produto escolhido que manda o consultor para um formulário próprio em vez
+   do cronograma de parcelas. Foi preciso separar porque "Produtos" nasceu para
+   receber itens sem relação entre si — o próximo pode ser um produto de tabela,
+   e um fluxo na categoria trancaria todos no mesmo formulário.
+
+5. A REGRA DE DATA do cronograma é dado, não código.
    Até 17/08/2026 o dia do vencimento (15) e o mês da primeira parcela viviam em
    constantes do `index.html`: mudar o dia de cobrança era deploy do front. Como
    essa data muda com frequência — e sempre com pressa, porque acompanha
@@ -103,6 +112,28 @@ class Cor(models.TextChoices):
     BLUE = "blue", "Azul"
     GREEN = "green", "Verde"
     PURPLE = "purple", "Roxo"
+
+
+class FluxoProduto(models.TextChoices):
+    """Formulário próprio de um PRODUTO — o que entra no lugar da tabela de preços.
+
+    Não confundir com `Categoria.fluxo`. Lá o fluxo é da categoria inteira (a
+    APN: não há produto a escolher). Aqui ele é de UM produto dentro de uma
+    categoria comum: a categoria continua listando produtos, e é o produto
+    escolhido que decide para qual formulário o consultor vai.
+
+    A separação existe porque "Produtos" nasceu para receber vários itens sem
+    relação entre si — o Recrutamento e Seleção é o primeiro, e o próximo pode
+    perfeitamente ser um produto de tabela. Um fluxo na categoria trancaria
+    todos eles no mesmo formulário.
+
+    Ao contrário de `Categoria.fluxo`, este campo tem CHOICES: cada valor daqui
+    corresponde a um formulário escrito no `index.html`, e um valor que o front
+    não conhece é um produto que abre sem preço e sem formulário — quebrado, em
+    silêncio. Acrescentar um valor aqui é sempre deploy do front junto.
+    """
+
+    DH = "dh", "Formulário DH (Recrutamento e Seleção)"
 
 
 class Categoria(models.Model):
@@ -239,6 +270,18 @@ class Produto(models.Model):
     )
     icone = models.CharField("ícone", max_length=60, default="workspace_premium")
 
+    fluxo = models.CharField(
+        "fluxo próprio",
+        max_length=20,
+        blank=True,
+        default="",
+        choices=FluxoProduto.choices,
+        help_text="Vazio = produto de tabela: tem preço aqui e o consultor segue "
+        "o fluxo padrão. Preenchido, o produto NÃO tem preço — o consultor cai "
+        "num formulário próprio e os valores saem de lá. Produto assim é "
+        "somente leitura para a tela da diretoria.",
+    )
+
     recorrente = models.BooleanField(
         "recorrente",
         default=False,
@@ -284,9 +327,15 @@ class Produto(models.Model):
             models.UniqueConstraint(
                 fields=("categoria", "slug"), name="produto_slug_unico_na_categoria"
             ),
-            # As duas metades da mesma invariante. Escritas como constraint, e não
-            # como validação de formulário, porque o /django-admin/ e um shell
-            # `manage.py` passam por fora de qualquer serializer.
+            # As três metades — sim, três — da mesma invariante: um produto é
+            # recorrente, ou avulso, ou de fluxo próprio, e cada um desses tem
+            # exatamente um conjunto de colunas preenchido. O `~Q(fluxo="")` nas
+            # duas primeiras é o que abre espaço para a terceira: produto de
+            # formulário não tem preço nenhum para conferir.
+            #
+            # Escritas como constraint, e não como validação de formulário,
+            # porque o /django-admin/ e um shell `manage.py` passam por fora de
+            # qualquer serializer.
             #
             # `condition=` desde o Django 6.0. O kwarg antigo (`check=`) foi
             # depreciado na 5.1 e REMOVIDO na 6.0 — nele, o import do app inteiro
@@ -294,7 +343,8 @@ class Produto(models.Model):
             # reexecuta, mas é importada toda vez que o Django carrega o histórico.
             models.CheckConstraint(
                 name="produto_recorrente_tem_mensalidade_e_vigencia",
-                condition=models.Q(recorrente=False)
+                condition=~models.Q(fluxo="")
+                | models.Q(recorrente=False)
                 | models.Q(
                     recorrente=True,
                     mensalidade__isnull=False,
@@ -304,12 +354,26 @@ class Produto(models.Model):
             ),
             models.CheckConstraint(
                 name="produto_avulso_tem_valor",
-                condition=models.Q(recorrente=True)
+                condition=~models.Q(fluxo="")
+                | models.Q(recorrente=True)
                 | models.Q(
                     recorrente=False,
                     valor__isnull=False,
                     mensalidade__isnull=True,
                     vigencia_meses__isnull=True,
+                ),
+            ),
+            # Produto de fluxo próprio não guarda valor NENHUM. Um preço parado
+            # nessas colunas seria lido por quem não sabe da história — no
+            # `/admin`, num relatório — e cotado como se fosse tabela.
+            models.CheckConstraint(
+                name="produto_de_fluxo_proprio_nao_tem_preco",
+                condition=models.Q(fluxo="")
+                | models.Q(
+                    recorrente=False,
+                    mensalidade__isnull=True,
+                    vigencia_meses__isnull=True,
+                    valor__isnull=True,
                 ),
             ),
         ]
@@ -329,17 +393,51 @@ class Produto(models.Model):
         if conflito:
             raise ValidationError({"sigla": f"A sigla {self.sigla} já é de {conflito}."})
 
+        # A mesma regra da `CheckConstraint`, dita antes e em português: o banco
+        # recusa com um erro que não ajuda quem está no formulário do
+        # /django-admin/.
+        if self.fluxo and (
+            self.recorrente
+            or self.mensalidade is not None
+            or self.vigencia_meses is not None
+            or self.valor is not None
+        ):
+            raise ValidationError(
+                {
+                    "fluxo": "Produto de fluxo próprio não tem preço: os valores "
+                    "saem do formulário. Limpe mensalidade, vigência e valor à "
+                    "vista, e desmarque recorrente."
+                }
+            )
+
     def save(self, *args, **kwargs):
+        # Também no save: shell, migration e script não passam por full_clean().
         self.sigla = normaliza_sigla(self.sigla)
+        self.fluxo = str(self.fluxo or "").strip().lower()
         super().save(*args, **kwargs)
 
     @property
-    def preco(self) -> Decimal:
+    def de_formulario(self) -> bool:
+        """Produto que abre formulário próprio, sem passar pela tabela de preços.
+
+        O equivalente, no produto, do `gerenciada_em_codigo` da categoria — e o
+        critério é o mesmo: o `fluxo`, nunca o slug.
+        """
+        return bool(self.fluxo)
+
+    @property
+    def preco(self) -> Decimal | None:
         """O total do contrato — `price` no JSON.
 
         Derivado em recorrente, guardado em avulso. Esta é a única fonte do
         campo: não existe coluna `preco`, então não existe estado inconsistente.
+
+        `None` em produto de fluxo próprio, e é o valor certo: não é zero (zero
+        é um preço, e um preço errado), é a ausência de preço. Quem serializa
+        omite a chave; quem exibe mostra "definido no formulário".
         """
+        if self.fluxo:
+            return None
         if self.recorrente:
             return arredonda(self.mensalidade * self.vigencia_meses)
         return arredonda(self.valor)

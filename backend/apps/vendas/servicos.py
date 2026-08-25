@@ -140,6 +140,27 @@ def emitir(dados: dict, *, usuario=None, ip=None) -> ComprovanteVenda:
                 )
         else:
             _confere_contra_a_tabela(valores)
+    elif valores["fluxo"] == ComprovanteVenda.Fluxo.DH:
+        # DH (Recrutamento e Seleção): também não há tabela — o valor da venda é
+        # a soma dos adiantamentos do quadro de vagas, que só existe depois de o
+        # cliente preencher o formulário. O que dá para conferir, e é conferido,
+        # são duas coisas:
+        #
+        # 1. o produto existe E é mesmo de fluxo `dh` (um produto de tabela
+        #    entrando por aqui estaria fugindo da conferência de preço);
+        # 2. a soma fecha — as parcelas que o front declarou (uma por vaga) têm
+        #    que dar o total que ele mandou. Sem isso, o resumo diria um número
+        #    e o cronograma cobraria outro.
+        if not Produto.objects.filter(
+            categoria__slug=valores["categoria_id"],
+            slug=valores["produto_id"],
+            fluxo=ComprovanteVenda.Fluxo.DH,
+        ).exists():
+            raise VendaRecusada(
+                "Produto de formulário não encontrado no catálogo. Recarregue a "
+                "página e tente de novo."
+            )
+        _confere_soma(valores)
     else:
         # APN: valor livre por decisão de produto (docs/08_ANDAMENTO.md) — não há
         # tabela contra a qual conferir. O comprovante aqui atesta origem, não

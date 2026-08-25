@@ -68,7 +68,20 @@ def _aplica_valores(produto: Produto, dados: dict):
     exista. Um produto que era avulso e virou recorrente ficaria com `valor`
     preenchido, e o banco recusaria a gravação com um erro de constraint que não
     diz nada a quem está na tela.
+
+    Produto de fluxo próprio não tem nenhuma das duas metades: os valores dele
+    saem do formulário do consultor. A tela manda os campos de preço assim
+    mesmo (o formulário dela é um só), então aqui eles são descartados em vez de
+    recusados — o que a diretoria de fato edita nesse produto é nome, descrição
+    e ícone.
     """
+    if produto.de_formulario:
+        produto.recorrente = False
+        produto.mensalidade = None
+        produto.vigencia_meses = None
+        produto.valor = None
+        return
+
     recorrente = bool(dados.get("recorrente"))
     produto.recorrente = recorrente
     if recorrente:
@@ -155,6 +168,10 @@ def cria(dados: dict, *, autor=None) -> Produto:
             "informe outro identificador."
         )
 
+    # A tela não cria produto de fluxo próprio, e é de propósito: cada fluxo é um
+    # formulário escrito no `index.html`. Criar a linha sem o formulário do outro
+    # lado põe no lobby um produto que não abre. Nasce no /django-admin/, junto
+    # com o deploy do front — ver a migration `0010`.
     produto = Produto(categoria=categoria, slug=slug)
     _aplica_comuns(produto, dados)
     _aplica_valores(produto, dados)

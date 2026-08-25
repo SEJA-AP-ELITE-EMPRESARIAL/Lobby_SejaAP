@@ -54,6 +54,16 @@ def serializa_produto(produto, politica=None) -> dict:
     `cobranca` segue a mesma lógica: só sai quando o produto TEM exceção. Produto
     que herda a política geral fica byte a byte igual ao que o front recebe hoje,
     e o resolvedor do lado de lá é um `||` — `produto.cobranca || cobrancaGeral`.
+
+    PRODUTO DE FLUXO PRÓPRIO sai com `flow` e SEM `price`. A ausência é
+    deliberada: `price: 0` seria um preço — e um preço errado, que o front
+    formataria como "R$ 0,00" na lista e mandaria ao n8n como valor da venda.
+    Sem a chave, quem lê é obrigado a olhar o `flow` e ir buscar os valores onde
+    eles estão, que é o formulário.
+
+    O outro lado disso: um `index.html` antigo, que não conhece o fluxo, mostra
+    esse produto sem valor e não sabe abri-lo. É por isso que criar produto de
+    formulário é deploy do front junto — ver a migration `0010`.
     """
     dados = {
         "id": produto.slug,
@@ -62,8 +72,11 @@ def serializa_produto(produto, politica=None) -> dict:
         "desc": produto.descricao,
         "duration": produto.duracao,
         "icon": produto.icone,
-        "price": numero(produto.preco),
     }
+    if produto.fluxo:
+        dados["flow"] = produto.fluxo
+    else:
+        dados["price"] = numero(produto.preco)
     if produto.recorrente:
         dados["monthly"] = numero(produto.mensalidade)
         dados["recurring"] = True

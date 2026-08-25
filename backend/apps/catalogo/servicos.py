@@ -210,8 +210,8 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
                 # perdeu metade do estado.
                 raise CatalogoInvalido(f'Categoria "{nome_cat}" está sem a lista de produtos.')
             if not produtos_brutos:
-                # Lista VAZIA é legítima desde 17/08/2026: Treinamentos e Palestras
-                # existem travadas e sem produto nenhum, esperando os de verdade.
+                # Lista VAZIA é legítima desde 17/08/2026: Treinamentos existe
+                # travada e sem produto nenhum, esperando os de verdade.
                 # Antes disso toda categoria tinha produto, e o vazio só podia ser
                 # erro — por isso este caso era recusado junto com o malformado.
                 continue
@@ -228,6 +228,14 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
                         f'Produto "{bruto["id"]}" não existe na categoria "{nome_cat}". '
                         "Recarregue a página."
                     )
+                if produto.fluxo:
+                    # Produto de fluxo próprio (o Recrutamento e Seleção) não tem
+                    # valor de tabela: os dele saem do formulário, venda a venda.
+                    # Ignorar em vez de recusar é o que mantém a publicação
+                    # inteira funcionando — a tela manda o catálogo completo de
+                    # volta, e recusar por causa de um produto que ela nem edita
+                    # travaria a diretoria de publicar qualquer preço.
+                    continue
 
                 novo = _valor_publicado(bruto, produto)
                 atual = produto.mensalidade if produto.recorrente else produto.valor

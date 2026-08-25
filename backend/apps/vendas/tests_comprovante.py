@@ -38,6 +38,24 @@ def venda_de_tabela(**mudancas):
     return dados
 
 
+# Venda de DH (Recrutamento e Seleção): duas vagas, uma parcela por vaga.
+# 2 × 4.000 (analista) + 1 × 7.000 (gerente) = 15.000 de adiantamento.
+def venda_dh(**mudancas):
+    dados = {
+        "fluxo": "dh",
+        "categoria_id": "produtos",
+        "produto_id": "recrutamento-selecao",
+        "negociado": False,
+        "valor_total": 15000,
+        "valor_mensal": None,
+        "entrada": 0,
+        "cronograma": [8000, 7000],
+        "protocolo": "RES-260825012345",
+    }
+    dados.update(mudancas)
+    return dados
+
+
 class EmissaoTest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -128,6 +146,35 @@ class EmissaoTest(TestCase):
             "cronograma": [], "protocolo": "APN-1",
         })
         self.assertEqual(resposta.status_code, 422)
+
+    def test_dh_assina_o_quadro_de_vagas(self):
+        """O DH não tem tabela: o total é a soma dos adiantamentos do quadro.
+
+        Uma parcela por vaga, entrada zero — é assim que o `index.html` monta o
+        bloco assinado do Formulário DH.
+        """
+        resposta = self.emitir(venda_dh())
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIn(".", resposta.json()["comprovante"])
+
+    def test_dh_com_quadro_que_nao_fecha_e_recusado(self):
+        """O resumo dizendo um número e o cronograma cobrando outro."""
+        resposta = self.emitir(venda_dh(valor_total=9000))
+        self.assertEqual(resposta.status_code, 422)
+        self.assertIn("não fecha", resposta.json()["erro"])
+
+    def test_produto_de_tabela_nao_entra_como_dh(self):
+        """A burla que o `fluxo=` do produto fecha.
+
+        Sem a conferência, bastaria declarar `fluxo: "dh"` para vender um ELITE
+        PRO por qualquer valor — o fluxo DH não confere preço, porque o produto
+        dele não tem preço. Só produto marcado como de formulário passa por ali.
+        """
+        resposta = self.emitir(
+            venda_dh(categoria_id="elite", produto_id="pro", valor_total=1, cronograma=[1])
+        )
+        self.assertEqual(resposta.status_code, 422)
+        self.assertIn("não encontrado", resposta.json()["erro"])
 
 
 @override_settings(LOBBY_N8N_TOKEN=N8N)

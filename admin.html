@@ -342,6 +342,12 @@ function AbaValores({ api, catalogo, atualizadoEm, aoPublicar }) {
     setMsg('');
   };
 
+  // Produto de fluxo próprio (o Recrutamento e Seleção) chega SEM `price`: os
+  // valores dele saem do formulário do consultor, venda a venda. Ele aparece na
+  // lista para não sumir da vista da diretoria, mas sem campo para editar — e
+  // fica fora do diff de alterações, senão `undefined !== undefined` marcaria
+  // como mudado um produto em que ninguém tocou.
+  const semTabela = (p) => !!p.flow;
   const valorDe = (p) => (p.recurring ? p.monthly : p.price);
   const achaOriginal = (catId, prodId) =>
     original?.find((c) => c.id === catId)?.products.find((p) => p.id === prodId);
@@ -356,6 +362,7 @@ function AbaValores({ api, catalogo, atualizadoEm, aoPublicar }) {
         out.push({ cat: c.name, prod: `${c.name} (referência)`, de: oc.valor_referencia, para: c.valor_referencia });
       }
       for (const p of c.products) {
+        if (semTabela(p)) continue;
         const o = achaOriginal(c.id, p.id);
         if (o && valorDe(o) !== valorDe(p)) out.push({ cat: c.name, prod: p.name, de: valorDe(o), para: valorDe(p), recorrente: !!p.recurring });
       }
@@ -434,7 +441,22 @@ function AbaValores({ api, catalogo, atualizadoEm, aoPublicar }) {
 
           {c.products.map((p) => {
             const o = achaOriginal(c.id, p.id);
-            const mudou = o && valorDe(o) !== valorDe(p);
+            const mudou = !semTabela(p) && o && valorDe(o) !== valorDe(p);
+            if (semTabela(p)) {
+              return (
+                <div className="prod" key={p.id}>
+                  <div>
+                    <div style={{ font: '600 14.5px var(--font-primary)' }}>{p.name}</div>
+                    <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>
+                      {p.desc}{p.duration ? ` · ${p.duration}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ gridColumn: 'span 2', font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+                    Sem valor de tabela — o consultor preenche o formulário do produto, venda a venda.
+                  </div>
+                </div>
+              );
+            }
             return (
               <div className="prod" key={p.id}>
                 <div>
@@ -555,6 +577,10 @@ function AbaCobranca({ api, catalogo, aoPublicar }) {
   for (const c of catalogo) {
     if (c.flow) continue;
     for (const p of c.products) {
+      // Produto de fluxo próprio não monta cronograma de parcelas: cada vaga do
+      // formulário tem a sua data. Uma "exceção de cobrança" nele seria uma
+      // regra que nenhuma tela lê.
+      if (p.flow) continue;
       if (!dados.excecoes.some((e) => e.categoria_id === c.id && e.produto_id === p.id)) {
         semExcecao.push({ categoria_id: c.id, produto_id: p.id, nome: `${c.name} · ${p.name}` });
       }
@@ -752,14 +778,20 @@ function FormularioProduto({ inicial, categorias, novo, onSalvar, onCancelar, sa
           <label className="lbl">Ícone<span className="dica">Material Symbol</span></label>
           <input className="inp" placeholder="shield" {...campo('icone')} />
         </div>
-        <div>
-          <label className="lbl">Cobrança</label>
-          <select className="inp" value={f.recorrente ? 'sim' : 'nao'} onChange={(e) => setF({ ...f, recorrente: e.target.value === 'sim' })}>
-            <option value="sim">Recorrente (mensalidade)</option>
-            <option value="nao">Avulso (valor à vista)</option>
-          </select>
-        </div>
-        {f.recorrente ? (
+        {/* Produto de fluxo próprio não tem preço: quem define os valores é o
+            formulário que o consultor preenche na venda. O bloco de cobrança
+            some inteiro em vez de vir desabilitado — campo cinza convida a
+            perguntar por que não dá para editar. */}
+        {!f.fluxo && (
+          <div>
+            <label className="lbl">Cobrança</label>
+            <select className="inp" value={f.recorrente ? 'sim' : 'nao'} onChange={(e) => setF({ ...f, recorrente: e.target.value === 'sim' })}>
+              <option value="sim">Recorrente (mensalidade)</option>
+              <option value="nao">Avulso (valor à vista)</option>
+            </select>
+          </div>
+        )}
+        {f.fluxo ? null : f.recorrente ? (
           <>
             <div>
               <label className="lbl">Mensalidade (R$)</label>
@@ -780,9 +812,15 @@ function FormularioProduto({ inicial, categorias, novo, onSalvar, onCancelar, sa
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginTop: 18, flexWrap: 'wrap' }}>
         <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>
-          Total do contrato: <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong>
-          {f.recorrente && <span> ({f.vigencia_meses || 0}× de {fmt(Number(String(f.mensalidade).replace(',', '.')) || 0)})</span>}
-          {' · '}o cronograma abre com entrada + {Math.max(0, (f.recorrente ? Number(f.vigencia_meses) || 12 : 12) - 1)} parcelas.
+          {f.fluxo ? (
+            <>Produto de <strong style={{ color: 'var(--text)' }}>fluxo próprio</strong> ({f.fluxo}): sem valor de tabela e sem cronograma — o consultor preenche o formulário a cada venda.</>
+          ) : (
+            <>
+              Total do contrato: <strong style={{ color: 'var(--text)' }}>{fmt(total)}</strong>
+              {f.recorrente && <span> ({f.vigencia_meses || 0}× de {fmt(Number(String(f.mensalidade).replace(',', '.')) || 0)})</span>}
+              {' · '}o cronograma abre com entrada + {Math.max(0, (f.recorrente ? Number(f.vigencia_meses) || 12 : 12) - 1)} parcelas.
+            </>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn-ghost sm" onClick={onCancelar} disabled={salvando}>Cancelar</button>
@@ -806,17 +844,27 @@ function AbaProdutos({ api, catalogo, aoPublicar }) {
     categoria_id: c.id, slug: p.id, nome: p.name, sigla: p.sigla, descricao: p.desc,
     duracao: p.duration, icone: p.icon, recorrente: !!p.recurring,
     mensalidade: p.recurring ? String(p.monthly) : '', vigencia_meses: p.vigencia || 12,
-    valor: p.recurring ? '' : String(p.price),
+    valor: (p.recurring || p.flow) ? '' : String(p.price),
+    // Produto de fluxo próprio: sem preço, e o formulário esconde esse bloco. O
+    // backend descarta os campos de valor que chegarem, mas mostrá-los aqui
+    // convidaria a diretoria a preencher um número que não vale nada.
+    fluxo: p.flow || '',
   });
 
   const salvar = async (f) => {
     setSalvando(true); setMsg('');
     const corpo = {
       categoria_id: f.categoria_id, nome: f.nome.trim(), sigla: f.sigla, descricao: f.descricao,
-      duracao: f.duracao, icone: f.icone, recorrente: f.recorrente,
-      ...(f.recorrente
-        ? { mensalidade: String(f.mensalidade).replace(',', '.'), vigencia_meses: Number(f.vigencia_meses) }
-        : { valor: String(f.valor).replace(',', '.') }),
+      duracao: f.duracao, icone: f.icone,
+      // Produto de fluxo próprio: só texto. O backend descartaria os campos de
+      // valor de qualquer jeito, mas mandar `recorrente` num produto sem preço
+      // é dizer algo que não é verdade sobre ele.
+      ...(f.fluxo ? {} : {
+        recorrente: f.recorrente,
+        ...(f.recorrente
+          ? { mensalidade: String(f.mensalidade).replace(',', '.'), vigencia_meses: Number(f.vigencia_meses) }
+          : { valor: String(f.valor).replace(',', '.') }),
+      }),
     };
     try {
       if (editando === 'novo') await api('/api/produtos', { method: 'POST', body: JSON.stringify(corpo) });
@@ -889,11 +937,12 @@ function AbaProdutos({ api, catalogo, aoPublicar }) {
                   </div>
                   <div><span className="chip">{p.sigla}</span></div>
                   <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
-                    {p.recurring ? <>{fmt(p.monthly)}<span style={{ color: 'var(--text-muted)' }}>/mês</span></> : fmt(p.price)}
+                    {p.flow ? <span style={{ color: 'var(--text-muted)' }}>—</span>
+                      : p.recurring ? <>{fmt(p.monthly)}<span style={{ color: 'var(--text-muted)' }}>/mês</span></> : fmt(p.price)}
                   </div>
                   <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
-                    {p.recurring ? `${p.vigencia} meses` : 'à vista'}
-                    {p.cobranca && <div style={{ color: 'var(--primary)' }}>dia {p.cobranca.dia_vencimento} (exceção)</div>}
+                    {p.flow ? 'formulário próprio' : p.recurring ? `${p.vigencia} meses` : 'à vista'}
+                    {p.cobranca && !p.flow && <div style={{ color: 'var(--primary)' }}>dia {p.cobranca.dia_vencimento} (exceção)</div>}
                   </div>
                   <div>
                     <button className="btn-ghost sm" onClick={() => { setEditando(paraFormulario(c, p)); setMsg(''); }}>

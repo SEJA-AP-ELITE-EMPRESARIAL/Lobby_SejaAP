@@ -68,6 +68,12 @@ class ComprovanteVenda(models.Model):
     class Fluxo(models.TextChoices):
         ELITE = "elite", "Elite (produto de tabela)"
         APN = "apn", "APN (valor livre)"
+        # O DH é o primeiro fluxo de PRODUTO, não de categoria: quem manda o
+        # consultor para o Formulário DH é o `Produto.fluxo` do Recrutamento e
+        # Seleção. O comprovante não muda de natureza por isso — continua sendo
+        # "estes valores saíram do Lobby" — mas o que ele atesta é a soma dos
+        # adiantamentos do quadro de vagas, e não um preço de tabela.
+        DH = "dh", "DH (valores do formulário)"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     protocolo = models.CharField(

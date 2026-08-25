@@ -33,6 +33,7 @@ class ProdutoInline(admin.TabularInline):
         "slug",
         "nome",
         "sigla",
+        "fluxo",
         "recorrente",
         "mensalidade",
         "vigencia_meses",
@@ -74,23 +75,34 @@ class CategoriaAdmin(admin.ModelAdmin):
 
 @admin.register(Produto)
 class ProdutoAdmin(admin.ModelAdmin):
+    """Onde nasce produto de fluxo próprio.
+
+    O `/admin` da diretoria cria e edita produto de TABELA. Produto de fluxo
+    próprio (`fluxo="dh"`, o Recrutamento e Seleção) só se cria aqui, e junto com
+    o deploy do front: cada fluxo é um formulário escrito no `index.html`, e a
+    linha sem o formulário do outro lado é um produto que não abre no lobby.
+    """
+
     list_display = (
         "nome",
         "categoria",
         "sigla",
+        "fluxo",
         "recorrente",
         "mensalidade",
         "vigencia_meses",
         "valor",
         "preco",
     )
-    list_filter = ("categoria", "recorrente")
+    list_filter = ("categoria", "fluxo", "recorrente")
     search_fields = ("nome", "slug", "sigla")
     ordering = ("categoria", "ordem", "id")
 
     @admin.display(description="total do contrato")
     def preco(self, obj):
-        return obj.preco
+        # Produto de formulário não tem preço — e "None" na coluna pareceria
+        # defeito. O travessão diz o que é: não há valor aqui, por desenho.
+        return obj.preco if obj.preco is not None else "— (formulário)"
 
 
 @admin.register(PoliticaCobranca)

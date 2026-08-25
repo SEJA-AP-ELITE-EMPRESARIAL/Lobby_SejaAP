@@ -5,9 +5,10 @@ categorias, o consultor abre um fluxo de cadastro e contratação do cliente
 (Produto → Empresa → Pagamento → Resumo) que reutiliza os **webhooks n8n**
 reais da página de pré-contrato.
 
-> Ativas hoje: **Elite** (4 planos) e **APN** (fluxo próprio, valor negociado).
-> Treinamentos e Palestras aparecem como **"Em implementação"** (travadas) até
-> serem liberadas — e liberar é desmarcar no `/django-admin/`, não deploy.
+> Ativas hoje: **Elite** (6 planos), **APN** (fluxo próprio, valor negociado) e
+> **Produtos** (Recrutamento e Seleção, com o Formulário DH).
+> Treinamentos aparece como **"Em implementação"** (travada) até ser liberada — e
+> liberar é desmarcar no `/django-admin/`, não deploy.
 
 ## Arquivos
 
@@ -145,6 +146,8 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 - **CNPJ** — `POST https://n8n.sejaap.com.br/webhook/brasilapi-cnpj` → `{ cnpj, cnpj_formatado }`
 - **CEP** — `POST https://n8n.sejaap.com.br/webhook/busca-cep` → `{ cep, cep_formatado }`
 - **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `protocolo`, `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
+- **Venda APN** — `POST https://n8n.sejaap.com.br/webhook/lobby-apn` → payload próprio (sem cronograma nem destino).
+- **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `data_pagamento`, `tipo_pagamento`), mais `totais` e o `comprovante`.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
 - **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:
   - `{ acao: "gerar", valor, valor_centavos, cnpj, razao_social, email, telefone, endereco{…} }` → responde **na hora** com `{ orderId|txid, pix_copia_cola | qr_base64 | qr_url }` (sem segurar a conexão).
@@ -194,9 +197,17 @@ quatro abas — e tudo o que se faz por lá fica registrado com autor e período
   `CATS` nem nas constantes do `index.html` (veja *O lobby é anônimo — a
   negociação não*, acima).
 - **Categorias novas, ou destravar uma:** ainda pelo **`/django-admin/`**, sem
-  deploy — desmarque *em implementação*. A APN é a única com `fluxo` preenchido,
-  o que a torna somente leitura para o `/admin` e manda o consultor para o wizard
-  curto.
+  deploy — desmarque *em implementação*. A APN é a única CATEGORIA com `fluxo`
+  preenchido, o que a torna somente leitura para o `/admin` e manda o consultor
+  para o wizard curto.
+- **Fluxo próprio de PRODUTO:** o `Produto.fluxo` é outra coisa, e mais nova
+  (25/08/2026). Ele não tira a categoria da tabela de preços — tira só aquele
+  produto. Hoje existe um: o **Recrutamento e Seleção** (`fluxo='dh'`), na
+  categoria Produtos, que abre o **Formulário DH** em vez do cronograma de
+  parcelas. Produto assim não tem preço, é somente leitura no `/admin`, e **só
+  nasce no `/django-admin/` junto com o deploy do front**: cada fluxo é um
+  formulário escrito no `index.html`, e a linha sem o formulário do outro lado é
+  um produto que não abre.
 - **Produtos:** pelo `/admin` → aba Produtos. O `/django-admin/` também cria, mas
   **por fora do histórico** — use-o só para conserto.
   A `sigla` de 3 letras é **única no catálogo inteiro** (é o `SSS` do protocolo da

@@ -220,6 +220,31 @@ class EdicaoTest(BaseProdutos):
         self.assertIsNone(produto.vigencia_meses)
         self.assertEqual(produto.valor, Decimal("50000.00"))
 
+    def test_edita_texto_de_produto_de_formulario_sem_criar_preco(self):
+        """A tela manda o formulário inteiro, inclusive os campos de preço.
+
+        O Recrutamento e Seleção não tem preço nenhum, e não pode ganhar um por
+        efeito colateral de alguém corrigir a descrição dele. Os campos de valor
+        que vierem no corpo são descartados; o resto grava normalmente.
+        """
+        resposta = self.como_diretoria().patch(
+            "/api/produtos/produtos/recrutamento-selecao",
+            {
+                "nome": "Recrutamento e Seleção",
+                "descricao": "Processo seletivo conduzido pela Seja AP",
+                "recorrente": False,
+                "valor": "9900",
+            },
+            format="json",
+        )
+
+        self.assertEqual(resposta.status_code, 200, resposta.json())
+        produto = Produto.objects.get(slug="recrutamento-selecao")
+        self.assertEqual(produto.descricao, "Processo seletivo conduzido pela Seja AP")
+        self.assertEqual(produto.fluxo, "dh")
+        self.assertIsNone(produto.valor)
+        self.assertIsNone(produto.mensalidade)
+
     def test_produto_inexistente_pede_recarregar(self):
         resposta = self.como_diretoria().patch(
             "/api/produtos/elite/fantasma", {"nome": "X"}, format="json"

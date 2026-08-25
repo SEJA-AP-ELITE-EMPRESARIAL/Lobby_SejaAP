@@ -277,6 +277,45 @@ class SiglaDoProdutoNovoTest(TestCase):
             cria_produto(**self._campos(slug="pro", sigla="NOV"))
 
 
+class ProdutoDeFormularioTest(TestCase):
+    """As invariantes do produto de fluxo próprio, no nível do banco.
+
+    A semente já traz um (o Recrutamento e Seleção); o que se testa aqui é o que
+    o banco recusa em volta dele.
+    """
+
+    def setUp(self):
+        self.produto = Produto.objects.get(slug="recrutamento-selecao")
+
+    def test_nasce_sem_preco_nenhum(self):
+        self.assertEqual(self.produto.fluxo, "dh")
+        self.assertTrue(self.produto.de_formulario)
+        self.assertFalse(self.produto.recorrente)
+        self.assertIsNone(self.produto.preco)
+
+    def test_o_banco_recusa_preco_num_produto_de_formulario(self):
+        """A constraint, não a validação de formulário: shell e script passam por fora."""
+        self.produto.valor = Decimal("9900")
+        with self.assertRaises(IntegrityError):
+            self.produto.save()
+
+    def test_o_formulario_explica_antes_de_o_banco_recusar(self):
+        """`full_clean` diz o que fazer; o IntegrityError não diria nada."""
+        self.produto.recorrente = True
+        self.produto.mensalidade = Decimal("900")
+        self.produto.vigencia_meses = 12
+        with self.assertRaises(ValidationError) as erro:
+            self.produto.full_clean()
+        self.assertIn("não tem preço", str(erro.exception))
+
+    def test_fluxo_desconhecido_e_recusado(self):
+        """Cada fluxo é um formulário no `index.html`. Um valor que o front não
+        conhece põe no lobby um produto que não abre."""
+        self.produto.fluxo = "recrutamento"
+        with self.assertRaises(ValidationError):
+            self.produto.full_clean()
+
+
 class FallbackDoFrontTest(TestCase):
     """`exportar_cats_do_front` — o último passo manual de criar um produto.
 
@@ -307,8 +346,23 @@ class FallbackDoFrontTest(TestCase):
     def test_sai_como_o_array_do_arquivo(self):
         self.assertTrue(self.bloco.startswith("let CATS = ["))
         self.assertTrue(self.bloco.rstrip().endswith("];"))
-        for slug in ("elite", "treinamentos", "apn", "palestras"):
+        for slug in ("elite", "treinamentos", "apn", "produtos"):
             self.assertIn(f"{{ id: '{slug}',", self.bloco)
+
+    def test_produto_de_formulario_sai_com_flow_e_sem_price(self):
+        """A outra golden line: o Recrutamento e Seleção, como se cola no arquivo.
+
+        `flow` presente e `price` ausente é o contrato inteiro do produto de
+        fluxo próprio. Um `price: 0` que escapasse para cá viraria "R$ 0,00" na
+        lista do consultor no dia em que a API caísse — que é justamente o dia
+        em que ninguém vai conferir.
+        """
+        self.assertIn(
+            "{ id: 'recrutamento-selecao', name: 'Recrutamento e Seleção', "
+            "sigla: 'RES', desc: 'Processo seletivo conduzido pela Seja AP, vaga "
+            "a vaga', duration: 'por vaga', flow: 'dh', icon: 'person_search' },",
+            self.bloco,
+        )
 
     def test_produto_novo_sai_na_mesma_ordem_de_campos_do_arquivo(self):
         """Golden line: é isto que se cola no index.html.
