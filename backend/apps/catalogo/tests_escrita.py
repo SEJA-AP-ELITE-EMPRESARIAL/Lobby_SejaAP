@@ -175,7 +175,46 @@ class PublicacaoTest(BaseEscrita):
         )
         ids = [c["id"] for c in resposta.json()["cats"]]
         self.assertIn("apn", ids)
-        self.assertEqual(ids, ["elite", "treinamentos", "apn", "palestras"])
+        self.assertEqual(ids, ["elite", "treinamentos", "apn", "produtos"])
+
+    def test_produto_de_formulario_nao_atrapalha_a_publicacao(self):
+        """A tela devolve o catálogo INTEIRO no PUT, inclusive o que ela não edita.
+
+        O Recrutamento e Seleção volta sem `price` — se a publicação tentasse ler
+        um valor dele, a diretoria não conseguiria publicar preço NENHUM, e o
+        erro apareceria como "Valor inválido" num produto que ninguém tocou.
+        """
+        cats = self.catalogo_atual()
+        self._acha(cats, "elite", "pro")["monthly"] = 13500
+
+        resposta = self.autenticado().put("/api/catalogo", {"cats": cats}, format="json")
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(self._acha(resposta.json()["cats"], "elite", "pro")["monthly"], 13500)
+        # E ele continua onde estava, sem preço nenhum.
+        recrutamento = self._acha(
+            resposta.json()["cats"], "produtos", "recrutamento-selecao"
+        )
+        self.assertEqual(recrutamento["flow"], "dh")
+        self.assertNotIn("price", recrutamento)
+
+    def test_preco_enviado_para_produto_de_formulario_e_ignorado(self):
+        """Mesmo se o corpo trouxer um valor, ele não gruda na linha.
+
+        Não é hipótese remota: basta uma tela antiga, ou um script montando o
+        PUT à mão. Gravar aqui criaria o estado que a `CheckConstraint` existe
+        para impedir — um produto de formulário com preço parado.
+        """
+        cats = self.catalogo_atual()
+        self._acha(cats, "produtos", "recrutamento-selecao")["price"] = 12345
+
+        resposta = self.autenticado().put("/api/catalogo", {"cats": cats}, format="json")
+
+        self.assertEqual(resposta.status_code, 200)
+        produto = Produto.objects.get(slug="recrutamento-selecao")
+        self.assertIsNone(produto.valor)
+        self.assertIsNone(produto.mensalidade)
+        self.assertIsNone(produto.preco)
 
     def test_publicacao_registra_autor_e_alteracoes(self):
         cats = self.catalogo_atual()
@@ -260,9 +299,10 @@ class ValidacaoTest(BaseEscrita):
     def test_categoria_com_lista_vazia_e_aceita(self):
         """Lista vazia é legítima desde 17/08/2026.
 
-        Treinamentos e Palestras existem travadas e SEM produto, esperando os de
-        verdade. Antes disso toda categoria tinha produto e o vazio só podia ser
-        erro — o guarda recusava os dois casos juntos.
+        Treinamentos existe travada e SEM produto, esperando os de verdade (a
+        outra assim era Palestras, que virou "Produtos" e abriu em 25/08/2026).
+        Antes disso toda categoria tinha produto e o vazio só podia ser erro — o
+        guarda recusava os dois casos juntos.
         """
         cats = self.catalogo_atual()
         self.assertEqual(next(c for c in cats if c["id"] == "treinamentos")["products"], [])
@@ -290,8 +330,9 @@ class ValidacaoTest(BaseEscrita):
 
         O produto inválido vem DEPOIS de uma alteração válida — se a escrita não
         fosse atômica, a primeira teria sido gravada. (Antes de 17/08/2026 o
-        inválido ficava na última categoria; Palestras não tem mais produto, então
-        o par agora é `pro` → `conselho`, o último da Elite.)
+        inválido ficava na última categoria; hoje o par é `pro` → `conselho`, o
+        último da Elite. O único produto que vem depois deles no catálogo é o
+        Recrutamento e Seleção, e ele não tem valor a invalidar.)
         """
         cats = self.catalogo_atual()
         self._acha(cats, "elite", "pro")["monthly"] = 15000

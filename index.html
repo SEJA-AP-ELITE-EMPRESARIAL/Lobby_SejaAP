@@ -181,6 +181,18 @@ const SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-e
 const APN_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/lobby-apn';
 // Parcelamento no cartão de crédito da APN (as demais formas são à vista).
 const APN_MAX_PARCELAS_CREDITO = 12;
+// Venda DH (Recrutamento e Seleção) — o Formulário DH tem webhook próprio, pelo
+// mesmo motivo da APN: o payload é outro. Aqui não há cronograma de parcelas nem
+// destino; há um QUADRO DE VAGAS, e cada vaga tem salário de referência,
+// adiantamento, data e forma de pagamento próprios.
+//
+// Mesma exigência de CORS dos demais: nó Webhook em POST, liberado para a origem
+// https://lobby.sejaap.com.br. Sem isso o navegador barra no preflight.
+//
+// Diferente da APN, este fluxo é do PRODUTO, não da categoria: quem manda o
+// consultor para cá é o `flow: 'dh'` do Recrutamento e Seleção, dentro da
+// categoria Produtos — que continua livre para receber produtos de tabela.
+const DH_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/lobby-dh';
 // Cobrança Pix da entrada (EasyFlow), em 2 endpoints:
 //  - CRIAR  : POST PIX_CREATE_URL  -> { orderId, ... }
 //  - STATUS : GET  PIX_STATUS_URL + orderId  -> { status: pending|qr_ready|paid, qrCodeBase64, copyAndPasteCode, expireAt }
@@ -639,6 +651,7 @@ async function postCadastro(url, payload) {
 }
 const sendPreContrato = (payload) => postCadastro(SEND_WEBHOOK_URL, payload);
 const sendVendaApn = (payload) => postCadastro(APN_SEND_WEBHOOK_URL, payload);
+const sendVendaDh = (payload) => postCadastro(DH_SEND_WEBHOOK_URL, payload);
 
 // ===== Cobrança Pix da entrada =====
 // Gera a imagem do QR a partir do código copia-e-cola (EMV) com qrcode-generator.
@@ -716,11 +729,18 @@ function normalizePixResponse(raw) {
  *     docker exec lobby-backend python manage.py exportar_cats_do_front
  *
  *  campos: { id, name, desc, duration, price (TOTAL do contrato), icon,
- *            recurring?, monthly?, vigencia?, cobranca? }
+ *            recurring?, monthly?, vigencia?, cobranca?, flow? }
+ *
+ *  `flow` num PRODUTO (hoje só 'dh') quer dizer que ele não tem preço: o
+ *  consultor cai num formulário próprio e os valores saem de lá. É por isso que
+ *  o Recrutamento e Seleção aparece aqui sem `price` — a ausência é o contrato,
+ *  não esquecimento.
  * ========================================================================== */
 let CATS = [
-  // Gerado por `manage.py exportar_cats_do_front`. Elite é a única categoria
-  // ativa; as demais ficam "Em implementação" (locked) e sem produtos.
+  // Gerado por `manage.py exportar_cats_do_front`. Ativas: Elite (planos de
+  // tabela), APN (fluxo próprio de categoria) e Produtos (com o Recrutamento e
+  // Seleção, de fluxo próprio de produto). Treinamentos fica "Em implementação"
+  // (locked) e sem produtos.
   { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
     desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
     products: [
@@ -737,9 +757,11 @@ let CATS = [
   { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', flow: 'apn', sigla: 'APN',
     desc: 'Aceleração de Performance de Negócios — valor definido na negociação.',
     products: [] },
-  { id: 'palestras', name: 'Palestras', icon: 'campaign', color: 'green', locked: true,
-    desc: 'Palestras in company e eventos de alto impacto.',
-    products: [] },
+  { id: 'produtos', name: 'Produtos', icon: 'inventory_2', color: 'green',
+    desc: 'Produtos e serviços avulsos — cada um com o seu formulário de contratação.',
+    products: [
+      { id: 'recrutamento-selecao', name: 'Recrutamento e Seleção', sigla: 'RES', desc: 'Processo seletivo conduzido pela Seja AP, vaga a vaga', duration: 'por vaga', flow: 'dh', icon: 'person_search' },
+    ] },
 ];
 const COLORS = {
   gold:   { iconBg: 'rgba(199,164,68,0.12)', iconFg: '#E8B84B', orb: '#C7A444' },
@@ -752,7 +774,37 @@ const STEPS = ['Empresa', 'Produto', 'Pagamento', 'Resumo'];
 // A APN tem um fluxo mais curto: não há produto a escolher nem cronograma de
 // parcelas — só cliente, valor/forma/origem e conferência.
 const STEPS_APN = ['Cliente', 'Pagamento', 'Resumo'];
-const stepsDaCategoria = (c) => (c && c.flow === 'apn' ? STEPS_APN : STEPS);
+// O DH (Recrutamento e Seleção) começa pelo produto, porque o fluxo é DELE e não
+// da categoria: "Produtos" pode receber amanhã um produto de tabela, e é a
+// escolha do consultor que decide para onde ele vai. Depois vêm os dados da
+// contratante e o quadro de vagas — que faz o papel do cronograma de parcelas.
+const STEPS_DH = ['Produto', 'Contratante', 'Quadro comercial', 'Resumo'];
+
+/* O fluxo de uma venda vem de dois lugares, nesta ordem:
+ *
+ *   1. a CATEGORIA (`cat.flow`), como na APN: nem chega a haver produto;
+ *   2. o PRODUTO escolhido (`product.flow`), como no Recrutamento e Seleção.
+ *
+ * Enquanto nada foi escolhido, vale o fluxo dos produtos da categoria QUANDO
+ * TODOS concordam — é o que mantém o stepper honesto na primeira tela de uma
+ * categoria de um fluxo só. Se a categoria misturar fluxos, cai no padrão até o
+ * consultor escolher, e `onProduct` reposiciona a etapa.
+ */
+const fluxoDoProduto = (p) => (p && p.flow) || '';
+const fluxoUniformeDosProdutos = (c) => {
+  const fluxos = new Set(((c && c.products) || []).map(fluxoDoProduto));
+  return fluxos.size === 1 ? [...fluxos][0] : '';
+};
+const fluxoDaVenda = (c, p) => (c && c.flow) || fluxoDoProduto(p) || fluxoUniformeDosProdutos(c);
+const stepsDoFluxo = (fluxo) => (fluxo === 'apn' ? STEPS_APN : fluxo === 'dh' ? STEPS_DH : STEPS);
+// Em que etapa fica a lista de produtos, no fluxo de cada um. É por ela que
+// `onProduct` reposiciona quando a escolha do produto muda o próprio fluxo.
+const etapaDoProduto = (fluxo) => (fluxo === 'dh' ? 0 : 1);
+
+// Uma linha do quadro comercial do DH. `salario` e `adiantamento` nascem NaN, e
+// não zero: zero é um valor que alguém digitou, NaN é campo em branco — e a
+// validação da etapa depende de saber a diferença.
+const novaVagaDh = () => ({ cargo: '', quantidade: 1, salario: NaN, adiantamento: NaN, data: '', forma: 'pix' });
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
@@ -1029,6 +1081,12 @@ function App() {
     // Valor livre da venda, forma de pagamento (parcelável só no crédito) e a
     // origem da venda em texto livre.
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
+    // ----- Fluxo DH (produto de fluxo próprio: Recrutamento e Seleção) -----
+    // Os dados da contratante reaproveitam os campos que já existem (cnpj,
+    // razaoSocial, endereco/numero/bairro/cidade, repNome, repCpf, repEmail): são
+    // os mesmos do cadastro do Elite, e duplicá-los criaria duas verdades sobre a
+    // mesma empresa. O que é só do DH é o quadro de vagas.
+    dhVagas: [novaVagaDh()],
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
     // Negociação: `autorizacao` é { token, nome, email, papel } de quem liberou,
@@ -1056,7 +1114,11 @@ function App() {
   const product = s.product;
   // Fluxo APN: wizard curto, sem produto/cronograma/destino.
   const isApn = !!cat && cat.flow === 'apn';
-  const steps = stepsDaCategoria(cat);
+  // Fluxo DH: produto → contratante → quadro de vagas → resumo. Vem do PRODUTO
+  // (ver `fluxoDaVenda`), então vale já na lista de produtos da categoria.
+  const fluxo = fluxoDaVenda(cat, product);
+  const isDh = fluxo === 'dh';
+  const steps = stepsDoFluxo(fluxo);
   const ultimoStep = steps.length - 1;
 
   // Quem autorizou esta negociação, se alguém autorizou.
@@ -1078,7 +1140,24 @@ function App() {
       ...(cat && cat.flow === 'apn' ? { apnValor: referencia } : {}),
     };
   });
-  const onProduct = (p) => patch({ product: p, priceEdit: false, editMode: false, autorizacao: null, observacao: '', unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) });
+  // Produto de fluxo próprio não tem preço nem cronograma: `initPayment` sobre
+  // ele produziria uma entrada NaN e parcelas NaN — números que apareceriam na
+  // barra lateral antes de alguém perceber que não deviam existir.
+  //
+  // Escolher o produto pode TROCAR o fluxo (e com ele a lista de etapas). Quando
+  // isso acontece, a etapa atual não significa mais a mesma coisa, então o passo
+  // é reposicionado na etapa do produto do fluxo novo.
+  const onProduct = (p) => patch((d) => {
+    const fluxoNovo = fluxoDaVenda(cat, p);
+    const trocouDeFluxo = fluxoNovo !== fluxoDaVenda(cat, d.product);
+    return {
+      product: p, priceEdit: false, editMode: false, autorizacao: null, observacao: '',
+      ...(trocouDeFluxo ? { step: etapaDoProduto(fluxoNovo) } : {}),
+      ...(p.flow
+        ? { unitValue: 0, entradaValor: 0, entradaData: '', parcelas: [] }
+        : { unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) }),
+    };
+  });
   const next = () => patch((d) => ({ step: Math.min(ultimoStep, d.step + 1) }));
   const back = () => { if (s.step === 0) patch({ screen: 'lobby' }); else patch((d) => ({ step: d.step - 1 })); };
   const goStep = (i) => patch({ step: i });
@@ -1288,6 +1367,53 @@ function App() {
   const apnPagamentoValid = apnValorOk && !!s.apnForma && (s.apnOrigem || '').trim().length > 1;
   const apnEnvioConfigurado = !!APN_SEND_WEBHOOK_URL;
 
+  /* ----- DH: dados da contratante e quadro comercial por vaga -----
+   *
+   * O QUE FAZ AS VEZES DO PREÇO AQUI
+   *
+   * O Recrutamento e Seleção não tem valor de tabela — o que existe é um quadro
+   * de vagas, e o dinheiro da venda é a soma dos ADIANTAMENTOS. O salário de
+   * referência de cada vaga não entra nessa conta: ele é informação do processo
+   * seletivo (é o que se vai pagar a quem for contratado), não cobrança da Seja
+   * AP. Somá-lo produziria um "total" dez vezes maior que a venda.
+   *
+   * A quantidade multiplica: uma linha "Analista · 3 vagas · adiantamento 2.000"
+   * são 6.000 de adiantamento, não 2.000.
+   */
+  const dhVagas = (Array.isArray(s.dhVagas) && s.dhVagas.length) ? s.dhVagas : [novaVagaDh()];
+  const dhQtd = (v) => Math.max(1, Math.round(Number(v.quantidade) || 1));
+  const dhAdiantamentoDaVaga = (v) => round2((Number(v.adiantamento) || 0) * dhQtd(v));
+  const dhTotal = round2(dhVagas.reduce((soma, v) => soma + dhAdiantamentoDaVaga(v), 0));
+  const dhPosicoes = dhVagas.reduce((n, v) => n + dhQtd(v), 0);
+  // Adiantamento pode ser 0 (venda com pagamento só na entrega), mas não pode
+  // ficar em branco: em branco é campo esquecido, e o total sairia errado sem
+  // ninguém ver. Salário de referência tem que ser > 0 — vaga sem remuneração
+  // não é vaga.
+  const dhVagaValida = (v) => (
+    (v.cargo || '').trim().length > 1 &&
+    Number.isFinite(Number(v.salario)) && Number(v.salario) > 0 &&
+    Number.isFinite(Number(v.adiantamento)) && Number(v.adiantamento) >= 0 &&
+    !!v.data && !!v.forma
+  );
+  const dhQuadroValid = dhVagas.length > 0 && dhVagas.every(dhVagaValida);
+  const dhContratanteValid = (
+    isCNPJ(s.cnpj) && (s.razaoSocial || '').trim().length > 2 &&
+    (s.repNome || '').trim().length > 3 && isCPF(s.repCpf) && isEmail(s.repEmail) &&
+    (s.endereco || '').trim().length > 2 && (s.numero || '').trim().length > 0 &&
+    (s.bairro || '').trim().length > 1 && (s.cidade || '').trim().length > 1
+  );
+  const dhEnvioConfigurado = !!DH_SEND_WEBHOOK_URL;
+  const setVagaDh = (i, campo, valor) => patch((d) => ({
+    dhVagas: (d.dhVagas || []).map((v, j) => (j === i ? { ...v, [campo]: valor } : v)),
+  }));
+  const addVagaDh = () => patch((d) => ({ dhVagas: [...(d.dhVagas || []), novaVagaDh()] }));
+  // A última vaga não sai: um quadro vazio não é um estado que o formulário
+  // saiba representar, e "adicione uma vaga" depois de esvaziar é pior do que
+  // não deixar esvaziar.
+  const removeVagaDh = (i) => patch((d) => ({
+    dhVagas: (d.dhVagas || []).length > 1 ? d.dhVagas.filter((_, j) => j !== i) : d.dhVagas,
+  }));
+
   // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
   const buildPayload = () => {
     const nowIso = new Date().toISOString();
@@ -1436,6 +1562,102 @@ function App() {
     }
   };
 
+  /* ----- Payload + envio do DH (Formulário DH, webhook próprio) -----
+   * A forma do payload segue a do formulário em papel que ele substitui: um
+   * bloco `contratante` e um `quadro_comercial` com uma entrada por vaga. Os
+   * valores vão em reais E em centavos, como nos outros fluxos, porque do lado
+   * do n8n cada integração prefere um dos dois.
+   */
+  const buildDhPayload = () => {
+    const nowIso = new Date().toISOString();
+    return {
+      origem: 'lobby_conecta_ap',
+      etapa: 'envio_venda_dh',
+      categoria: { id: cat ? cat.id : '', nome: cat ? cat.name : '' },
+      produto: {
+        id: product ? product.id : '', nome: product ? product.name : '',
+        sigla: product ? product.sigla : '', fluxo: 'dh',
+      },
+      contratante: {
+        nome_empresa: (s.razaoSocial || '').trim(),
+        cnpj: s.cnpj || '', cnpj_limpo: onlyDigits(s.cnpj),
+        // Endereço como o formulário pede: rua e número num campo só, e também
+        // separados — quem emite contrato quer a linha pronta, quem cadastra no
+        // Omie quer os pedaços.
+        endereco: [(s.endereco || '').trim(), (s.numero || '').trim()].filter(Boolean).join(', '),
+        logradouro: (s.endereco || '').trim(), numero: (s.numero || '').trim(),
+        bairro: (s.bairro || '').trim(), cidade: (s.cidade || '').trim(),
+        // Não são campos do Formulário DH: entram só quando a consulta ao CNPJ
+        // os trouxe, e `dados_receita` diz se foi isso que aconteceu.
+        estado: (s.estado || '').toUpperCase() || null, cep: s.cep || null,
+        dados_receita: s.cnpjStatus === 'done',
+        email: (s.repEmail || '').trim(),
+        representante: {
+          nome: (s.repNome || '').trim(),
+          cpf: s.repCpf || '', cpf_limpo: onlyDigits(s.repCpf),
+        },
+      },
+      quadro_comercial: dhVagas.map((v, i) => {
+        const quantidade = dhQtd(v);
+        const salario = round2(Number(v.salario) || 0);
+        const adiantamento = round2(Number(v.adiantamento) || 0);
+        return {
+          numero: i + 1,
+          cargo: (v.cargo || '').trim(),
+          quantidade,
+          salario_referencia: salario, salario_referencia_centavos: Math.round(salario * 100),
+          adiantamento, adiantamento_centavos: Math.round(adiantamento * 100),
+          // O que a vaga soma na venda: adiantamento × quantidade.
+          adiantamento_total: dhAdiantamentoDaVaga(v),
+          data_pagamento: v.data || null,
+          tipo_pagamento: v.forma, tipo_pagamento_label: paymentLabel(v.forma),
+        };
+      }),
+      totais: {
+        vagas: dhVagas.length, posicoes: dhPosicoes,
+        adiantamento_total: dhTotal, adiantamento_total_centavos: Math.round(dhTotal * 100),
+      },
+      metadata: { user_agent: navigator.userAgent, url: location.href, enviado_em: nowIso, canal: 'lobby_conecta_ap' },
+    };
+  };
+
+  const finalizeDh = async () => {
+    if (!dhContratanteValid || !dhQuadroValid || !dhEnvioConfigurado || s.sendState === 'sending') return;
+    patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
+    // Mesmo formato de protocolo dos demais (SSS-YYMMDDPRRRRR). A sigla é a do
+    // produto (RES) e o dígito da forma vem da PRIMEIRA vaga — no DH cada vaga
+    // tem a sua, e o protocolo só tem espaço para uma.
+    const protocolo = buildProtocol(product, dhVagas[0] ? dhVagas[0].forma : 'pix', new Date());
+    try {
+      const payload = buildDhPayload();
+      payload.protocolo = protocolo;
+
+      // Não há tabela contra a qual conferir: o valor da venda é o quadro que o
+      // cliente acabou de fechar. O que o servidor assina, e o n8n confere, é
+      // que a soma das vagas fecha com o total — e que isto saiu do Lobby.
+      const valores = {
+        fluxo: 'dh',
+        categoria_id: cat ? cat.id : '',
+        produto_id: product ? product.id : '',
+        negociado: false,
+        valor_total: dhTotal,
+        valor_mensal: null,
+        entrada: 0,
+        cronograma: dhVagas.map(dhAdiantamentoDaVaga),
+        protocolo,
+      };
+      const atestado = await pedeComprovante(valores, s.autorizacao?.token);
+      payload.comprovante = atestado.comprovante;
+      payload.comprovante_valores = valores;
+      payload.comprovante_erro = atestado.erro;
+
+      const response = await sendVendaDh(payload);
+      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
+    } catch (e) {
+      patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
+    }
+  };
+
   const finalize = async () => {
     if (!pagamentoValid || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
@@ -1483,6 +1705,7 @@ function App() {
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '',
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
+    dhVagas: [novaVagaDh()],
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
@@ -1622,7 +1845,7 @@ function App() {
                   <span className="ms-icon" style={{ fontSize: 28 }}>{c.icon}</span>
                 </div>
                 {/* Categoria de fluxo próprio (APN) não tem produtos a contar. */}
-                {!locked && <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.04em', color: 'var(--text-muted)', border: '1px solid var(--border-light)', padding: '5px 9px', borderRadius: 7 }}>{c.flow === 'apn' ? 'Valor livre' : `${(c.products || []).length} produtos`}</span>}
+                {!locked && <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.04em', color: 'var(--text-muted)', border: '1px solid var(--border-light)', padding: '5px 9px', borderRadius: 7 }}>{c.flow === 'apn' ? 'Valor livre' : `${(c.products || []).length} ${(c.products || []).length === 1 ? 'produto' : 'produtos'}`}</span>}
               </div>
               <div style={{ font: '700 20px var(--font-primary)', letterSpacing: '-.01em', color: 'var(--text)', marginBottom: 7 }}>{c.name}</div>
               <div style={{ font: '400 13.5px/1.55 var(--font-secondary)', color: 'var(--text-secondary)', marginBottom: 20, minHeight: 42 }}>{c.desc}</div>
@@ -1667,16 +1890,30 @@ function App() {
                 <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 4 }}>{p.desc} · {p.duration}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ font: '700 18px var(--font-primary)', color: 'var(--primary)', letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>{fmt(effTotal)}</div>
-                <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{p.recurring ? `${fmt(effMonthly)}/mês` : 'à vista'}</div>
+                {/* Produto de fluxo próprio não tem preço de tabela — os valores
+                    dele saem do formulário, e um "R$ 0,00" aqui seria um número
+                    que ninguém definiu, exibido como se alguém tivesse. */}
+                {p.flow ? (
+                  <>
+                    <div style={{ font: '600 13px var(--font-primary)', color: 'var(--primary)', whiteSpace: 'nowrap' }}>Formulário próprio</div>
+                    <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>valores por vaga</div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ font: '700 18px var(--font-primary)', color: 'var(--primary)', letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>{fmt(effTotal)}</div>
+                    <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{p.recurring ? `${fmt(effMonthly)}/mês` : 'à vista'}</div>
+                  </>
+                )}
               </div>
             </button>
           );
         })}
       </div>
 
-      {/* Editor do valor do produto — varia por evento/negociação */}
-      {product && (
+      {/* Editor do valor do produto — varia por evento/negociação. Não existe em
+          produto de fluxo próprio: lá não há valor de tabela para negociar, e o
+          que vale é o que o consultor preencher no formulário. */}
+      {product && !product.flow && (
         <div className="card" style={{ marginTop: 16, padding: '18px 22px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -2201,6 +2438,243 @@ function App() {
     </>
   );
 
+  /* ===================================================================== */
+  /* ============  DH — Recrutamento e Seleção (Formulário DH)  =========== */
+  /* ===================================================================== */
+  /* Fluxo de PRODUTO, não de categoria: quem chega aqui escolheu o
+   * Recrutamento e Seleção na lista da categoria Produtos. O formulário é a
+   * transcrição do Formulário DH — dados da contratante e um quadro comercial
+   * com uma linha por vaga.
+   */
+
+  // Etapa 2 — Dados da CONTRATANTE. O CNPJ é consultado com o mesmo webhook do
+  // Elite e preenche endereço, bairro e cidade; tudo continua editável, porque a
+  // Receita traz o endereço do cadastro e o do contrato às vezes é outro.
+  const renderDhContratante = () => {
+    const cnpjBtnLabel = s.cnpjStatus === 'loading' ? 'Buscando…' : s.cnpjStatus === 'done' ? 'Revalidar' : 'Validar CNPJ';
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: colors.iconFg }}>{product ? product.name : cat.name}</span>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '6px 0 6px', color: 'var(--text)' }}>Dados da contratante</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Informe o CNPJ para trazer os dados da empresa — e confira o endereço do contrato.</p>
+        </div>
+
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="sec-title" style={{ marginBottom: 12 }}>Empresa</div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <label className="lbl">CNPJ da empresa<span style={{ color: 'var(--primary)' }}> *</span></label>
+              <input className="inp lg" value={s.cnpj} placeholder="00.000.000/0000-00" inputMode="numeric"
+                onChange={(e) => onField('cnpj', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') validateCnpj(); }} />
+            </div>
+            <button className="btn-prim" onClick={validateCnpj} disabled={s.cnpjStatus === 'loading'} style={{ height: 46 }}>
+              {s.cnpjStatus === 'loading' ? <span className="spin" /> : <span className="ms-icon" style={{ fontSize: 18 }}>search</span>}
+              {cnpjBtnLabel}
+            </button>
+          </div>
+          {s.cnpjStatus === 'done' && (
+            <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: '#4ADE80', background: 'rgba(40,167,69,.12)', border: '1px solid rgba(40,167,69,.3)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>verified</span>Dados encontrados na Receita Federal.
+            </div>
+          )}
+          {(s.cnpjStatus === 'manual' || s.cnpjStatus === 'error') && (
+            <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>error</span>{s.cnpjErr}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: 14, marginTop: 16 }}>
+            <Field span={2} label="Nome da empresa" required value={s.razaoSocial} onChange={(v) => onField('razaoSocial', v)} placeholder="Razão social da contratante" />
+            <Field label="Endereço (rua)" required value={s.endereco} onChange={(v) => onField('endereco', v)} placeholder="Rua, avenida…" />
+            <Field label="Número" required value={s.numero} onChange={(v) => onField('numero', v)} placeholder="000" />
+            <Field label="Bairro" required value={s.bairro} onChange={(v) => onField('bairro', v)} placeholder="Bairro" />
+            <Field label="Cidade" required value={s.cidade} onChange={(v) => onField('cidade', v)} placeholder="Cidade" />
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="sec-title" style={{ marginBottom: 16 }}>Representante</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+            <Field label="Nome do representante" required value={s.repNome} onChange={(v) => onField('repNome', v)} placeholder="Quem assina pela empresa" />
+            <Field label="CPF do representante" required value={s.repCpf} onChange={(v) => onField('repCpf', v)} mask={maskCPF} placeholder="000.000.000-00" inputMode="numeric" />
+            <Field span={2} label="E-mail" required type="email" value={s.repEmail} onChange={(v) => onField('repEmail', v)} placeholder="email@empresa.com.br" />
+          </div>
+          {/* Só reclama depois que o CPF está completo — não fica piscando erro enquanto digita. */}
+          {onlyDigits(s.repCpf).length === 11 && !isCPF(s.repCpf) && (
+            <div style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>error</span>CPF inválido — confira os números.
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
+  // Etapa 3 — Quadro comercial: uma linha por vaga. É o que substitui o
+  // cronograma de parcelas dos outros fluxos, e é de onde sai o valor da venda.
+  const renderDhQuadro = () => (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Quadro comercial</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Uma linha por vaga. O valor da venda é a soma dos adiantamentos.</p>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {dhVagas.map((v, i) => (
+          <div className="card" key={i} style={{ padding: '20px 22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>work</span>
+                <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Vaga {i + 1}</span>
+              </div>
+              {dhVagas.length > 1 && (
+                <button type="button" className="btn-ghost" onClick={() => removeVagaDh(i)} style={{ height: 34 }}>
+                  <span className="ms-icon" style={{ fontSize: 17 }}>delete</span>Remover
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: 14 }}>
+              <Field label="Cargo / vaga" required value={v.cargo} onChange={(t) => setVagaDh(i, 'cargo', t)} placeholder="Ex.: Analista comercial" />
+              <div>
+                <label className="lbl">Quantidade<span style={{ color: 'var(--primary)' }}> *</span></label>
+                <input className="inp" type="number" min="1" step="1" value={v.quantidade}
+                  onChange={(e) => setVagaDh(i, 'quantidade', e.target.value)}
+                  onBlur={(e) => setVagaDh(i, 'quantidade', Math.max(1, Math.round(Number(e.target.value) || 1)))} />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+              <div>
+                <label className="lbl">Salário ou remuneração de referência<span style={{ color: 'var(--primary)' }}> *</span></label>
+                <div style={{ display: 'flex', alignItems: 'center', height: 46, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', padding: '0 12px', gap: 6 }}>
+                  <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+                  <MoneyInput className="" value={v.salario} onChangeNumber={(n) => setVagaDh(i, 'salario', n)} placeholder="0,00" />
+                </div>
+                <div style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 6 }}>Remuneração da vaga — não entra no valor da venda.</div>
+              </div>
+              <div>
+                <label className="lbl">Valor do adiantamento<span style={{ color: 'var(--primary)' }}> *</span></label>
+                <div style={{ display: 'flex', alignItems: 'center', height: 46, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid rgba(199,164,68,.45)', padding: '0 12px', gap: 6 }}>
+                  <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+                  <MoneyInput className="" value={v.adiantamento} onChangeNumber={(n) => setVagaDh(i, 'adiantamento', n)} placeholder="0,00" />
+                </div>
+                <div style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--primary)', marginTop: 6 }}>
+                  {dhQtd(v) > 1
+                    ? `${dhQtd(v)} × ${fmt(Number(v.adiantamento) || 0)} = ${fmt(dhAdiantamentoDaVaga(v))}`
+                    : `Esta vaga soma ${fmt(dhAdiantamentoDaVaga(v))} na venda.`}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+              <div>
+                <label className="lbl">Data de pagamento<span style={{ color: 'var(--primary)' }}> *</span></label>
+                <input className="inp" type="date" value={v.data || ''} onChange={(e) => setVagaDh(i, 'data', e.target.value)} />
+              </div>
+              <div>
+                <label className="lbl">Tipo de pagamento<span style={{ color: 'var(--primary)' }}> *</span></label>
+                <select className="inp" value={v.forma} onChange={(e) => setVagaDh(i, 'forma', e.target.value)}>
+                  {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button type="button" className="btn-ghost" onClick={addVagaDh} style={{ marginTop: 14 }}>
+        <span className="ms-icon" style={{ fontSize: 18 }}>add</span>Adicionar vaga
+      </button>
+
+      <div className="card" style={{ marginTop: 16, padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Adiantamento total</div>
+          <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>
+            {dhVagas.length} {dhVagas.length === 1 ? 'vaga' : 'vagas'} · {dhPosicoes} {dhPosicoes === 1 ? 'posição' : 'posições'}
+          </div>
+        </div>
+        <div style={{ font: '700 22px var(--font-primary)', color: 'var(--primary)', letterSpacing: '-.01em' }}>{fmt(dhTotal)}</div>
+      </div>
+    </>
+  );
+
+  // Etapa 4 — Resumo do DH.
+  const renderDhResumo = () => (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Confirme o pedido</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Revise as informações antes de enviar o formulário.</p>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <span className="sec-title" style={{ fontSize: 12 }}>Contratante</span>
+            <button className="linkbtn" onClick={() => goStep(1)}>Editar</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
+            {[
+              ['Empresa', s.razaoSocial || '—'],
+              ['CNPJ', s.cnpj || '—'],
+              ['Representante', s.repNome || '—'],
+              ['CPF', s.repCpf || '—'],
+              ['Endereço', [(s.endereco || '').trim(), (s.numero || '').trim()].filter(Boolean).join(', ') || '—'],
+              ['Bairro / cidade', [(s.bairro || '').trim(), (s.cidade || '').trim()].filter(Boolean).join(' · ') || '—'],
+              ['E-mail', s.repEmail || '—'],
+            ].map(([k, v]) => (
+              <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <span className="sec-title" style={{ fontSize: 12 }}>Quadro comercial</span>
+            <button className="linkbtn" onClick={() => goStep(2)}>Editar</button>
+          </div>
+          {dhVagas.map((v, i) => (
+            <div key={i} style={{ padding: '12px 0', borderTop: i ? '1px solid var(--border-light)' : 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ font: '600 14px var(--font-primary)', color: 'var(--text)' }}>
+                  {(v.cargo || '').trim() || 'Vaga sem cargo'}
+                  <span style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)' }}> · {dhQtd(v)}×</span>
+                </span>
+                <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--primary)', whiteSpace: 'nowrap' }}>{fmt(dhAdiantamentoDaVaga(v))}</span>
+              </div>
+              <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3 }}>
+                Referência {fmt(Number(v.salario) || 0)} · adiantamento {fmt(Number(v.adiantamento) || 0)} · {dmy(v.data)} · {paymentLabel(v.forma)}
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, marginTop: 6, borderTop: '1px solid var(--border)' }}>
+            <span style={{ font: '600 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Adiantamento total</span>
+            <span style={{ font: "700 16px 'Roboto'", color: 'var(--primary)' }}>{fmt(dhTotal)}</span>
+          </div>
+        </div>
+
+        {!dhEnvioConfigurado && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)' }} role="alert">
+            <span className="ms-icon" style={{ fontSize: 20, color: 'var(--warning)' }}>warning</span>
+            <div style={{ font: '400 13px/1.5 var(--font-secondary)', color: 'var(--text-secondary)' }}>
+              <strong style={{ color: 'var(--text)', display: 'block' }}>Envio do Formulário DH ainda não configurado.</strong>
+              O webhook deste fluxo não foi definido nesta versão. Avise a equipe técnica — o formulário não pode ser enviado até lá.
+            </div>
+          </div>
+        )}
+
+        {s.sendState === 'error' && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(220,53,69,.1)', border: '1px solid rgba(220,53,69,.35)' }} role="alert">
+            <span className="ms-icon" style={{ fontSize: 20, color: 'var(--danger)' }}>error</span>
+            <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+              <strong style={{ color: 'var(--text)', display: 'block' }}>{s.sendErrHandled ? 'Não foi possível enviar.' : 'Não conseguimos enviar.'}</strong>
+              {s.sendErrHandled ? s.sendErr : `${s.sendErr} Verifique a conexão e tente novamente.`}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   const renderResumo = () => {
     const parcelasLabel = s.parcelas.length === 0 ? 'Sem parcelas (à vista)' : s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
     return (
@@ -2365,6 +2839,23 @@ function App() {
                 <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', flexShrink: 0 }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>
               ))}
             </>
+          ) : (isDh && product) ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{product.icon}</span></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ font: '600 14.5px var(--font-primary)', color: 'var(--text)', lineHeight: 1.3 }}>{product.name}</div>
+                  <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(s.razaoSocial || '').trim() || 'Contratante a definir'}</div>
+                </div>
+              </div>
+              {[
+                ['Vagas', `${dhVagas.length} (${dhPosicoes} ${dhPosicoes === 1 ? 'posição' : 'posições'})`],
+                ['Adiantamento', fmt(dhTotal)],
+                ['1º pagamento', dhVagas[0] && dhVagas[0].data ? dmy(dhVagas[0].data) : '—'],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', flexShrink: 0 }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>
+              ))}
+            </>
           ) : product ? (
             <>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
@@ -2402,6 +2893,18 @@ function App() {
       primaryAction = finalizeApn;
       enabled = apnPagamentoValid && apnEnvioConfigurado && !sending;
     }
+  } else if (isDh) {
+    // DH: Produto → Contratante → Quadro comercial → Resumo. Sem Pix, sem
+    // cronograma e sem autorização — não há valor de tabela para negociar.
+    if (s.step === 0) enabled = !!product;
+    else if (s.step === 1) enabled = dhContratanteValid;
+    else if (s.step === 2) enabled = dhQuadroValid;
+    else {
+      primaryLabel = sending ? 'Enviando…' : 'Enviar formulário';
+      primaryIcon = 'check';
+      primaryAction = finalizeDh;
+      enabled = dhContratanteValid && dhQuadroValid && dhEnvioConfigurado && !sending;
+    }
   } else if (s.step === 0) enabled = empresaValid;
   else if (s.step === 1) enabled = !!product;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
@@ -2419,7 +2922,7 @@ function App() {
       primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && !sending;
     }
   }
-  const primaryBusy = isApn
+  const primaryBusy = (isApn || isDh)
     ? (s.step === ultimoStep && sending)
     : (s.step === 3 && (sending || s.pixState === 'generating' || s.pixState === 'awaiting'));
 
@@ -2443,6 +2946,13 @@ function App() {
                   {s.step === 0 && renderApnCliente()}
                   {s.step === 1 && renderApnPagamento()}
                   {s.step === 2 && renderApnResumo()}
+                </>
+              ) : isDh ? (
+                <>
+                  {s.step === 0 && renderProduto()}
+                  {s.step === 1 && renderDhContratante()}
+                  {s.step === 2 && renderDhQuadro()}
+                  {s.step === 3 && renderDhResumo()}
                 </>
               ) : (
                 <>
@@ -2471,12 +2981,17 @@ function App() {
             <div style={{ width: 88, height: 88, borderRadius: '50%', margin: '0 auto 28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(40,167,69,.12)', border: '1.5px solid rgba(40,167,69,.4)', animation: 'popIn .4s both' }}>
               <span className="ms-icon" style={{ fontSize: 48, color: '#4ADE80' }}>check_circle</span>
             </div>
-            <h1 style={{ font: '700 30px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 10px', color: 'var(--text)' }}>Cadastro enviado!</h1>
+            <h1 style={{ font: '700 30px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 10px', color: 'var(--text)' }}>{isDh ? 'Formulário enviado!' : 'Cadastro enviado!'}</h1>
             <p style={{ font: '400 15px/1.6 var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 28px' }}>
               {isApn ? (
                 <>
                   {cat.name} contratada por <strong style={{ color: 'var(--text)' }}>{apnNomeCliente}</strong>.<br />
                   Venda de {fmt(apnValorOk ? apnValor : 0)} registrada em {paymentLabel(s.apnForma).toLowerCase()}{apnParcelas > 1 ? ` em ${apnParcelas}×` : ''}.
+                </>
+              ) : isDh ? (
+                <>
+                  {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
+                  {dhVagas.length} {dhVagas.length === 1 ? 'vaga' : 'vagas'} ({dhPosicoes} {dhPosicoes === 1 ? 'posição' : 'posições'}) · adiantamento de {fmt(dhTotal)}.
                 </>
               ) : (
                 <>
@@ -2490,7 +3005,7 @@ function App() {
               <span style={{ font: "700 15px 'Roboto'", color: 'var(--primary)', letterSpacing: '.04em' }}>{s.protocol}</span>
             </div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-              <button className="btn-prim" onClick={restart}>Novo cadastro<span className="ms-icon" style={{ fontSize: 18 }}>add</span></button>
+              <button className="btn-prim" onClick={restart}>{isDh ? 'Novo formulário' : 'Novo cadastro'}<span className="ms-icon" style={{ fontSize: 18 }}>add</span></button>
             </div>
           </div>
         )}

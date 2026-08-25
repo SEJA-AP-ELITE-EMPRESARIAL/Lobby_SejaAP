@@ -99,14 +99,28 @@ CATALOGO_EM_PRODUCAO = [
         "products": [],
     },
     {
-        # Mesma história dos Treinamentos: travada, e agora sem produtos.
-        "id": "palestras",
-        "name": "Palestras",
-        "icon": "campaign",
+        # Era "Palestras", travada e sem produtos, desde 17/08/2026. Em
+        # 25/08/2026 virou "Produtos" e abriu com o primeiro item — que é o
+        # primeiro produto de FLUXO PRÓPRIO do catálogo.
+        "id": "produtos",
+        "name": "Produtos",
+        "icon": "inventory_2",
         "color": "green",
-        "desc": "Palestras in company e eventos de alto impacto.",
-        "locked": True,
-        "products": [],
+        "desc": "Produtos e serviços avulsos — cada um com o seu formulário de contratação.",
+        "products": [
+            {
+                # Sem `price`, e é o contrato: os valores desta venda (salário de
+                # referência e adiantamento, vaga a vaga) só existem depois do
+                # Formulário DH. `flow` é o que manda o consultor para lá.
+                "id": "recrutamento-selecao",
+                "name": "Recrutamento e Seleção",
+                "sigla": "RES",
+                "desc": "Processo seletivo conduzido pela Seja AP, vaga a vaga",
+                "duration": "por vaga",
+                "icon": "person_search",
+                "flow": "dh",
+            }
+        ],
     },
 ]
 
@@ -176,7 +190,7 @@ class ContratoDoCatalogoTest(TestCase):
         """O front faz `CATS.map` direto, sem ordenar (`index.html:1284`)."""
         cats = self.client.get("/api/catalogo").json()["cats"]
         self.assertEqual(
-            [c["id"] for c in cats], ["elite", "treinamentos", "apn", "palestras"]
+            [c["id"] for c in cats], ["elite", "treinamentos", "apn", "produtos"]
         )
 
     def test_get_e_anonimo(self):
@@ -233,6 +247,35 @@ class ContratoDoCatalogoTest(TestCase):
         cats = self.client.get("/api/catalogo").json()["cats"]
         self.assertNotIn("locked", cats[0])
         self.assertNotIn("locked", cats[2])
+
+    def test_produto_de_formulario_carrega_flow_e_nao_carrega_price(self):
+        """O contrato do Recrutamento e Seleção, pelos dois lados.
+
+        `flow` presente é o que manda o consultor para o Formulário DH em vez do
+        cronograma de parcelas. `price` AUSENTE é o resto do contrato: zero
+        seria um preço, e o front o formataria como "R$ 0,00" na lista de
+        produtos — um valor que ninguém definiu, exibido como se alguém tivesse.
+        """
+        cats = self.client.get("/api/catalogo").json()["cats"]
+        produtos = next(c for c in cats if c["id"] == "produtos")
+        recrutamento = produtos["products"][0]
+
+        self.assertEqual(recrutamento["flow"], "dh")
+        for campo in ("price", "monthly", "recurring", "vigencia"):
+            self.assertNotIn(campo, recrutamento)
+
+    def test_categoria_de_produto_com_formulario_nao_tem_flow_de_categoria(self):
+        """`Categoria.fluxo` e `Produto.fluxo` são coisas diferentes.
+
+        A categoria "Produtos" é comum: lista produtos, aceita produto de tabela
+        e é editável no /admin. Se ela emitisse `flow`, o front a trataria como
+        a APN — sem produto a escolher — e o Recrutamento e Seleção sumiria da
+        tela.
+        """
+        cats = self.client.get("/api/catalogo").json()["cats"]
+        produtos = next(c for c in cats if c["id"] == "produtos")
+        self.assertNotIn("flow", produtos)
+        self.assertNotIn("locked", produtos)
 
     def test_apn_carrega_flow_e_sigla(self):
         """Sem `flow`, o front manda o consultor para o wizard errado.

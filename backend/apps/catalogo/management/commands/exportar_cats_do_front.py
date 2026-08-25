@@ -40,7 +40,7 @@ from apps.catalogo.serializers import serializa_catalogo
 ORDEM_CATEGORIA = ["id", "name", "icon", "color", "flow", "sigla", "locked"]
 ORDEM_PRODUTO = [
     "id", "name", "sigla", "desc", "duration",
-    "monthly", "price", "recurring", "vigencia", "icon", "cobranca",
+    "monthly", "price", "recurring", "vigencia", "flow", "icon", "cobranca",
 ]
 
 
