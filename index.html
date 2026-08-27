@@ -804,7 +804,30 @@ const etapaDoProduto = (fluxo) => (fluxo === 'dh' ? 0 : 1);
 // Uma linha do quadro comercial do DH. `salario` e `adiantamento` nascem NaN, e
 // não zero: zero é um valor que alguém digitou, NaN é campo em branco — e a
 // validação da etapa depende de saber a diferença.
-const novaVagaDh = () => ({ cargo: '', quantidade: 1, salario: NaN, adiantamento: NaN, data: '', forma: 'pix' });
+const novaVagaDh = () => ({ cargo: '', quantidade: 1, salario: NaN, adiantamento: NaN, adiantamentoManual: false, data: '', forma: 'pix' });
+
+// O adiantamento do Recrutamento e Seleção é METADE da remuneração da vaga — a
+// outra metade é cobrada depois de um período e não passa por este formulário.
+// Por isso ele é calculado, e não digitado: quem preenche informa o salário de
+// referência e o adiantamento sai daí, travado. Negociar caso a caso continua
+// existindo, mas é atribuição de gerente/diretoria — a mesma trava do valor do
+// produto no Elite (ver `toggleAdiantamentoEdit`).
+//
+// `adiantamentoManual` marca a vaga em que alguém autorizado digitou o valor à
+// mão. Ele só conta enquanto a edição estiver liberada: fora dela vale sempre o
+// cálculo, então nenhum valor negociado sobrevive à venda seguinte.
+const PERCENTUAL_ADIANTAMENTO = 0.5;
+const ROTULO_ADIANTAMENTO = `${Math.round(PERCENTUAL_ADIANTAMENTO * 100)}%`;
+// Salário em branco (NaN) devolve NaN, não zero: campo vazio continua vazio, e a
+// validação da etapa depende de saber a diferença.
+const adiantamentoDaRemuneracao = (salario) => {
+  const n = Number(salario);
+  return Number.isFinite(n) ? round2(n * PERCENTUAL_ADIANTAMENTO) : NaN;
+};
+// Descarta os valores negociados à mão, devolvendo as vagas ao cálculo.
+const vagasSemAdiantamentoNegociado = (vagas) => (vagas || []).map(
+  (v) => (v.adiantamentoManual ? { ...v, adiantamento: NaN, adiantamentoManual: false } : v)
+);
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
@@ -942,7 +965,9 @@ function ModalAutorizacao({ alvo, onOk, onCancelar }) {
     ? 'alterar o valor deste produto'
     : alvo === 'observacao'
       ? 'escrever a observação desta venda'
-      : 'alterar as parcelas e o cronograma';
+      : alvo === 'adiantamento'
+        ? 'alterar o adiantamento das vagas'
+        : 'alterar as parcelas e o cronograma';
 
   const enviar = async (e) => {
     e.preventDefault();
@@ -1086,14 +1111,16 @@ function App() {
     // razaoSocial, endereco/numero/bairro/cidade, repNome, repCpf, repEmail): são
     // os mesmos do cadastro do Elite, e duplicá-los criaria duas verdades sobre a
     // mesma empresa. O que é só do DH é o quadro de vagas.
-    dhVagas: [novaVagaDh()],
+    // `dhAdiantamentoEdit` é o irmão do `priceEdit` do Elite: o adiantamento
+    // nasce calculado e travado, e só destrava com autorização.
+    dhVagas: [novaVagaDh()], dhAdiantamentoEdit: false,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
     // Negociação: `autorizacao` é { token, nome, email, papel } de quem liberou,
     // ou null. Nasce NULL sempre — não há sessão que sobreviva ao recarregar,
     // porque a liberação vale só para a venda em andamento.
     // `pedindoAutorizacao` guarda qual toggle deve ligar quando ela for aceita
-    // ('produto' | 'pagamento').
+    // ('produto' | 'pagamento' | 'observacao' | 'adiantamento').
     autorizacao: null, pedindoAutorizacao: null,
   });
   const patch = (o) => setS((prev) => ({ ...prev, ...(typeof o === 'function' ? o(prev) : o) }));
@@ -1128,7 +1155,7 @@ function App() {
   // A autorização morre ao sair da venda ou ao trocar de produto: ela vale para
   // AQUELE registro. Sem isso, liberar um desconto no produto A deixaria o
   // produto B destravado logo em seguida, no mesmo aparelho.
-  const goLobby = () => patch({ screen: 'lobby', autorizacao: null, priceEdit: false, editMode: false, observacao: '' });
+  const goLobby = () => patch({ screen: 'lobby', autorizacao: null, priceEdit: false, editMode: false, dhAdiantamentoEdit: false, observacao: '' });
   // Ao abrir a APN, o valor já vem preenchido com o de referência configurado em
   // /admin (quando há). NÃO é trava: a APN é venda de valor negociado, e o campo
   // segue livre — o de referência só evita começar do zero em toda venda.
@@ -1136,7 +1163,7 @@ function App() {
     const cat = getCat(id);
     const referencia = cat && Number.isFinite(Number(cat.valor_referencia)) ? Number(cat.valor_referencia) : NaN;
     return {
-      screen: 'flow', step: 0, catId: id, product: null, autorizacao: null, observacao: '',
+      screen: 'flow', step: 0, catId: id, product: null, autorizacao: null, dhAdiantamentoEdit: false, observacao: '',
       ...(cat && cat.flow === 'apn' ? { apnValor: referencia } : {}),
     };
   });
@@ -1151,7 +1178,7 @@ function App() {
     const fluxoNovo = fluxoDaVenda(cat, p);
     const trocouDeFluxo = fluxoNovo !== fluxoDaVenda(cat, d.product);
     return {
-      product: p, priceEdit: false, editMode: false, autorizacao: null, observacao: '',
+      product: p, priceEdit: false, editMode: false, dhAdiantamentoEdit: false, autorizacao: null, observacao: '',
       ...(trocouDeFluxo ? { step: etapaDoProduto(fluxoNovo) } : {}),
       ...(p.flow
         ? { unitValue: 0, entradaValor: 0, entradaData: '', parcelas: [] }
@@ -1252,11 +1279,16 @@ function App() {
   // Autorização aceita: guarda quem liberou e liga o toggle que foi pedido.
   const onAutorizacaoOk = (autorizacao) => {
     const alvo = s.pedindoAutorizacao;
-    patch({
+    patch((d) => ({
       autorizacao, pedindoAutorizacao: null,
       ...(alvo === 'produto' ? { priceEdit: true } : {}),
       ...(alvo === 'pagamento' ? { editMode: true } : {}),
-    });
+      // Destravar o adiantamento começa do valor calculado, nunca de um valor
+      // que sobrou de uma liberação anterior desta mesma sessão.
+      ...(alvo === 'adiantamento'
+        ? { dhAdiantamentoEdit: true, dhVagas: vagasSemAdiantamentoNegociado(d.dhVagas) }
+        : {}),
+    }));
   };
 
   // Encerra a autorização e devolve os valores ao de tabela. Existe para o caso
@@ -1266,6 +1298,10 @@ function App() {
     autorizacao: null,
     priceEdit: false,
     editMode: false,
+    // No DH o que a autorização libera é o adiantamento: encerrada ela, as vagas
+    // voltam ao cálculo sobre a remuneração.
+    dhAdiantamentoEdit: false,
+    dhVagas: vagasSemAdiantamentoNegociado(d.dhVagas),
     // A observação é a justificativa da negociação: descartada a negociação,
     // ela não pode continuar escrita no cadastro.
     observacao: '',
@@ -1382,19 +1418,31 @@ function App() {
    */
   const dhVagas = (Array.isArray(s.dhVagas) && s.dhVagas.length) ? s.dhVagas : [novaVagaDh()];
   const dhQtd = (v) => Math.max(1, Math.round(Number(v.quantidade) || 1));
-  const dhAdiantamentoDaVaga = (v) => round2((Number(v.adiantamento) || 0) * dhQtd(v));
+  // Adiantamento que vale para a linha: o cálculo sobre a remuneração, ou o que
+  // a diretoria fixou à mão — e só enquanto a edição estiver liberada.
+  const dhAdiantamentoDaLinha = (v) => (
+    s.dhAdiantamentoEdit && v.adiantamentoManual && Number.isFinite(Number(v.adiantamento))
+      ? round2(Math.max(0, Number(v.adiantamento)))
+      : adiantamentoDaRemuneracao(v.salario)
+  );
+  const dhAdiantamentoDaVaga = (v) => round2((Number(dhAdiantamentoDaLinha(v)) || 0) * dhQtd(v));
   const dhTotal = round2(dhVagas.reduce((soma, v) => soma + dhAdiantamentoDaVaga(v), 0));
   const dhPosicoes = dhVagas.reduce((n, v) => n + dhQtd(v), 0);
-  // Adiantamento pode ser 0 (venda com pagamento só na entrega), mas não pode
-  // ficar em branco: em branco é campo esquecido, e o total sairia errado sem
-  // ninguém ver. Salário de referência tem que ser > 0 — vaga sem remuneração
-  // não é vaga.
-  const dhVagaValida = (v) => (
-    (v.cargo || '').trim().length > 1 &&
-    Number.isFinite(Number(v.salario)) && Number(v.salario) > 0 &&
-    Number.isFinite(Number(v.adiantamento)) && Number(v.adiantamento) >= 0 &&
-    !!v.data && !!v.forma
-  );
+  // Salário de referência tem que ser > 0 — vaga sem remuneração não é vaga, e
+  // agora é dele que o adiantamento sai. O adiantamento pode ser 0 (venda com
+  // pagamento só na entrega), mas não pode ficar em branco: em branco é campo
+  // esquecido, e o total sairia errado sem ninguém ver.
+  const dhVagaValida = (v) => {
+    const adiantamento = Number(dhAdiantamentoDaLinha(v));
+    return (
+      (v.cargo || '').trim().length > 1 &&
+      Number.isFinite(Number(v.salario)) && Number(v.salario) > 0 &&
+      Number.isFinite(adiantamento) && adiantamento >= 0 &&
+      !!v.data && !!v.forma
+    );
+  };
+  // Houve valor fixado à mão nesta venda? É o que o comprovante registra.
+  const dhNegociado = !!s.dhAdiantamentoEdit && dhVagas.some((v) => v.adiantamentoManual);
   const dhQuadroValid = dhVagas.length > 0 && dhVagas.every(dhVagaValida);
   const dhContratanteValid = (
     isCNPJ(s.cnpj) && (s.razaoSocial || '').trim().length > 2 &&
@@ -1413,6 +1461,26 @@ function App() {
   const removeVagaDh = (i) => patch((d) => ({
     dhVagas: (d.dhVagas || []).length > 1 ? d.dhVagas.filter((_, j) => j !== i) : d.dhVagas,
   }));
+
+  // Só alcançável com a edição liberada: no fluxo normal o adiantamento não é
+  // digitado, ele acompanha a remuneração.
+  const setAdiantamentoDh = (i, n) => patch((d) => ({
+    dhVagas: (d.dhVagas || []).map((v, j) => {
+      if (j !== i) return v;
+      // Campo esvaziado volta ao automático — é como se desfaz a negociação de
+      // UMA vaga sem ter que encerrar a autorização da venda inteira.
+      if (!Number.isFinite(n)) return { ...v, adiantamento: NaN, adiantamentoManual: false };
+      return { ...v, adiantamento: Math.max(0, n), adiantamentoManual: true };
+    }),
+  }));
+
+  // Destravar exige autorização; travar de volta, não — igual ao valor do
+  // produto no Elite. Qualquer virada da chave descarta o que foi negociado: o
+  // valor à mão vale enquanto a liberação que o permitiu estiver de pé.
+  const toggleAdiantamentoEdit = () => {
+    if (!s.dhAdiantamentoEdit && !autorizado) { patch({ pedindoAutorizacao: 'adiantamento' }); return; }
+    patch((d) => ({ dhAdiantamentoEdit: !d.dhAdiantamentoEdit, dhVagas: vagasSemAdiantamentoNegociado(d.dhVagas) }));
+  };
 
   // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
   const buildPayload = () => {
@@ -1600,13 +1668,19 @@ function App() {
       quadro_comercial: dhVagas.map((v, i) => {
         const quantidade = dhQtd(v);
         const salario = round2(Number(v.salario) || 0);
-        const adiantamento = round2(Number(v.adiantamento) || 0);
+        // O que vale é o valor efetivo da linha: metade da remuneração, ou o que
+        // a diretoria fixou à mão nesta venda.
+        const adiantamento = round2(Number(dhAdiantamentoDaLinha(v)) || 0);
+        const calculado = round2(salario * PERCENTUAL_ADIANTAMENTO);
         return {
           numero: i + 1,
           cargo: (v.cargo || '').trim(),
           quantidade,
           salario_referencia: salario, salario_referencia_centavos: Math.round(salario * 100),
           adiantamento, adiantamento_centavos: Math.round(adiantamento * 100),
+          // De onde saiu o número: o cálculo padrão e se alguém o substituiu.
+          adiantamento_calculado: calculado,
+          adiantamento_negociado: !!(s.dhAdiantamentoEdit && v.adiantamentoManual),
           // O que a vaga soma na venda: adiantamento × quantidade.
           adiantamento_total: dhAdiantamentoDaVaga(v),
           data_pagamento: v.data || null,
@@ -1616,7 +1690,15 @@ function App() {
       totais: {
         vagas: dhVagas.length, posicoes: dhPosicoes,
         adiantamento_total: dhTotal, adiantamento_total_centavos: Math.round(dhTotal * 100),
+        // A regra que o formulário aplicou, junto do resultado: quem lê o
+        // registro depois não precisa adivinhar de onde vieram os valores.
+        percentual_adiantamento: PERCENTUAL_ADIANTAMENTO,
+        adiantamento_negociado: dhNegociado,
       },
+      // Quem liberou a edição do adiantamento, quando houve edição.
+      autorizado_por: (dhNegociado && s.autorizacao)
+        ? { nome: s.autorizacao.nome, email: s.autorizacao.email, papel: s.autorizacao.papel }
+        : null,
       metadata: { user_agent: navigator.userAgent, url: location.href, enviado_em: nowIso, canal: 'lobby_conecta_ap' },
     };
   };
@@ -1639,7 +1721,7 @@ function App() {
         fluxo: 'dh',
         categoria_id: cat ? cat.id : '',
         produto_id: product ? product.id : '',
-        negociado: false,
+        negociado: dhNegociado,
         valor_total: dhTotal,
         valor_mensal: null,
         entrada: 0,
@@ -1652,7 +1734,7 @@ function App() {
       payload.comprovante_erro = atestado.erro;
 
       const response = await sendVendaDh(payload);
-      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
+      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null, dhAdiantamentoEdit: false });
     } catch (e) {
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
@@ -1705,7 +1787,7 @@ function App() {
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '',
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
-    dhVagas: [novaVagaDh()],
+    dhVagas: [novaVagaDh()], dhAdiantamentoEdit: false,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
@@ -2519,6 +2601,21 @@ function App() {
         <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Uma linha por vaga. O valor da venda é a soma dos adiantamentos.</p>
       </div>
 
+      {/* O adiantamento sai da remuneração e vem travado. Alterá-lo é negociar,
+          e negociar é do gerente/diretoria — mesma trava do valor no Elite. */}
+      <div className="card" style={{ marginBottom: 14, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="ms-icon" style={{ fontSize: 20, color: 'var(--primary)' }}>calculate</span>
+          <div>
+            <div className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Adiantamento automático</div>
+            <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>
+              {ROTULO_ADIANTAMENTO} da remuneração de cada vaga. O restante é cobrado depois e não entra neste formulário.
+            </div>
+          </div>
+        </div>
+        <EditToggle on={s.dhAdiantamentoEdit} onToggle={toggleAdiantamentoEdit} label="Editar adiantamento" restrito={!autorizado} />
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {dhVagas.map((v, i) => (
           <div className="card" key={i} style={{ padding: '20px 22px' }}>
@@ -2551,18 +2648,30 @@ function App() {
                   <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
                   <MoneyInput className="" value={v.salario} onChangeNumber={(n) => setVagaDh(i, 'salario', n)} placeholder="0,00" />
                 </div>
-                <div style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 6 }}>Remuneração da vaga — não entra no valor da venda.</div>
+                <div style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 6 }}>Não entra no valor da venda — mas é dela que sai o adiantamento.</div>
               </div>
               <div>
-                <label className="lbl">Valor do adiantamento<span style={{ color: 'var(--primary)' }}> *</span></label>
-                <div style={{ display: 'flex', alignItems: 'center', height: 46, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid rgba(199,164,68,.45)', padding: '0 12px', gap: 6 }}>
+                <label className="lbl" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  Valor do adiantamento
+                  <span className="ms-icon" title={s.dhAdiantamentoEdit ? 'Liberado para edição' : `Calculado: ${ROTULO_ADIANTAMENTO} da remuneração`}
+                    style={{ fontSize: 14, color: s.dhAdiantamentoEdit ? 'var(--primary)' : 'var(--text-muted)' }}>
+                    {s.dhAdiantamentoEdit ? 'lock_open' : 'lock'}
+                  </span>
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', height: 46, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid ' + (s.dhAdiantamentoEdit ? 'rgba(199,164,68,.45)' : 'var(--border-light)'), padding: '0 12px', gap: 6, opacity: s.dhAdiantamentoEdit ? 1 : .7 }}>
                   <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
-                  <MoneyInput className="" value={v.adiantamento} onChangeNumber={(n) => setVagaDh(i, 'adiantamento', n)} placeholder="0,00" />
+                  <MoneyInput className="" value={dhAdiantamentoDaLinha(v)} onChangeNumber={(n) => setAdiantamentoDh(i, n)} disabled={!s.dhAdiantamentoEdit} placeholder="0,00" />
                 </div>
                 <div style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--primary)', marginTop: 6 }}>
                   {dhQtd(v) > 1
-                    ? `${dhQtd(v)} × ${fmt(Number(v.adiantamento) || 0)} = ${fmt(dhAdiantamentoDaVaga(v))}`
+                    ? `${dhQtd(v)} × ${fmt(dhAdiantamentoDaLinha(v) || 0)} = ${fmt(dhAdiantamentoDaVaga(v))}`
                     : `Esta vaga soma ${fmt(dhAdiantamentoDaVaga(v))} na venda.`}
+                </div>
+                {/* De onde veio o número que está no campo. */}
+                <div style={{ font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3 }}>
+                  {s.dhAdiantamentoEdit && v.adiantamentoManual
+                    ? `Valor negociado · cálculo: ${fmt(adiantamentoDaRemuneracao(v.salario) || 0)}`
+                    : `${ROTULO_ADIANTAMENTO} da remuneração desta vaga.`}
                 </div>
               </div>
             </div>
@@ -2642,7 +2751,7 @@ function App() {
                 <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--primary)', whiteSpace: 'nowrap' }}>{fmt(dhAdiantamentoDaVaga(v))}</span>
               </div>
               <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3 }}>
-                Referência {fmt(Number(v.salario) || 0)} · adiantamento {fmt(Number(v.adiantamento) || 0)} · {dmy(v.data)} · {paymentLabel(v.forma)}
+                Referência {fmt(Number(v.salario) || 0)} · adiantamento {fmt(dhAdiantamentoDaLinha(v) || 0)}{s.dhAdiantamentoEdit && v.adiantamentoManual ? ' (negociado)' : ''} · {dmy(v.data)} · {paymentLabel(v.forma)}
               </div>
             </div>
           ))}
