@@ -304,6 +304,11 @@ function Login({ onEntrar }) {
           {carregando ? <span className="ms-icon rot" style={{ fontSize: 19 }}>progress_activity</span> : <span className="ms-icon" style={{ fontSize: 19 }}>lock_open</span>}
           {carregando ? 'Verificando…' : 'Entrar'}
         </button>
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
+          <a href="/esqueci-senha" style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', textDecoration: 'none' }}>
+            Esqueci minha senha
+          </a>
+        </div>
       </form>
     </div>
   );
@@ -1130,8 +1135,8 @@ function Editor({ sessao: sess, aoSair }) {
         {sess.precisaTrocarSenha && (
           <Aviso tipo="atencao">
             A sua senha do Conecta ID está marcada para troca — provavelmente é a senha inicial.
-            Peça o link de definição de senha no <strong>kanban</strong>, que é onde as contas da
-            empresa são gerenciadas. Você pode continuar publicando normalmente.
+            Peça o link em <a href="/esqueci-senha" style={{ color: 'var(--primary)' }}>/esqueci-senha</a>:
+            ele chega no seu e-mail. Você pode continuar publicando normalmente.
           </Aviso>
         )}
 

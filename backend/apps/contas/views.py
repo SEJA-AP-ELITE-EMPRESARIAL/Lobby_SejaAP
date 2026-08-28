@@ -48,6 +48,7 @@ from identidade_client import (
     BloqueadoTemporariamente,
     ClienteIdentidade,
     CredencialInvalida,
+    ErroIdentidade,
     IdentidadeIndisponivel,
     NaoEncontrado,
     SemAcessoAoApp,
@@ -74,7 +75,12 @@ MSG_INDISPONIVEL = (
 )
 MSG_LINK_MORTO = (
     "Este link não vale mais. Ele expira em 48 horas e só pode ser usado uma "
-    "vez — peça um novo a quem administra."
+    "vez — peça um novo na tela de esqueci minha senha."
+)
+# A mesma frase para todo endereço. Ver `esqueci_senha`.
+MSG_LINK_PEDIDO = (
+    "Se houver uma conta com esse e-mail, o link para definir a senha acabou "
+    "de ser enviado. Ele vale 48 horas e serve uma vez só."
 )
 
 
@@ -228,3 +234,45 @@ def definir_senha(request):
         return _resposta(MSG_INDISPONIVEL, status.HTTP_503_SERVICE_UNAVAILABLE)
 
     return Response({"ok": True, "mensagem": "Senha definida. Você já pode entrar."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([DefinicaoSenhaThrottle])
+def esqueci_senha(request):
+    """POST /api/senha/esqueci — {email}.
+
+    A metade que faltava do ciclo. `definir_senha`, acima, resolveu o "como a
+    pessoa escolhe a senha"; o "como ela consegue o link" continuava sendo
+    pedir a um administrador, que gerava no kanban — um sistema em que boa
+    parte de quem vende não entra. Agora o link sai daqui, direto para a caixa
+    de quem pediu.
+
+    **A resposta é a mesma para qualquer e-mail**, e é o ponto da view: esta é
+    a rota mais exposta do Lobby depois do login, e dizer "não há conta com
+    esse endereço" entregaria a um estranho a lista de quem trabalha na
+    empresa, um palpite por vez.
+
+    O teto por hora é o mesmo da definição de senha, e o Conecta ID tem o dele,
+    contado por e-mail. Os dois medem coisas diferentes: aqui, quanto um IP
+    pode martelar o Lobby; lá, quantas mensagens uma caixa pode receber.
+    """
+    if not central_ativa():
+        logger.error("AUTH_CENTRAL_ATIVO desligado — pedido de link indisponível")
+        return _resposta(MSG_INDISPONIVEL, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    email = ((request.data or {}).get("email") or "").strip()
+    if not email:
+        return _resposta("Informe o seu e-mail.", status.HTTP_400_BAD_REQUEST)
+
+    try:
+        ClienteIdentidade().esqueci_senha(email)
+    except ErroIdentidade:
+        # Larga de propósito: nesta rota o Conecta ID não devolve erro sobre a
+        # conta — responde 202 para qualquer endereço. Tudo que chega aqui é
+        # infraestrutura, e nenhum desses casos pode virar resposta diferente
+        # por e-mail.
+        logger.exception("falha ao pedir o link de senha ao Conecta ID")
+        return _resposta(MSG_INDISPONIVEL, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    return Response({"ok": True, "mensagem": MSG_LINK_PEDIDO})

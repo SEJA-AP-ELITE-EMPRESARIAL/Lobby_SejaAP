@@ -12,7 +12,9 @@ from . import views
 urlpatterns = [
     path("sessao", views.abrir_sessao, name="abrir-sessao"),
     path("sessao/atual", views.sessao_atual, name="sessao-atual"),
-    # O outro lado do link que o admin do Conecta ID gera. Anônima: quem chega
-    # aqui e justamente quem ainda nao consegue entrar.
+    # As duas metades do ciclo da senha, ambas anônimas: quem chega aqui é
+    # justamente quem ainda não consegue entrar. `esqueci` pede o link, que o
+    # Conecta ID manda por e-mail; `definir` consome o token daquele link.
+    path("senha/esqueci", views.esqueci_senha, name="esqueci-senha"),
     path("senha/definir", views.definir_senha, name="definir-senha"),
 ]

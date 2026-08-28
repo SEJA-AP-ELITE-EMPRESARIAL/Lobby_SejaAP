@@ -1,5 +1,6 @@
 """
-Definição de senha pelo link do Conecta ID — `POST /api/senha/definir`.
+As duas metades do ciclo da senha: `POST /api/senha/esqueci` pede o link e
+`POST /api/senha/definir` o consome.
 
 O serviço central é mockado: o que se verifica aqui é o que o LOBBY faz com
 cada resposta dele. A tradução de erros importa tanto quanto no login, e por um
@@ -13,6 +14,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from identidade_client import (
+    ErroIdentidade,
     IdentidadeIndisponivel,
     SenhaFraca,
     TokenInvalido,
@@ -135,7 +137,106 @@ class DefinirSenhaTest(TestCase):
         self.assertIn("erro", resposta.data)
 
 
+@override_settings(AUTH_CENTRAL_ATIVO=True)
+class EsqueciSenhaTest(TestCase):
+    """Pedir o link — a metade que faltava até 28/08/2026.
+
+    Antes dela, o consultor que esquecia a senha dependia da diretoria gerar o
+    link no kanban, um sistema em que boa parte de quem vende não entra.
+
+    O que estes testes guardam, acima de tudo, é a UNIFORMIDADE da resposta:
+    esta é a rota mais exposta do Lobby depois do login, e qualquer diferença
+    entre "e-mail que existe" e "e-mail que não existe" entrega a lista de quem
+    trabalha na empresa a quem tiver paciência de testar endereços.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        cache.clear()
+
+    def pedir(self, email="gerente@sejaap.com.br"):
+        corpo = {} if email is None else {"email": email}
+        return self.client.post("/api/senha/esqueci", corpo, format="json")
+
+    def test_pede_o_link_ao_conecta_id(self):
+        with patch(ALVO) as Cliente:
+            resposta = self.pedir()
+
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        Cliente.return_value.esqueci_senha.assert_called_once_with("gerente@sejaap.com.br")
+
+    def test_nao_exige_credencial(self):
+        """É o caminho de quem não consegue entrar — exigir login seria círculo."""
+        with patch(ALVO):
+            resposta = APIClient().post(
+                "/api/senha/esqueci", {"email": "gerente@sejaap.com.br"}, format="json"
+            )
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_endereco_desconhecido_responde_exatamente_igual(self):
+        with patch(ALVO):
+            conhecido = self.pedir("gerente@sejaap.com.br")
+            cache.clear()
+            estranho = self.pedir("ninguem-desse-mundo@sejaap.com.br")
+
+        self.assertEqual(conhecido.status_code, estranho.status_code)
+        self.assertEqual(conhecido.data, estranho.data)
+
+    def test_espaco_em_volta_do_email_nao_atrapalha(self):
+        """Copiar o e-mail de outro lugar costuma trazer espaço junto."""
+        with patch(ALVO) as Cliente:
+            self.pedir("  gerente@sejaap.com.br  ")
+
+        Cliente.return_value.esqueci_senha.assert_called_once_with("gerente@sejaap.com.br")
+
+    def test_sem_email_vira_400_sem_chamar_o_servico(self):
+        with patch(ALVO) as Cliente:
+            resposta = self.pedir(email=None)
+
+        self.assertEqual(resposta.status_code, 400)
+        Cliente.return_value.esqueci_senha.assert_not_called()
+
+    def test_erro_do_servico_vira_503_e_nunca_sucesso(self):
+        """Dizer "enviamos" com o serviço fora faria a pessoa esperar em vão."""
+        with self.assertLogs("apps.contas.views", level="ERROR"):
+            with patch(ALVO) as Cliente:
+                Cliente.return_value.esqueci_senha.side_effect = ErroIdentidade("chave recusada")
+                resposta = self.pedir()
+
+        self.assertEqual(resposta.status_code, 503)
+
+    def test_tem_teto_proprio(self):
+        """Sem teto, a rota vira um canhão de e-mail apontado para qualquer caixa."""
+        with _com_teto("2/hour"):
+            with patch(ALVO):
+                self.assertEqual(self.pedir().status_code, 200)
+                self.assertEqual(self.pedir().status_code, 200)
+                resposta = self.pedir()
+
+        self.assertEqual(resposta.status_code, 429)
+        self.assertIn("erro", resposta.data)
+
+    def test_o_lobby_nao_redefine_mais_senha_sem_token(self):
+        """A rota que fazia isso saiu do ar no Conecta ID em 28/08/2026.
+
+        O método sumiu do cliente junto; este teste é a rede para o dia em que
+        alguém recopiar uma versão antiga do `identidade_client.py`.
+        """
+        from identidade_client import ClienteIdentidade
+
+        self.assertFalse(hasattr(ClienteIdentidade, "redefinir_sem_token"))
+
+
 class CentralDesligadaTest(TestCase):
+    @override_settings(AUTH_CENTRAL_ATIVO=False)
+    def test_esqueci_senha_responde_503(self):
+        """Sem a central não há link para pedir — e falhar calado seria pior."""
+        with self.assertLogs("apps.contas.views", level="ERROR"):
+            resposta = APIClient().post(
+                "/api/senha/esqueci", {"email": "gerente@sejaap.com.br"}, format="json"
+            )
+        self.assertEqual(resposta.status_code, 503)
+
     @override_settings(AUTH_CENTRAL_ATIVO=False)
     def test_definir_senha_responde_503(self):
         """Sem a central não há senha para definir — e falhar calado seria pior."""
