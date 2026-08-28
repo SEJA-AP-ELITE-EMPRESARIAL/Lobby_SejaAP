@@ -164,20 +164,20 @@ class ClienteIdentidade:
         resposta = self._pedir("POST", "/api/v1/senha/token", {"email": email})
         return (resposta or {}).get("token")
 
+    def esqueci_senha(self, email):
+        """Pede o link de senha e deixa o Conecta ID mandar por e-mail.
+
+        É o que a tela pública "esqueci minha senha" do app chama. Não devolve
+        nada e não distingue e-mail que existe de e-mail que não existe — a
+        resposta é 202 para qualquer entrada, de propósito. O app deve mostrar
+        sempre a mesma frase ("se houver conta nesse endereço, o link foi
+        enviado"); qualquer mensagem mais específica reconstrói, na tela, a
+        distinção que a API se recusa a fazer.
+        """
+        self._pedir("POST", "/api/v1/senha/esqueci", {"email": email})
+
     def definir_senha(self, token, senha_nova):
         self._pedir("POST", "/api/v1/senha/definir", {"token": token, "senha_nova": senha_nova})
-
-    def redefinir_sem_token(self, login, senha_nova, ip=None):
-        """Autoatendimento: redefine sem senha atual e sem token.
-
-        Só existe porque o serviço permite — e ele só permite para quem tem
-        acesso ao app que está chamando. Ver a rotina do mesmo nome no Conecta
-        ID para a decisão e o que ficou no lugar da prova de posse.
-        """
-        corpo = {"login": login, "senha_nova": senha_nova}
-        if ip:
-            corpo["ip"] = ip
-        self._pedir("POST", "/api/v1/senha/redefinir", corpo)
 
     def trocar_senha(self, identidade_id, senha_atual, senha_nova, ip=None):
         corpo = {"senha_atual": senha_atual, "senha_nova": senha_nova}
