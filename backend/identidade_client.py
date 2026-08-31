@@ -25,6 +25,18 @@ as vinte linhas de `urllib` que ela pouparia.
 O `resolver_usuario` é do app, e é onde mora tudo que o Conecta ID não sabe:
 criar o Perfil no financeiro, o nível de acesso e a equipe no kanban. O cliente
 entrega quem é a pessoa; o app decide o que ela é lá dentro.
+
+## 1.1 — a configuração de provisionamento
+
+Desde a 1.1 a resposta do login traz `config_do_app`: o que quem administra
+preencheu, no Conecta ID, sobre esta pessoa NESTE app. É a metade que faltava —
+sem ela, conceder acesso no Conecta ID criava, no primeiro login, uma conta no
+default mais baixo (sem equipe, sem papel), e quem administra ia criar a pessoa
+de novo dentro do app. Daí saíam as contas duplicadas.
+
+Leia sempre pela classe `Provisionamento`, nunca do dicionário cru: a carga é
+digitada por gente e pode trazer um valor que este app não conhece. O contrato
+é **provisionar melhor quando dá, nunca impedir o login**.
 """
 import json
 import logging
@@ -38,7 +50,7 @@ from django.utils.module_loading import import_string
 
 logger = logging.getLogger("identidade_client")
 
-VERSAO = "1.0.0"
+VERSAO = "1.1.0"
 
 
 # === Erros ================================================================
@@ -134,16 +146,31 @@ class ClienteIdentidade:
         )
         return achados[0] if achados else None
 
+    def listar_com_acesso(self):
+        """Quem tem acesso ativo a ESTE app, com a configuração de cada um.
+
+        É o que permite a tela de usuários mostrar quem foi liberado no Conecta
+        ID e ainda não entrou — gente que, sem esta chamada, não aparece em
+        lugar nenhum do app. Era esse buraco que fazia alguém criar a pessoa de
+        novo, e a segunda conta nascer.
+        """
+        return self._pedir("GET", "/api/v1/identidades?com_acesso=1") or []
+
     def obter(self, identidade_id):
         return self._pedir("GET", f"/api/v1/identidades/{identidade_id}")
 
-    def criar(self, email, nome, apps=(), enviar_convite=False, senha_inicial=None):
+    def criar(self, email, nome, apps=(), enviar_convite=False, senha_inicial=None,
+              configuracao=None):
         corpo = {
             "email": email,
             "nome": nome,
             "apps": list(apps),
             "enviar_convite": enviar_convite,
         }
+        if configuracao is not None:
+            # Vale para UM app: com dois na lista o serviço recusa, para o
+            # vocabulário de um não parar gravado no acesso do outro.
+            corpo["configuracao"] = configuracao
         if senha_inicial:
             # Senha provisória combinada. A identidade nasce marcada para troca
             # obrigatória — uma senha que o admin conhece só vale até o
@@ -154,8 +181,33 @@ class ClienteIdentidade:
     def alterar(self, identidade_id, **campos):
         return self._pedir("PATCH", f"/api/v1/identidades/{identidade_id}", campos)
 
-    def conceder_acesso(self, identidade_id, app):
-        self._pedir("POST", "/api/v1/acessos", {"identidade_id": str(identidade_id), "app": app})
+    def conceder_acesso(self, identidade_id, app, configuracao=None):
+        """Concede o acesso e, se vier, grava a configuração de provisionamento.
+
+        Omitir `configuracao` NÃO apaga a que já existe — é o que torna seguro
+        reconceder um acesso só para religá-lo.
+        """
+        corpo = {"identidade_id": str(identidade_id), "app": app}
+        if configuracao is not None:
+            corpo["configuracao"] = configuracao
+        self._pedir("POST", "/api/v1/acessos", corpo)
+
+    def configurar_acesso(self, identidade_id, app, configuracao):
+        """Troca a configuração de provisionamento sem mexer no acesso.
+
+        É esta, e não `conceder_acesso`, que a tela de usuários deve chamar ao
+        editar um papel: conceder reativa acesso desativado, e corrigir o papel
+        de quem saiu do sistema o traria de volta para dentro dele.
+        """
+        self._pedir(
+            "PATCH",
+            "/api/v1/acessos",
+            {
+                "identidade_id": str(identidade_id),
+                "app": app,
+                "configuracao": configuracao,
+            },
+        )
 
     def revogar_acesso(self, identidade_id, app):
         self._pedir("DELETE", "/api/v1/acessos", {"identidade_id": str(identidade_id), "app": app})
@@ -309,6 +361,56 @@ class BackendIdentidade(BaseBackend):
         return request.META.get("REMOTE_ADDR")
 
 
+# === Provisionamento ======================================================
+class Provisionamento:
+    """A `config_do_app` lida com desconfiança.
+
+    Nenhuma leitura levanta e toda leitura tem padrão, de propósito: a carga é
+    digitada por gente no admin do Conecta ID e pode chegar com um papel que
+    este app não conhece — porque foi renomeado aqui, ou porque a declaração de
+    lá ficou para trás. O pior desfecho aceitável é a conta nascer no padrão do
+    app e o log dizer por quê; recusar o login por causa de um valor estranho
+    seria transformar um erro de cadastro em "não consigo entrar".
+    """
+
+    def __init__(self, dados):
+        bruto = (dados or {}).get("config_do_app")
+        self.bruto = bruto if isinstance(bruto, dict) else {}
+
+    def __bool__(self):
+        return bool(self.bruto)
+
+    def texto(self, chave, padrao=""):
+        valor = self.bruto.get(chave)
+        return valor.strip() if isinstance(valor, str) and valor.strip() else padrao
+
+    def booleano(self, chave, padrao=False):
+        valor = self.bruto.get(chave)
+        if isinstance(valor, bool):
+            return valor
+        if isinstance(valor, str):
+            return valor.strip().lower() in {"1", "true", "sim", "verdadeiro"}
+        return padrao
+
+    def escolha(self, chave, opcoes, padrao=None):
+        """O valor, se for uma das `opcoes`. Senão o padrão, com aviso no log.
+
+        O aviso não é decoração: é a única pista de que alguém preencheu
+        "Líder" onde o app espera "lider", e de que a conta nasceu observador
+        por causa disso.
+        """
+        valor = self.texto(chave)
+        if not valor:
+            return padrao
+        if valor in opcoes:
+            return valor
+        logger.warning(
+            "provisionamento com %s=%r desconhecido neste app; usando %r",
+            chave, valor, padrao,
+        )
+        return padrao
+
+
 # === Usuário sombra =======================================================
 def resolver_com_vinculo(dados, modelo_vinculo, ao_criar=None, sincronizar=True):
     """Devolve o usuário local correspondente à identidade, criando se preciso.
@@ -332,6 +434,11 @@ def resolver_com_vinculo(dados, modelo_vinculo, ao_criar=None, sincronizar=True)
     que o app decide o que a pessoa é dentro dele — papel no financeiro, nível
     de acesso e equipe no kanban. Se devolver `None`, ninguém entra: é o jeito
     de dizer "esta pessoa tem identidade, mas não tem lugar aqui".
+
+    `dados["config_do_app"]` traz o que quem administra preencheu no Conecta ID
+    sobre esta pessoa neste app; leia com `Provisionamento(dados)`. Ela é
+    consumida **só aqui**, na criação: aplicá-la a cada login desfaria, sem
+    avisar, toda edição feita na tela do próprio app.
     """
     identidade_id = dados["identidade_id"]
     email = (dados.get("email") or "").strip().lower()
