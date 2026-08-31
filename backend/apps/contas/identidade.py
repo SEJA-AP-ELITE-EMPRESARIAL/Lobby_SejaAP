@@ -10,9 +10,42 @@ from django.contrib.auth import get_user_model
 
 from identidade_client import resolver_com_vinculo
 
-from .models import VinculoIdentidade
+from .models import Papel, VinculoIdentidade
 
 logger = logging.getLogger(__name__)
+
+
+def _semear_papel(usuario, dados):
+    """Grava o papel que veio do Conecta ID, no primeiro acesso e só nele.
+
+    Era a metade que faltava: conceder o Lobby no Conecta ID entregava uma conta
+    que entra e não autoriza nada, e alguém tinha de ir ao /django-admin/
+    promover. Quem concede agora diz, no mesmo lugar, o que a pessoa é aqui.
+
+    Papel desconhecido não vira erro: fica vazio, que é o mesmo estado de quem
+    ainda não foi promovido, e o log diz por quê. Recusar a entrada por causa de
+    uma palavra digitada errada seria caro para quem não errou nada.
+    """
+    from identidade_client import Provisionamento
+
+    papel = Provisionamento(dados).escolha("papel", set(Papel.values), "")
+    if not papel:
+        return
+
+    # Pelo cache da relação, não por consulta nova. `resolver_com_vinculo`
+    # acabou de criar o vínculo e deixou o objeto preso em `usuario`; gravar
+    # numa CÓPIA vinda do banco deixaria esse objeto com o papel velho — e é
+    # justamente ele que a view lê logo em seguida para decidir se a pessoa
+    # entra. O papel iria para o banco e a mesma requisição responderia 403.
+    vinculo = getattr(usuario, "vinculo_identidade", None)
+    if vinculo is None or vinculo.papel:
+        return
+    vinculo.papel = papel
+    # `save()` inteiro, não `update_fields`: o `save` do modelo é quem amarra
+    # `is_staff` ao papel (só a diretoria entra no admin), e um update parcial
+    # passaria por fora dele.
+    vinculo.save()
+    logger.info("papel %s semeado para %s pelo Conecta ID", papel, usuario.email)
 
 
 def _criar_usuario_local(dados):
@@ -53,11 +86,22 @@ def _criar_usuario_local(dados):
 
 def resolver_usuario(dados):
     """Ponte entre o Conecta ID e o usuário local. Devolve `User` ou `None`."""
+    # Perguntado ANTES de resolver: `resolver_com_vinculo` cria o vínculo, e
+    # depois não dá mais para saber se ele nasceu agora. O papel só é semeado
+    # quando nasce — reaplicá-lo a cada login desfaria, sem avisar, uma
+    # promoção feita no /django-admin/.
+    primeiro_acesso = not VinculoIdentidade.objects.filter(
+        identidade_id=dados["identidade_id"]
+    ).exists()
+
     usuario = resolver_com_vinculo(
         dados, VinculoIdentidade, ao_criar=_criar_usuario_local
     )
     if usuario is None:
         return None
+
+    if primeiro_acesso:
+        _semear_papel(usuario, dados)
 
     # `precisa_trocar_senha` é do Conecta ID e muda a cada login; guardar a
     # cópia local permite que a tela avise sem precisar de outra chamada.
