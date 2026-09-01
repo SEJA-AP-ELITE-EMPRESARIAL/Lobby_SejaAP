@@ -50,7 +50,7 @@ from django.utils.module_loading import import_string
 
 logger = logging.getLogger("identidade_client")
 
-VERSAO = "1.1.0"
+VERSAO = "1.2.0"
 
 
 # === Erros ================================================================
@@ -412,7 +412,9 @@ class Provisionamento:
 
 
 # === Usuário sombra =======================================================
-def resolver_com_vinculo(dados, modelo_vinculo, ao_criar=None, sincronizar=True):
+def resolver_com_vinculo(
+    dados, modelo_vinculo, ao_criar=None, sincronizar=True, ao_reaplicar=None
+):
     """Devolve o usuário local correspondente à identidade, criando se preciso.
 
     `modelo_vinculo` é um modelo do PRÓPRIO app, com `identidade_id` (UUID
@@ -448,6 +450,7 @@ def resolver_com_vinculo(dados, modelo_vinculo, ao_criar=None, sincronizar=True)
     ).first()
     if vinculo:
         usuario = vinculo.usuario
+        _talvez_reaplicar(usuario, dados, ao_reaplicar)
         if sincronizar:
             _sincronizar(usuario, dados)
         return usuario
@@ -455,21 +458,45 @@ def resolver_com_vinculo(dados, modelo_vinculo, ao_criar=None, sincronizar=True)
     Usuario = modelo_vinculo._meta.get_field("usuario").related_model
     usuario = Usuario.objects.filter(email__iexact=email).first() if email else None
 
+    recem_criado = False
     if usuario is None:
         if ao_criar is None:
             return None
         usuario = ao_criar(dados)
         if usuario is None:
             return None
+        recem_criado = True
 
     # `get_or_create` e não `create`: se dois requests da mesma pessoa chegarem
     # juntos no primeiro login, os dois tentam vincular ao mesmo usuário.
     modelo_vinculo.objects.get_or_create(
         usuario=usuario, defaults={"identidade_id": identidade_id}
     )
+    if not recem_criado:
+        # Conta local que já existia e só agora ganhou vínculo — o caso de quem
+        # foi casado pelo e-mail. Para ela a semente nunca foi aplicada, então a
+        # reaplicação é o único jeito de a configuração chegar.
+        _talvez_reaplicar(usuario, dados, ao_reaplicar)
     if sincronizar:
         _sincronizar(usuario, dados)
     return usuario
+
+
+def _talvez_reaplicar(usuario, dados, ao_reaplicar):
+    """Chama o `ao_reaplicar` do app se o Conecta ID pediu, e só então.
+
+    A marca já foi consumida do lado de lá quando esta resposta foi montada: ela
+    vale para este login e mais nenhum. Um app que não passe `ao_reaplicar`
+    simplesmente ignora o pedido — e o efeito é o de antes desta versão existir,
+    não um erro.
+    """
+    if ao_reaplicar is None or not (dados or {}).get("reaplicar_config"):
+        return
+    logger.info(
+        "reaplicando a configuração do Conecta ID em %s",
+        getattr(usuario, "email", usuario),
+    )
+    ao_reaplicar(usuario, dados)
 
 
 def _sincronizar(usuario, dados):
