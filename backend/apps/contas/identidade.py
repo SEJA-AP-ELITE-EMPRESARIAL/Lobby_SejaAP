@@ -8,11 +8,46 @@ import logging
 
 from django.contrib.auth import get_user_model
 
-from identidade_client import resolver_com_vinculo
+from identidade_client import Provisionamento, resolver_com_vinculo
 
 from .models import Papel, VinculoIdentidade
 
 logger = logging.getLogger(__name__)
+
+
+def _reaplicar_provisionamento(usuario, dados):
+    """Força o papel do Conecta ID por cima de um vínculo que já existe.
+
+    Só acontece quando alguém pediu, à mão, no admin do Conecta ID, e vale uma
+    vez. É a exceção à regra de que a configuração é semente — sem ela, definir
+    o papel de quem já entrou no Lobby não teria efeito nenhum, e a promoção
+    continuaria sendo uma segunda ida ao /django-admin/.
+
+    Papel vazio ou desconhecido não rebaixa ninguém: o pedido não diz "tire o
+    papel", diz "faça valer o que está escrito", e não há nada escrito. Tirar um
+    papel continua sendo operação do /django-admin/, onde quem faz vê o que está
+    fazendo.
+    """
+    papel = Provisionamento(dados).escolha("papel", set(Papel.values), "")
+    if not papel:
+        logger.info(
+            "reaplicação sem papel definido para %s; nada a fazer", usuario.email
+        )
+        return
+
+    vinculo = getattr(usuario, "vinculo_identidade", None)
+    if vinculo is None or vinculo.papel == papel:
+        return
+
+    anterior = vinculo.papel or "sem papel"
+    vinculo.papel = papel
+    # `save()` inteiro, não `update_fields`: é ele que amarra `is_staff` ao
+    # papel. Um update parcial promoveria alguém a diretoria sem lhe dar o
+    # /django-admin/, que é o que aquela amarração existe para evitar.
+    vinculo.save()
+    logger.info(
+        "papel de %s reaplicado pelo Conecta ID: %s -> %s", usuario.email, anterior, papel
+    )
 
 
 def _semear_papel(usuario, dados):
@@ -26,8 +61,6 @@ def _semear_papel(usuario, dados):
     ainda não foi promovido, e o log diz por quê. Recusar a entrada por causa de
     uma palavra digitada errada seria caro para quem não errou nada.
     """
-    from identidade_client import Provisionamento
-
     papel = Provisionamento(dados).escolha("papel", set(Papel.values), "")
     if not papel:
         return
@@ -95,7 +128,10 @@ def resolver_usuario(dados):
     ).exists()
 
     usuario = resolver_com_vinculo(
-        dados, VinculoIdentidade, ao_criar=_criar_usuario_local
+        dados,
+        VinculoIdentidade,
+        ao_criar=_criar_usuario_local,
+        ao_reaplicar=_reaplicar_provisionamento,
     )
     if usuario is None:
         return None
