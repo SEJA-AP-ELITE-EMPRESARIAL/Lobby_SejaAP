@@ -22,6 +22,7 @@ from .views import (
     HistoricoView,
     ProdutoView,
     ProdutosView,
+    PublicacoesView,
 )
 
 urlpatterns = [
@@ -36,4 +37,5 @@ urlpatterns = [
         name="produto",
     ),
     path("historico", HistoricoView.as_view(), name="historico"),
+    path("publicacoes", PublicacoesView.as_view(), name="publicacoes"),
 ]
