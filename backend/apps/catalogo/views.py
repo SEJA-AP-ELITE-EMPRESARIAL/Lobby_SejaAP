@@ -269,3 +269,61 @@ class HistoricoView(APIView):
         resposta = Response({"registros": registros, "total": len(registros)})
         resposta["Cache-Control"] = "no-store"
         return resposta
+
+
+class PublicacoesView(APIView):
+    """As publicações da tabela: quem apertou "publicar", quando, e o que mudou.
+
+    O QUE ISTO ACRESCENTA AO `/api/historico`
+
+    A `Vigencia` responde "quanto custava em março" — estado, por campo. Esta
+    rota responde "quem mexeu na tabela, e quando" — evento, por publicação. São
+    perguntas diferentes e a resposta de uma não se deduz da outra: publicar sem
+    mudar valor nenhum não gera vigência alguma, e mesmo assim é uma pessoa que
+    entrou no painel e apertou o botão. Só aqui isso aparece.
+
+    O `catalogo` NÃO vai na resposta, de propósito: é o catálogo inteiro por
+    linha, e a tela mostra uma lista. Quem precisa do JSON publicado abre o
+    `/django-admin/`, onde ele é somente leitura.
+
+    Fechada para a diretoria pelo mesmo motivo do `/api/historico`: é a série
+    histórica de preço da empresa, e o lobby não precisa dela para funcionar.
+    """
+
+    permission_classes = [IsAuthenticated, PodePublicarTabela]
+
+    LIMITE_PADRAO = 100
+    LIMITE_MAX = 500
+
+    def get(self, request):
+        try:
+            limite = min(
+                int(request.query_params.get("limite") or self.LIMITE_PADRAO),
+                self.LIMITE_MAX,
+            )
+        except (TypeError, ValueError):
+            limite = self.LIMITE_PADRAO
+
+        publicacoes = [
+            {
+                "publicado_em": p.publicado_em.isoformat(),
+                # Sem autor = a semente inicial do catálogo. A tela mostra
+                # "sistema": não houve pessoa, houve migração.
+                "autor": p.autor_email or None,
+                # Lista, e não o texto cru: o resumo é uma linha por alteração, e
+                # deixar o `split` para o front convidaria cada tela a inventar o
+                # seu (`\n`? `<br>`?) sobre o mesmo dado.
+                "alteracoes": p.resumo.splitlines() if p.resumo else [],
+            }
+            # `.only()` porque `catalogo` é o catálogo inteiro por linha: sem
+            # isto, listar 100 publicações arrasta megabytes de JSON do banco
+            # para descartá-los no laço acima.
+            for p in PublicacaoCatalogo.objects.only(
+                "publicado_em", "autor_email", "resumo"
+            )[: max(1, limite)]
+        ]
+        resposta = Response(
+            {"publicacoes": publicacoes, "total": len(publicacoes)}
+        )
+        resposta["Cache-Control"] = "no-store"
+        return resposta

@@ -1,0 +1,95 @@
+name: CI
+
+# Roda em todo push e em todo PR para a main. A main é o que a produção puxa,
+# e este repo passou de Django 5.0.9 a 6.1 sem nenhuma rede automatizada: até
+# aqui a suíte só rodava quando alguém lembrava de rodá-la na própria máquina.
+#
+# Escopo é CI. O deploy do Lobby é manual (`docker compose --build` na .164,
+# ver deploy/RUNBOOK.md) e continua sendo — o portão é este, não a publicação.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend — testes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      # ATENÇÃO — não remova estas quatro linhas.
+      #
+      # O settings lê `.env` na raiz do backend e monta o banco por cascata
+      # (DATABASE_URL > LOBBY_DB_* > SQLite). Numa máquina de desenvolvimento
+      # esse `.env` aponta para o Postgres de PRODUÇÃO, e `manage.py test` cria
+      # e derruba um `test_<nome>` onde estiver apontado. Zerar as convenções
+      # da casa força a cascata a cair no SQLite.
+      #
+      # No runner o `.env` nem existe (é gitignorado), mas as variáveis ficam
+      # aqui de propósito: quem copiar este arquivo para rodar em outro lugar
+      # leva a proteção junto. `load_dotenv` não sobrescreve variável que já
+      # está no ambiente — é justamente por isso que zerar funciona.
+      DB_NAME: ""
+      LOBBY_DB_NAME: ""
+      DATABASE_URL: ""
+      CRM_DB_ENGINE: ""
+      DJANGO_SECRET_KEY: ci-nao-e-segredo-de-producao
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          # Mesma série da imagem de produção — ver backend/Dockerfile
+          # (`FROM python:3.14-slim`). Se as duas divergirem, o CI passa a
+          # atestar um Python que produção não roda, que é pior que CI nenhum.
+          # Manter as duas juntas em qualquer upgrade.
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Provar que o banco do CI é descartável
+        # Contraprova do bloco `env` acima: se um dia alguém apagar uma daquelas
+        # linhas, o job para AQUI, antes de qualquer teste tocar em banco.
+        run: |
+          python - <<'PY'
+          import os, django
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          django.setup()
+          from django.conf import settings
+
+          motor = settings.DATABASES["default"]["ENGINE"]
+          if not motor.endswith("sqlite3"):
+              raise SystemExit(f"CI apontado para {motor}, não para SQLite — abortado")
+          print("banco do CI:", motor)
+          PY
+
+      - name: Checagem do Django
+        run: python manage.py check
+
+      - name: Migrations em dia com os models
+        # Model alterado sem migration passa despercebido até o deploy falhar
+        # no start do backend, que é quando as migrations rodam.
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Testes
+        shell: bash
+        run: |
+          python manage.py test --verbosity=2 2>&1 | tee "$RUNNER_TEMP/testes.log"
+
+          # Teste pulado não é teste passado: no conecta-kanban 18 testes
+          # ficaram atrás de um `skipUnless` e passaram por verdes em cinco
+          # execuções seguidas. Aqui, pulou, reprova — e o log diz qual.
+          if grep -qE "skipped=[0-9]+" "$RUNNER_TEMP/testes.log"; then
+            echo "::error::A suíte terminou com testes pulados. Pulado não é passado."
+            grep -E "\.\.\. skipped" "$RUNNER_TEMP/testes.log" || true
+            exit 1
+          fi

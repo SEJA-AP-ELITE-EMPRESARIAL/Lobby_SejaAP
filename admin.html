@@ -69,14 +69,18 @@ button{font-family:var(--font-primary);}
 /* Linha do tempo */
 .tl{display:grid;grid-template-columns:150px 1fr 140px 190px;gap:12px;align-items:center;padding:11px 4px;border-bottom:1px solid rgba(255,255,255,.05);font:400 13px var(--font-secondary);}
 .tl.cab{font:600 10.5px var(--font-primary);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border-light);}
+/* Publicações: o "o quê" é multilinha (uma linha por valor alterado), então
+   alinha pelo topo — com `center` a data flutuaria no meio de uma lista. */
+.pub{display:grid;grid-template-columns:150px 190px 1fr;gap:12px;align-items:start;padding:11px 4px;border-bottom:1px solid rgba(255,255,255,.05);font:400 13px var(--font-secondary);}
+.pub.cab{font:600 10.5px var(--font-primary);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border-light);align-items:center;}
 .linha{display:grid;grid-template-columns:1fr 120px 150px 130px 96px;gap:12px;align-items:center;padding:12px 4px;border-bottom:1px solid rgba(255,255,255,.05);}
 .linha.cab{font:600 10.5px var(--font-primary);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border-light);padding-bottom:8px;}
 *::-webkit-scrollbar{width:10px;}
 *::-webkit-scrollbar-thumb{background:var(--surface-light);border-radius:10px;border:2px solid var(--background);}
 @media (max-width:900px){
   .prod{grid-template-columns:1fr;gap:10px;}
-  .tl,.linha{grid-template-columns:1fr;gap:6px;}
-  .tl.cab,.linha.cab{display:none;}
+  .tl,.linha,.pub{grid-template-columns:1fr;gap:6px;}
+  .tl.cab,.linha.cab,.pub.cab{display:none;}
 }
 </style>
 </head>
@@ -110,7 +114,9 @@ const { useState, useEffect, useMemo, useCallback } = React;
  *   Cobrança  — o dia do vencimento e a regra da 1ª parcela, que até então eram
  *               constantes no index.html: mudar a data era deploy do front.
  *   Produtos  — criar e editar produto, com histórico.
- *   Histórico — a linha do tempo: o que valeu, quando, por decisão de quem.
+ *   Histórico — a linha do tempo (o que valeu, quando, por decisão de quem) e,
+ *               desde 09/09/2026, as publicações: cada vez que alguém apertou
+ *               publicar, com o resumo do que mudou naquela vez.
  * ========================================================================== */
 const CHAVE_TOKEN = 'lobby_sessao_diretoria';
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -315,7 +321,7 @@ function Login({ onEntrar }) {
 }
 
 /* ===== Aba 1: valores de tabela =========================================== */
-function AbaValores({ api, catalogo, atualizadoEm, aoPublicar }) {
+function AbaValores({ api, catalogo, atualizadoEm, ultimaPublicacao, aoPublicar }) {
   const [cats, setCats] = useState(() => JSON.parse(JSON.stringify(catalogo)));
   const [original, setOriginal] = useState(() => JSON.parse(JSON.stringify(catalogo)));
   const [estado, setEstado] = useState('pronto');
@@ -405,7 +411,18 @@ function AbaValores({ api, catalogo, atualizadoEm, aoPublicar }) {
         Salvar publica na hora, sem deploy, e fica registrado quem publicou.
         Desconto pontual por venda é outra coisa: acontece no próprio lobby, autorizado
         venda a venda por um gerente ou pela diretoria.
-        {atualizadoEm && <><br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>Última publicação: {dataHora(atualizadoEm)}</span></>}
+        {/* Quem publicou não vem do `/api/catalogo`: aquela rota é ANÔNIMA — é o
+            que permite o consultor cotar sem login — e o e-mail da diretoria não
+            pode viajar nela. Vem do `/api/publicacoes`, que exige a sessão. Sem
+            autor (a semente inicial do catálogo) sobra a data, e é honesto: não
+            houve pessoa. */}
+        {atualizadoEm && (
+          <><br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>
+            {ultimaPublicacao?.autor
+              ? <>Última alteração por <strong style={{ color: 'var(--text-secondary)' }}>{ultimaPublicacao.autor}</strong> em {dataHora(atualizadoEm)}</>
+              : <>Última publicação: {dataHora(atualizadoEm)}</>}
+          </span></>
+        )}
       </Aviso>
 
       {msg === 'ok' && <Aviso tipo="ok">Valores publicados. Os consultores já veem os novos preços ao recarregar o lobby.</Aviso>}
@@ -969,12 +986,27 @@ function AbaProdutos({ api, catalogo, aoPublicar }) {
   );
 }
 
-/* ===== Aba 4: histórico =================================================== */
+/* ===== Aba 4: histórico ===================================================
+ * Duas tabelas, e a diferença entre elas é a razão de as duas existirem:
+ *
+ *   Linha do tempo (`/api/historico`, a `Vigencia`) — ESTADO. "12.997 valeu de
+ *   06/08 até hoje." É o que responde "quanto custava em março".
+ *
+ *   Publicações (`/api/publicacoes`, a `PublicacaoCatalogo`) — EVENTO. "Em
+ *   06/08 às 09:31, fulano publicou, e mudou isto." É o que responde "quem
+ *   mexeu na tabela".
+ *
+ * Uma não se deduz da outra: publicar sem alterar valor nenhum não gera
+ * vigência, e ainda assim é alguém que entrou no painel e apertou o botão.
+ * ========================================================================== */
 function AbaHistorico({ api, catalogo }) {
   const [registros, setRegistros] = useState(null);
   const [estado, setEstado] = useState('carregando');
   const [msg, setMsg] = useState('');
   const [filtro, setFiltro] = useState('');
+  const [publicacoes, setPublicacoes] = useState(null);
+  const [estadoPub, setEstadoPub] = useState('carregando');
+  const [msgPub, setMsgPub] = useState('');
 
   const carregar = useCallback(async (chave) => {
     setEstado('carregando'); setMsg('');
@@ -985,7 +1017,20 @@ function AbaHistorico({ api, catalogo }) {
     } catch (err) { setMsg(err.message); setEstado('erro'); }
   }, [api]);
 
+  // Carrega à parte da linha do tempo, e falha à parte: o filtro por produto não
+  // se aplica a uma publicação (ela é o catálogo inteiro), e uma das duas fora
+  // do ar não pode levar a outra junto.
+  const carregarPublicacoes = useCallback(async () => {
+    setEstadoPub('carregando'); setMsgPub('');
+    try {
+      const d = await api('/api/publicacoes');
+      setPublicacoes(d.publicacoes);
+      setEstadoPub('pronto');
+    } catch (err) { setMsgPub(err.message); setEstadoPub('erro'); }
+  }, [api]);
+
   useEffect(() => { carregar(filtro); }, [carregar, filtro]);
+  useEffect(() => { carregarPublicacoes(); }, [carregarPublicacoes]);
 
   const alvos = [{ chave: 'geral', nome: 'Política de cobrança' }];
   for (const c of catalogo) for (const p of c.products) alvos.push({ chave: p.id, nome: `${c.name} · ${p.name}` });
@@ -1004,9 +1049,11 @@ function AbaHistorico({ api, catalogo }) {
   return (
     <div>
       <Aviso tipo="info">
-        Cada valor e cada data com o período em que <strong>valeu de fato</strong> — é o que responde
-        "quanto custava em março" sem precisar reconstruir nada. Registros sem autor vieram da
-        semente inicial do catálogo: não houve pessoa, houve migração.
+        Duas leituras da mesma história. A <strong>linha do tempo</strong> mostra cada valor com o
+        período em que valeu de fato — é o que responde "quanto custava em março" sem reconstruir
+        nada. As <strong>publicações</strong>, no fim da página, mostram cada vez que alguém
+        publicou, e o que mudou naquela vez. Registros sem autor vieram da semente inicial do
+        catálogo: não houve pessoa, houve migração.
       </Aviso>
 
       <div className="card">
@@ -1054,6 +1101,51 @@ function AbaHistorico({ api, catalogo }) {
             )
         )}
       </div>
+
+      <div className="card" style={{ marginTop: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 6, flexWrap: 'wrap' }}>
+          <div>
+            <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>Publicações da tabela</h2>
+            <p style={{ font: '400 12.5px/1.55 var(--font-secondary)', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+              Cada vez que alguém apertou <strong>publicar</strong> nesta tela — inclusive quando
+              não mudou valor nenhum, que a linha do tempo acima não registra.
+            </p>
+          </div>
+          <button className="btn-ghost sm" onClick={carregarPublicacoes}>
+            <span className="ms-icon" style={{ fontSize: 17 }}>refresh</span>Atualizar
+          </button>
+        </div>
+
+        {estadoPub === 'carregando' && <Carregando />}
+        {estadoPub === 'erro' && <Falhou msg={msgPub} aoTentar={carregarPublicacoes} />}
+
+        {estadoPub === 'pronto' && (
+          publicacoes.length === 0
+            ? <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', padding: '10px 0' }}>Nenhuma publicação ainda.</div>
+            : (
+              <>
+                <div className="pub cab" style={{ marginTop: 10 }}>
+                  <div>Quando</div><div>Quem publicou</div><div>O que mudou</div>
+                </div>
+                {publicacoes.map((p, i) => (
+                  <div className="pub" key={i}>
+                    <div style={{ font: "400 12.5px 'Roboto'", color: 'var(--text-muted)' }}>{dataHora(p.publicado_em)}</div>
+                    <div style={{ font: '500 12.5px var(--font-secondary)', color: p.autor ? 'var(--text-secondary)' : 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+                      {p.autor || 'sistema'}
+                    </div>
+                    <div>
+                      {p.alteracoes.length === 0
+                        ? <span style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)' }}>Publicou sem alterar valor.</span>
+                        : p.alteracoes.map((a, j) => (
+                            <div key={j} style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>{a}</div>
+                          ))}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )
+        )}
+      </div>
     </div>
   );
 }
@@ -1091,6 +1183,7 @@ function Editor({ sessao: sess, aoSair }) {
   const [aba, setAba] = useState('valores');
   const [catalogo, setCatalogo] = useState(null);
   const [atualizadoEm, setAtualizadoEm] = useState(null);
+  const [ultimaPublicacao, setUltimaPublicacao] = useState(null);
   const [estado, setEstado] = useState('carregando');
   const [msg, setMsg] = useState('');
 
@@ -1108,12 +1201,31 @@ function Editor({ sessao: sess, aoSair }) {
     } catch (err) { setMsg(err.message); setEstado('erro'); }
   }, [api]);
 
-  useEffect(() => { carregar(); }, [carregar]);
+  // Quem publicou por último vem de OUTRA rota, e não por descuido: o
+  // `/api/catalogo` é anônimo — o lobby do consultor depende disso — e o e-mail
+  // de quem publica não pode viajar numa resposta pública. O `/api/publicacoes`
+  // exige a sessão da diretoria.
+  //
+  // Falha em silêncio: a tela de valores é para publicar preço, e ficar sem o
+  // nome de quem publicou da última vez não é motivo para não deixar publicar.
+  const carregarUltimaPublicacao = useCallback(async () => {
+    try {
+      const d = await api('/api/publicacoes?limite=1');
+      setUltimaPublicacao((d.publicacoes || [])[0] || null);
+    } catch { setUltimaPublicacao(null); }
+  }, [api]);
+
+  useEffect(() => { carregar(); carregarUltimaPublicacao(); }, [carregar, carregarUltimaPublicacao]);
 
   const aoPublicar = useCallback((d) => {
     if (d?.cats) { setCatalogo(d.cats); setAtualizadoEm(d.atualizadoEm); }
     else carregar();
-  }, [carregar]);
+    // Só o PUT do catálogo cria uma `PublicacaoCatalogo` — cobrança e produto
+    // registram vigência, não publicação. Recarrega para os três mesmo assim:
+    // acertar quem chama de onde seria uma regra a mais para alguém errar, e a
+    // consulta é uma linha.
+    carregarUltimaPublicacao();
+  }, [carregar, carregarUltimaPublicacao]);
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -1152,7 +1264,7 @@ function Editor({ sessao: sess, aoSair }) {
         {estado === 'erro' && <Falhou msg={msg} aoTentar={carregar} />}
         {estado === 'pronto' && (
           <>
-            {aba === 'valores' && <AbaValores api={api} catalogo={catalogo} atualizadoEm={atualizadoEm} aoPublicar={aoPublicar} />}
+            {aba === 'valores' && <AbaValores api={api} catalogo={catalogo} atualizadoEm={atualizadoEm} ultimaPublicacao={ultimaPublicacao} aoPublicar={aoPublicar} />}
             {aba === 'cobranca' && <AbaCobranca api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'produtos' && <AbaProdutos api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'historico' && <AbaHistorico api={api} catalogo={catalogo} />}

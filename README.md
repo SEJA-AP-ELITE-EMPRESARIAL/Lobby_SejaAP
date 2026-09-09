@@ -112,7 +112,29 @@ index.html  --GET /api/catalogo-->  Postgres `lobby` (db-sejaap, via túnel SSH)
 
 Cada publicação grava uma linha em `PublicacaoCatalogo` com o catálogo inteiro, o
 resumo do que mudou e **quem publicou** — algo que a implementação anterior, em KV,
-nunca teve.
+nunca teve. Essa trilha é lida na aba **Histórico** do `/admin` (`GET
+/api/publicacoes`, só diretoria), ao lado da linha do tempo de valores. São
+perguntas diferentes, e por isso as duas tabelas: a linha do tempo responde
+*"quanto custava em março"*, a lista de publicações responde *"quem mexeu na
+tabela"* — inclusive quando a publicação não mudou valor nenhum, caso em que não
+existe vigência para registrar.
+
+### Expurgo do histórico de publicações
+
+O KV apagava sozinho, com TTL de 90 dias e sem avisar. Aqui é um comando, que
+alguém roda olhando — e que **por padrão não apaga nada**:
+
+```bash
+docker exec lobby-backend python manage.py expurgar_publicacoes --dias 365
+docker exec lobby-backend python manage.py expurgar_publicacoes --dias 365 --confirmar
+```
+
+`--manter` (padrão 12) é um **piso**, e vence a idade: as N publicações mais
+recentes ficam de pé mesmo velhas. Não é zelo decorativo — é da última publicação
+que saem o `atualizadoEm` do catálogo e o *"Última alteração por X"* do painel;
+esvaziar a tabela viraria um `—` na tela que ninguém saberia explicar. Por isso
+`--manter 0` é recusado. O comando não toca na `Vigencia`: publicação é o arquivo
+morto (pesado, carrega o catálogo inteiro em JSON), vigência é a resposta.
 
 ## Como rodar
 
@@ -191,7 +213,7 @@ quatro abas — e tudo o que se faz por lá fica registrado com autor e período
 | **Valores** | Mensalidade / valor à vista de cada produto. |
 | **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — geral e por produto. |
 | **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
-| **Histórico** | O que valeu, de quando até quando, e quem publicou. |
+| **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |
 
 - **Preços e datas:** em **`/admin`**, com a credencial da diretoria. Não mexa no
   `CATS` nem nas constantes do `index.html` (veja *O lobby é anônimo — a
