@@ -232,3 +232,48 @@ groups:
               expression: A
               conditions:
                 - evaluator: { type: lt, params: [1] }
+
+      # ---------------------------------------------------------------------
+      # Os departamentos do Elite e da APN vêm do Omie por um laço no container
+      # lobby-departamentos, de hora em hora. Se ele parar — container morto,
+      # chave do Omie revogada, Omie fora —, a tela NÃO acusa nada: o dropdown
+      # segue com a última lista boa, e um departamento criado no Omie depois
+      # disso nunca aparece para o consultor.
+      #
+      # Três horas = três rodadas perdidas. Uma falha isolada do Omie não deve
+      # acordar ninguém. `noDataState: OK` porque a série só existe depois da
+      # primeira sincronização — antes dela, não há o que envelhecer.
+      - uid: lobby-departamentos-parados
+        title: Departamentos do Lobby sem sincronizar com o Omie
+        condition: B
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning }
+        annotations:
+          summary: >-
+            A lista de departamentos do Lobby não é atualizada pelo Omie há mais
+            de 3 horas. O consultor continua vendendo com a última lista boa,
+            mas departamento novo no Omie não aparece. Conferir
+            `sudo docker compose logs --tail 50 departamentos` na prod.solucoes:
+            a mensagem da rodada diz se é o Omie, a chave (OMIE_APP_KEY /
+            OMIE_APP_SECRET) ou o banco.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'max by(vps) (lobby_segundos_desde_sincronizacao_departamentos)'
+              instant: true
+              range: false
+          - refId: B
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [10800] }

@@ -79,6 +79,30 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  departamentos:
+    # Traz os departamentos do Omie para o banco, de hora em hora — é a lista do
+    # dropdown do Elite e da APN. Mesmo código do backend, outro comando: um laço,
+    # e não um cron do host, para o agendamento subir e descer com a stack e ficar
+    # versionado aqui. Ver
+    # backend/apps/departamentos/management/commands/sincronizar_departamentos.py.
+    #
+    # Sem porta e sem a rede do Conecta ID: ele só fala com o banco (pelo túnel)
+    # e com o Omie (pela internet). Precisa de OMIE_APP_KEY e OMIE_APP_SECRET no
+    # .env; sem elas, cada rodada loga a falha e a lista do banco fica como está.
+    build: ./backend
+    container_name: lobby-departamentos
+    command: ["python", "manage.py", "sincronizar_departamentos", "--a-cada", "3600"]
+    env_file: .env
+    # O python seria o PID 1, e PID 1 não recebe o tratamento padrão de SIGTERM:
+    # sem um init, todo `stop` esperaria os 10 s inteiros e terminaria em SIGKILL.
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - db-tunnel
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
   frontend:
     build:
       # Contexto na raiz: o index.html e o admin.html continuam no lugar de

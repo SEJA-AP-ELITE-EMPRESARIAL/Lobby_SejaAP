@@ -38,13 +38,14 @@ import hmac
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from apps.catalogo.models import Categoria, Produto, PublicacaoCatalogo
 from apps.contas.models import Papel, VinculoIdentidade
+from apps.departamentos.models import Departamento
 from apps.vendas.models import ComprovanteVenda
 
 
@@ -184,6 +185,34 @@ def _coletar():
             "# HELP lobby_segundos_desde_ultima_publicacao Idade da última publicação.",
             "# TYPE lobby_segundos_desde_ultima_publicacao gauge",
             f"lobby_segundos_desde_ultima_publicacao {ultima_publicacao}",
+        ]
+
+    # ---- departamentos (Omie) --------------------------------------------
+    #
+    # A lista do dropdown do Elite e da APN é sincronizada por um laço num
+    # container à parte. Se ele morrer, ou se a chave do Omie for revogada, nada
+    # quebra na tela: o dropdown fica com a última lista boa, e um departamento
+    # criado no Omie simplesmente não aparece. Por isso o frescor é série, com
+    # alerta — e a série só sai depois da primeira sincronização.
+    # Os nomes das chaves não podem ser `ativo`/`inativo`: o Django leria o
+    # `Q(ativo=...)` do filtro como referência ao próprio agregado.
+    departamentos = Departamento.objects.aggregate(
+        n_ativos=Count("id", filter=Q(ativo=True)),
+        n_inativos=Count("id", filter=Q(ativo=False)),
+        ultima=Max("visto_em"),
+    )
+    linhas += [
+        "# HELP lobby_departamentos Departamentos do Omie no banco do Lobby, por estado.",
+        "# TYPE lobby_departamentos gauge",
+        f'lobby_departamentos{{estado="ativo"}} {departamentos["n_ativos"]}',
+        f'lobby_departamentos{{estado="inativo"}} {departamentos["n_inativos"]}',
+    ]
+    ultima_sincronizacao = _idade_em_segundos(departamentos["ultima"])
+    if ultima_sincronizacao is not None:
+        linhas += [
+            "# HELP lobby_segundos_desde_sincronizacao_departamentos Idade da última sincronização bem-sucedida com o Omie.",
+            "# TYPE lobby_segundos_desde_sincronizacao_departamentos gauge",
+            f"lobby_segundos_desde_sincronizacao_departamentos {ultima_sincronizacao}",
         ]
 
     # ---- gente -----------------------------------------------------------

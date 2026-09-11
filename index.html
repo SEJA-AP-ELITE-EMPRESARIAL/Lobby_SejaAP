@@ -208,6 +208,41 @@ const PIX_STATUS_URL = 'https://n8n.sejaap.com.br/webhook/36a7380f-2ef9-4f82-bb9
 const PIX_COBRANCA_ATIVA = false;
 
 /* ============================================================================
+ * DEPARTAMENTOS — pedidos no Elite e na APN, na etapa de dados do cliente.
+ *
+ * A lista é do Omie e muda sem deploy, então não mora neste arquivo. O backend a
+ * sincroniza de hora em hora (container `lobby-departamentos`) e a serve em
+ * GET /api/departamentos. O navegador nunca fala com o Omie: a chave de lá é do
+ * ERP inteiro.
+ *
+ * O Lobby fica aberto horas na mesma janela, e a lista carregada na abertura
+ * envelhece. Pedir para recarregar a página apagaria a venda em andamento — ela
+ * só existe no estado do React. Por isso a tela reconsulta sozinha (a cada
+ * DEPARTAMENTOS_RECONSULTA_MS, ao voltar para a aba e logo antes de enviar),
+ * troca a lista no lugar e só avisa quando o departamento ESCOLHIDO saiu dela.
+ * ========================================================================== */
+const DEPARTAMENTOS_URL = '/api/departamentos';
+const DEPARTAMENTOS_RECONSULTA_MS = 5 * 60 * 1000;
+
+// Devolve { versao, lista } ou lança — quem chama decide o que fazer sem ela.
+async function buscaDepartamentos() {
+  const r = await fetch(DEPARTAMENTOS_URL, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  if (!d || !Array.isArray(d.departamentos)) throw new Error('resposta sem departamentos');
+  return {
+    versao: String(d.versao || ''),
+    lista: d.departamentos
+      .filter((x) => x && x.codigo && x.descricao)
+      .map((x) => ({ codigo: String(x.codigo), descricao: String(x.descricao), estrutura: String(x.estrutura || '') })),
+  };
+}
+
+// O que vai no payload do n8n: o código é o que o Omie entende; o nome e a
+// estrutura vão junto para quem lê a venda sem abrir o Omie.
+const departamentoParaPayload = (d) => (d ? { codigo: d.codigo, descricao: d.descricao, estrutura: d.estrutura } : null);
+
+/* ============================================================================
  * AUTORIZAÇÃO DE NEGOCIAÇÃO — destrava a alteração de valores numa venda.
  *
  * O LOBBY NÃO TEM TELA DE LOGIN. Qualquer consultor abre, navega, cota, cadastra
@@ -1111,6 +1146,9 @@ function App() {
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0,
     observacao: '',
+    // Departamento da venda (código do Omie) e o aviso de quando ele saiu da
+    // lista com a tela aberta. A LISTA não mora aqui — ver `deps` abaixo.
+    departamento: '', departamentoAviso: '',
     // ----- Fluxo APN (categoria de fluxo próprio) -----
     // Valor livre da venda, forma de pagamento (parcelável só no crédito) e a
     // origem da venda em texto livre.
@@ -1138,6 +1176,44 @@ function App() {
   const pixStop = useRef(false);   // sinaliza para o polling parar
   const pixBase = useRef(null);    // payload de geração (reutilizado no polling, evita closure stale)
   const pixTxidRef = useRef('');   // txid devolvido na geração
+
+  // Lista de departamentos. Fica FORA do `s` de propósito: não é dado da venda,
+  // é referência — o `restart` não pode apagá-la, e trocá-la não pode mexer no
+  // resto do formulário.
+  // `estado`: 'carregando' até a primeira resposta; 'ok' ou 'erro' depois.
+  // `atualizadaEm`: quando a lista mudou com a tela aberta (null na 1ª carga).
+  const [deps, setDeps] = useState({ versao: null, lista: [], estado: 'carregando', atualizadaEm: null });
+
+  // Reconsulta e, se a versão mudou, troca a lista no lugar. Se o departamento
+  // escolhido não está mais nela, limpa a escolha e deixa o aviso. Falha de
+  // rede não apaga nada: a lista que já estava na tela continua valendo.
+  // Devolve a lista nova, ou null se a consulta falhou.
+  const atualizaDepartamentos = async () => {
+    let novo;
+    try {
+      novo = await buscaDepartamentos();
+    } catch (e) {
+      console.warn('[lobby] departamentos indisponíveis; mantendo a lista atual.', e);
+      setDeps((d) => (d.estado === 'carregando' ? { ...d, estado: 'erro' } : d));
+      return null;
+    }
+    setDeps((d) => (d.versao === novo.versao
+      ? { ...d, estado: 'ok' }
+      : { versao: novo.versao, lista: novo.lista, estado: 'ok', atualizadaEm: d.versao === null ? null : new Date() }));
+    patch((d) => (!d.departamento || novo.lista.some((x) => x.codigo === d.departamento)
+      ? {}
+      : { departamento: '', departamentoAviso: 'O departamento escolhido saiu da lista do Omie. Escolha outro.' }));
+    return novo;
+  };
+  useEffect(() => {
+    atualizaDepartamentos();
+    const id = setInterval(atualizaDepartamentos, DEPARTAMENTOS_RECONSULTA_MS);
+    // Tablet no balcão: a aba pode ter passado horas em segundo plano, com o
+    // timer estrangulado pelo navegador. Ao voltar, reconsulta na hora.
+    const aoVoltar = () => { if (document.visibilityState === 'visible') atualizaDepartamentos(); };
+    document.addEventListener('visibilitychange', aoVoltar);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
+  }, []);
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' }); }, [s.step, s.screen]);
 
   // Espelha o endereço da empresa no representante quando "mesmo endereço".
@@ -1366,6 +1442,25 @@ function App() {
   const exceeded = diff < -0.01; // total definido (entrada + parcelas) ultrapassa o valor do contrato
   const parcelasUniformes = s.parcelas.length > 0 && s.parcelas.every((p) => Math.abs((Number(p.valor) || 0) - (Number(s.parcelas[0].valor) || 0)) < 0.005);
 
+  // ----- Departamento (Elite e APN) -----
+  // Obrigatório sempre que houver lista. Sem lista nenhuma — backend fora do
+  // ar, ou o Omie ainda não sincronizado — a venda SEGUE sem departamento, com
+  // aviso na tela: pelo mesmo motivo do CATS embutido, consultor em campo não
+  // perde venda por causa de infra.
+  const departamentoSel = deps.lista.find((d) => d.codigo === s.departamento) || null;
+  const departamentoOk = !!departamentoSel || (deps.estado !== 'carregando' && deps.lista.length === 0);
+  const rotuloDepartamento = departamentoSel ? departamentoSel.descricao : (departamentoOk ? '—' : 'Escolha na etapa do cliente');
+  // Última conferência, no momento que importa: a lista pode ter mudado depois
+  // da última reconsulta. Devolve o departamento como está no Omie AGORA, null
+  // se a venda segue sem, ou `false` se o escolhido saiu da lista — aí o envio
+  // para e a tela volta para a etapa do cliente, com o aviso.
+  const departamentoNoEnvio = async () => {
+    if (!s.departamento) return null;
+    const novo = await atualizaDepartamentos();
+    if (!novo) return departamentoSel;   // consulta falhou: segue com o que a tela mostrava
+    return novo.lista.find((d) => d.codigo === s.departamento) || false;
+  };
+
   // ----- Gating -----
   const empresaValid = (
     isCNPJ(s.cnpj) &&
@@ -1492,12 +1587,15 @@ function App() {
   };
 
   // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
-  const buildPayload = () => {
+  const buildPayload = (departamento) => {
     const nowIso = new Date().toISOString();
     const formas = Array.from(new Set([s.entradaForma].concat(s.parcelas.map((p) => p.forma))));
     return {
       origem: 'lobby_conecta_ap',
       etapa: 'envio_pre_contrato',
+      // Departamento da Seja AP a que a venda pertence, como está no Omie. null
+      // quando a lista não pôde ser carregada — ver `departamentoOk`.
+      departamento: departamentoParaPayload(departamento),
       empresa: {
         cnpj: s.cnpj || '', cnpj_limpo: onlyDigits(s.cnpj), razao_social: (s.razaoSocial || '').trim(),
         inscricao_estadual: (s.inscricaoEstadual || '').trim() || null, endereco: composeEndereco(s),
@@ -1553,12 +1651,14 @@ function App() {
    * não é pedido na tela — vai só o que a consulta ao CNPJ trouxer, e `dados_receita`
    * diz se ele veio mesmo da Receita ou se o CNPJ não foi consultado com sucesso.
    */
-  const buildApnPayload = () => {
+  const buildApnPayload = (departamento) => {
     const nowIso = new Date().toISOString();
     const valor = round2(Number(s.apnValor) || 0);
     return {
       origem: 'lobby_conecta_ap',
       etapa: 'envio_venda_apn',
+      // Mesmo bloco do Elite — ver `buildPayload`.
+      departamento: departamentoParaPayload(departamento),
       categoria: { id: cat ? cat.id : 'apn', nome: cat ? cat.name : 'APN' },
       // Nem todo comprador da APN tem CNPJ. `tipo_pessoa` diz qual dos dois
       // blocos abaixo está preenchido (o outro vem null), e `cliente` traz a
@@ -1603,12 +1703,14 @@ function App() {
   };
 
   const finalizeApn = async () => {
-    if (!apnPagamentoValid || !apnEnvioConfigurado || s.sendState === 'sending') return;
+    if (!apnPagamentoValid || !apnEnvioConfigurado || !departamentoOk || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
+    const departamento = await departamentoNoEnvio();
+    if (departamento === false) { patch({ sendState: 'idle', step: 0 }); return; }
     // Mesmo formato de protocolo do Elite; a sigla vem da categoria (APN).
     const protocolo = buildProtocol({ sigla: (cat && cat.sigla) || 'APN' }, s.apnForma, new Date());
     try {
-      const payload = buildApnPayload();
+      const payload = buildApnPayload(departamento);
       payload.protocolo = protocolo;
 
       // A APN tem valor livre por decisão de produto — não há tabela contra a
@@ -1750,13 +1852,15 @@ function App() {
   };
 
   const finalize = async () => {
-    if (!pagamentoValid || s.sendState === 'sending') return;
+    if (!pagamentoValid || !departamentoOk || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
+    const departamento = await departamentoNoEnvio();
+    if (departamento === false) { patch({ sendState: 'idle', step: 0 }); return; }
     // Código da venda gerado no cliente (formato SSS-YYMMDDPRRRRR) e enviado ao
     // webhook dentro do payload. Também é o protocolo exibido na tela de sucesso.
     const protocolo = buildProtocol(product, s.entradaForma, new Date());
     try {
-      const payload = buildPayload();
+      const payload = buildPayload(departamento);
       payload.protocolo = protocolo;
 
       // O bloco que o servidor assina: só o que representa dinheiro e
@@ -1794,7 +1898,7 @@ function App() {
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
-    omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '',
+    omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '', departamento: '', departamentoAviso: '',
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
     dhVagas: [novaVagaDh()], dhAdiantamentoEdit: false,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
@@ -2052,6 +2156,37 @@ function App() {
     </>
   );
 
+  // Cartão do departamento — o mesmo no Elite e na APN, no fim da etapa do
+  // cliente. É da VENDA, não do cliente: por isso vem depois dos dados dele.
+  const renderDepartamento = () => {
+    const semLista = deps.estado !== 'carregando' && deps.lista.length === 0;
+    const aviso = (icone, texto) => (
+      <div role="status" style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+        <span className="ms-icon" style={{ fontSize: 16 }}>{icone}</span>{texto}
+      </div>
+    );
+    return (
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="sec-title" style={{ marginBottom: 6 }}>Departamento</div>
+        <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px' }}>Área da Seja AP a que esta venda pertence. A lista vem do Omie.</p>
+        <label className="lbl" htmlFor="departamento">Departamento da venda{!semLista && <span style={{ color: 'var(--primary)' }}> *</span>}</label>
+        <select id="departamento" className="inp" style={{ height: 46 }} value={departamentoSel ? s.departamento : ''} disabled={deps.lista.length === 0}
+          onChange={(e) => patch({ departamento: e.target.value, departamentoAviso: '' })}>
+          <option value="">{deps.estado === 'carregando' ? 'Carregando departamentos…' : semLista ? 'Nenhum departamento disponível' : 'Selecione o departamento'}</option>
+          {deps.lista.map((d) => <option key={d.codigo} value={d.codigo}>{d.descricao}</option>)}
+        </select>
+        {s.departamentoAviso && aviso('sync_problem', s.departamentoAviso)}
+        {semLista && aviso('cloud_off', 'Não foi possível carregar os departamentos agora. A venda pode seguir sem ele.')}
+        {!s.departamentoAviso && deps.atualizadaEm && (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
+            <span className="ms-icon" style={{ fontSize: 14 }}>sync</span>
+            Lista atualizada pelo Omie às {deps.atualizadaEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderEmpresa = () => {
     const cnpjBtnLabel = s.cnpjStatus === 'loading' ? 'Buscando…' : s.cnpjStatus === 'done' ? 'Revalidar' : 'Validar CNPJ';
     return (
@@ -2124,6 +2259,8 @@ function App() {
             </div>
           )}
         </div>
+
+        {renderDepartamento()}
       </>
     );
   };
@@ -2382,6 +2519,8 @@ function App() {
             </p>
           )}
         </div>
+
+        {renderDepartamento()}
       </>
     );
   };
@@ -2480,7 +2619,7 @@ function App() {
             {(apnPf
               ? [['Nome', s.repNome || '—'], ['CPF', s.apnCpf || '—'], ['Tipo', 'Pessoa física'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]]
               : [['Razão social', s.razaoSocial || '—'], ['CNPJ', s.cnpj || '—'], ['Contato', s.repNome || '—'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]]
-            ).map(([k, v]) => (
+            ).concat([['Departamento', rotuloDepartamento]]).map(([k, v]) => (
               <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
             ))}
           </div>
@@ -2805,7 +2944,7 @@ function App() {
           <div className="card" style={{ padding: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Empresa & Representante</span><button className="linkbtn" onClick={() => goStep(0)}>Editar</button></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
-              {[['Razão social', s.razaoSocial], ['CNPJ', s.cnpj], ['Representante', s.repNome || '—'], ['Contato', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]].map(([k, v]) => (
+              {[['Razão social', s.razaoSocial], ['CNPJ', s.cnpj], ['Representante', s.repNome || '—'], ['Contato', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')], ['Departamento', rotuloDepartamento]].map(([k, v]) => (
                 <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
               ))}
             </div>
@@ -3003,13 +3142,13 @@ function App() {
   let primaryLabel = 'Continuar', primaryIcon = 'arrow_forward', primaryAction = next, enabled = true;
   if (isApn) {
     // APN: Cliente → Pagamento → Resumo. Sem Pix, sem divergência de cronograma.
-    if (s.step === 0) enabled = apnClienteValid;
+    if (s.step === 0) enabled = apnClienteValid && departamentoOk;
     else if (s.step === 1) enabled = apnPagamentoValid;
     else {
       primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro';
       primaryIcon = 'check';
       primaryAction = finalizeApn;
-      enabled = apnPagamentoValid && apnEnvioConfigurado && !sending;
+      enabled = apnPagamentoValid && apnEnvioConfigurado && departamentoOk && !sending;
     }
   } else if (isDh) {
     // DH: Produto → Contratante → Quadro comercial → Resumo. Sem Pix, sem
@@ -3023,7 +3162,7 @@ function App() {
       primaryAction = finalizeDh;
       enabled = dhContratanteValid && dhQuadroValid && dhEnvioConfigurado && !sending;
     }
-  } else if (s.step === 0) enabled = empresaValid;
+  } else if (s.step === 0) enabled = empresaValid && departamentoOk;
   else if (s.step === 1) enabled = !!product;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
   else {
@@ -3037,7 +3176,7 @@ function App() {
       else if (s.pixState === 'awaiting') { primaryLabel = 'Aguardando pagamento…'; primaryAction = () => {}; enabled = false; }
       else { primaryLabel = 'Gerar código Pix'; primaryAction = generatePix; enabled = pagamentoValid; }
     } else {
-      primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && !sending;
+      primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && departamentoOk && !sending;
     }
   }
   const primaryBusy = (isApn || isDh)
