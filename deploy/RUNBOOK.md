@@ -17,6 +17,7 @@ Operação do Lobby na **prod.solucoes (187.77.48.164)**.
 | Porta de loopback | **8095** (front, é a que o vhost do host encaminha) |
 | Coleta de métricas | **8096** (backend direto, só o Prometheus — sem caminho público) |
 | Identidade | Conecta ID, por `identidade-api:8000` na rede `identidade-net` |
+| Departamentos | `lobby-departamentos` — traz a lista do Omie para o dropdown do Elite e da APN, de hora em hora; sem porta |
 
 Portas vizinhas já tomadas nesta VPS — confira antes de mexer:
 8090 conecta-crm · 8091 kanban-frontend · 8092 kanban-mcp · 8093 formularios ·
@@ -83,7 +84,8 @@ cp .env.example /opt/conecta/env/lobby.env   # chmod 600
 ln -s /opt/conecta/env/lobby.env /opt/conecta/app/Lobby_SejaAP/.env
 ```
 
-Preencha `DJANGO_SECRET_KEY`, `DATABASE_URL` e `IDENTIDADE_APP_KEY`.
+Preencha `DJANGO_SECRET_KEY`, `DATABASE_URL`, `IDENTIDADE_APP_KEY` e, para os
+departamentos, `OMIE_APP_KEY` e `OMIE_APP_SECRET`.
 
 ### 5. Subir
 
@@ -180,6 +182,8 @@ git pull --ff-only origin main
 # 1. Rede de segurança: nomeie as imagens que estão no ar ANTES de sobrescrevê-las
 sudo docker tag lobby-sejaap-backend:latest  lobby-sejaap-backend:$(git rev-parse --short HEAD@{1})
 sudo docker tag lobby-sejaap-frontend:latest lobby-sejaap-frontend:$(git rev-parse --short HEAD@{1})
+# A imagem do sincronizador só existe depois do primeiro deploy com ele (TSK-503).
+sudo docker tag lobby-sejaap-departamentos:latest lobby-sejaap-departamentos:$(git rev-parse --short HEAD@{1})
 
 # 2. Construir SEM trocar o que está servindo
 sudo docker compose build
@@ -231,7 +235,9 @@ Nesses casos: corrija o dado (pelo `/django-admin/`) e rode o `migrate` de novo.
 ## Verificações
 
 ```bash
-sudo docker compose ps                                                           # 3 healthy
+sudo docker compose ps                                                           # 3 healthy + departamentos running
+sudo docker compose logs --tail 3 departamentos                                  # "Departamentos sincronizados: N ativos…"
+curl -s https://lobby.sejaap.com.br/api/departamentos | head -c 200              # JSON público, só os ativos
 curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/            # 200
 curl -s https://lobby.sejaap.com.br/api/catalogo | head -c 200                   # JSON público
 curl -s -o /dev/null -w '%{http_code}\n' -X PUT https://lobby.sejaap.com.br/api/catalogo  # 401
@@ -289,8 +295,9 @@ porque o "fora do ar" trata NoData como alerta:
 3. `deploy/monitoramento/alertas-lobby.yml` →
    `/opt/monitoring/grafana/provisioning/alerting/lobby.yml`, e reiniciar o Grafana
 
-Cinco alertas: fora do ar, catálogo vazio, o n8n parou de validar, ninguém na
-diretoria, e segredo do n8n ausente. Os dois que ninguém adivinharia sozinho são
+Seis alertas: fora do ar, catálogo vazio, o n8n parou de validar, ninguém na
+diretoria, segredo do n8n ausente e departamentos sem sincronizar com o Omie há
+mais de 3 horas. Os dois que ninguém adivinharia sozinho são
 o **catálogo vazio** (o front não quebra — cai na tabela embutida e vende com
 preço velho) e a **validação parada** (o comprovante continua sendo assinado e
 ninguém confere).
@@ -306,6 +313,15 @@ seria vazamento de credenciais.
 embutido. `/api/catalogo` devolve 502 e o `boot()` captura. O nginx resolve o backend
 a cada requisição, de propósito: com o nome resolvido só na inicialização, ele
 recusaria subir sem o backend e derrubaria o lobby junto.
+
+**Omie fora do ar, ou chave do Omie revogada** → o lobby segue vendendo, e o
+dropdown de departamento fica com a última lista sincronizada — nada some. O
+motivo está no log do sincronizador (é a `faultstring` do Omie):
+`sudo docker compose logs --tail 20 departamentos`. Chave nova vai em
+`/opt/conecta/env/lobby.env` (`OMIE_APP_KEY` / `OMIE_APP_SECRET`) e entra com
+`sudo docker compose up -d --force-recreate --no-deps departamentos` — ele
+sincroniza na subida. Para trazer uma mudança do Omie na hora, sem esperar a
+rodada: `sudo docker compose exec backend python manage.py sincronizar_departamentos`.
 
 **`AUTH_CENTRAL_ATIVO=false` não é rollback, é tranca.** Não há senha local neste app;
 desligar tira todo mundo, inclusive a diretoria.

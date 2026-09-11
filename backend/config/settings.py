@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "apps.catalogo",
     "apps.contas",
     "apps.vendas",
+    "apps.departamentos",
 ]
 
 MIDDLEWARE = [
@@ -176,6 +177,15 @@ IDENTIDADE_RESOLVER_USUARIO = "apps.contas.identidade.resolver_usuario"
 # conferência manual — falha visível, não silenciosa.
 LOBBY_N8N_TOKEN = os.environ.get("LOBBY_N8N_TOKEN", "")
 
+# === Omie ===
+# Só para listar os departamentos do Elite e da APN (`apps/departamentos/omie.py`),
+# de hora em hora, pelo container `lobby-departamentos`. A chave é do ERP inteiro
+# — lê e escreve o financeiro —, então vive só no .env do servidor. Sem ela, cada
+# rodada loga a falha e o dropdown fica com a última lista que está no banco.
+OMIE_APP_KEY = os.environ.get("OMIE_APP_KEY", "")
+OMIE_APP_SECRET = os.environ.get("OMIE_APP_SECRET", "")
+OMIE_TIMEOUT = int(os.environ.get("OMIE_TIMEOUT", "20"))
+
 # === Prometheus ===
 # Token do /metrics. Vazio = endpoint desabilitado (404), que é o padrão certo:
 # um /metrics aberto entrega o volume de vendas da empresa e quantas pessoas
@@ -228,6 +238,10 @@ REST_FRAMEWORK = {
         # uma pessoa usando um link uma vez. Sobra folga para quem erra a
         # política de senha algumas vezes seguidas e tenta de novo.
         "definir_senha": os.environ.get("LOBBY_RATE_DEFINIR_SENHA", "20/hour"),
+        # Lista de departamentos. O front reconsulta a cada 5 minutos, ao voltar
+        # para a aba e antes de enviar — e vários consultores dividem o IP do
+        # escritório. Uma resposta de 10 linhas lidas do banco, sem Omie no meio.
+        "departamentos_publico": os.environ.get("LOBBY_RATE_DEPARTAMENTOS", "600/hour"),
     },
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }

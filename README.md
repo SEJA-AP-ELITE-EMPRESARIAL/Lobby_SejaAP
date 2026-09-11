@@ -119,6 +119,36 @@ perguntas diferentes, e por isso as duas tabelas: a linha do tempo responde
 tabela"* — inclusive quando a publicação não mudou valor nenhum, caso em que não
 existe vigência para registrar.
 
+### Departamentos: vêm do Omie, de hora em hora
+
+O Elite e a APN pedem o **departamento** da venda no fim da etapa de dados do
+cliente. A lista é do Omie e muda sem deploy, por isso não mora no `index.html`:
+
+```text
+Omie ──ListarDepartamentos──► lobby-departamentos (laço, a cada 1 h) ──► Postgres `lobby`
+                                                                              │
+index.html ◄──── GET /api/departamentos (anônimo, só os ativos) ──────────────┘
+```
+
+- **O navegador nunca fala com o Omie.** A chave de lá (`OMIE_APP_KEY` /
+  `OMIE_APP_SECRET`) é do ERP inteiro e vive só no `.env` do servidor.
+- **O Omie nunca está no caminho da venda.** Se ele cair, a lista fica congelada
+  na última sincronização boa — não some. Listagem vazia conta como falha, não
+  como "todos foram removidos".
+- **Página aberta há horas.** O front reconsulta a cada 5 minutos, ao voltar para
+  a aba e logo antes de enviar, e troca a lista no lugar. Não pede para recarregar:
+  isso apagaria a venda em andamento, que só existe no estado do React. Se o
+  departamento escolhido saiu do Omie, a seleção é limpa e aparece um aviso na
+  etapa do cliente; se sair no instante do envio, o envio para e volta para lá.
+- **Sem lista nenhuma** (backend fora, ou antes da 1ª sincronização), a venda
+  segue sem departamento, com aviso na tela — pelo mesmo motivo do catálogo
+  embutido: consultor em campo não perde venda por infra.
+- Departamento que sai do Omie vira **inativo** no banco, nunca é apagado: o
+  código pode estar em vendas já enviadas. O `/django-admin/` mostra a lista,
+  somente leitura.
+- Para trazer uma mudança do Omie na hora, sem esperar a rodada:
+  `docker exec lobby-backend python manage.py sincronizar_departamentos`.
+
 ### Expurgo do histórico de publicações
 
 O KV apagava sozinho, com TTL de 90 dias e sem avisar. Aqui é um comando, que
@@ -167,8 +197,9 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 
 - **CNPJ** — `POST https://n8n.sejaap.com.br/webhook/brasilapi-cnpj` → `{ cnpj, cnpj_formatado }`
 - **CEP** — `POST https://n8n.sejaap.com.br/webhook/busca-cep` → `{ cep, cep_formatado }`
-- **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `protocolo`, `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
-- **Venda APN** — `POST https://n8n.sejaap.com.br/webhook/lobby-apn` → payload próprio (sem cronograma nem destino).
+- **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `protocolo`, `departamento`, `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
+- **Venda APN** — `POST https://n8n.sejaap.com.br/webhook/lobby-apn` → payload próprio (sem cronograma nem destino), com o mesmo bloco `departamento`.
+  - `departamento` — `{ codigo, descricao, estrutura }` como está no Omie, ou `null` quando a lista não pôde ser carregada. O `codigo` é o que o Omie entende. **Os fluxos do n8n ainda não o leem:** até alguém mapear o campo do lado de lá, ele viaja e é ignorado.
 - **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `adiantamento_calculado`, `adiantamento_negociado`, `data_pagamento`, `tipo_pagamento`), mais `totais` (com `percentual_adiantamento`), `autorizado_por` e o `comprovante`. O adiantamento é **50% do salário de referência**, calculado pelo formulário e travado — só a autorização de um gerente/diretoria (Conecta ID) libera a edição, e ela vale só para aquela venda.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
 - **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:
@@ -262,6 +293,7 @@ Cloudflare (proxied, Full strict)
                  ├── /            index.html · admin.html
                  └── /api/        →  lobby-backend (Django + gunicorn)
                                         └── db-tunnel → Postgres na db-sejaap:5437
+   lobby-departamentos (sem porta) ── a cada 1 h: Omie → db-tunnel
 ```
 
 - **Domínio:** <https://lobby.sejaap.com.br>. O DNS **precisa ficar proxiado** — em
@@ -289,13 +321,15 @@ O backend expõe `/metrics` ao Prometheus, fechado por token
 (`LOBBY_METRICS_TOKEN`). **Sem o token o endpoint responde 404**, que é o padrão:
 aberto, ele entrega o volume de vendas e quantas pessoas podem autorizar desconto.
 
-Cinco alertas no Grafana (pasta *Infra SEJA AP*, grupo `lobby`) e o painel
-**Lobby — vendas e catálogo**. Os dois alertas que ninguém adivinharia sozinho:
+Seis alertas no Grafana (pasta *Infra SEJA AP*, grupo `lobby`) e o painel
+**Lobby — vendas e catálogo**. Os três alertas que ninguém adivinharia sozinho:
 
 - **Catálogo vazio** — o front *não* quebra: cai na tabela embutida e segue
   vendendo com preço velho. Degradar em silêncio é pior que quebrar.
 - **O n8n parou de validar** — o comprovante continua sendo assinado e ninguém
   confere.
+- **Departamentos sem sincronizar há 3 h** — o dropdown do Elite e da APN segue
+  com a última lista boa, e departamento criado no Omie não aparece.
 
 Arquivos versionados em [`deploy/monitoramento/`](deploy/monitoramento/). Instalar
 **nesta ordem**: job de coleta → confirmar o alvo UP → alertas. Ao contrário, o

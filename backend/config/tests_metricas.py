@@ -125,6 +125,29 @@ class ColetaTest(TestCase):
     def test_n8n_com_segredo_aparece_como_configurado(self):
         self.assertEqual(self.valor_de("lobby_n8n_configurado"), 1)
 
+    def test_departamentos_sem_sincronizacao_nao_tem_serie_de_frescor(self):
+        """Antes da primeira rodada não há o que envelhecer — e o alerta de
+        sincronização parada não pode nascer disparado."""
+        self.assertEqual(self.valor_de('lobby_departamentos{estado="ativo"}'), 0)
+        self.assertNotIn(
+            "lobby_segundos_desde_sincronizacao_departamentos",
+            self.coletar().content.decode(),
+        )
+
+    def test_departamentos_contados_e_frescor_da_ultima_sincronizacao(self):
+        from apps.departamentos.omie import DepartamentoOmie
+        from apps.departamentos.servicos import sincronizar
+
+        sincronizar(
+            [
+                DepartamentoOmie("1", "1.Consultoria", "001.001", True),
+                DepartamentoOmie("2", "Copa", "001.017", False),
+            ]
+        )
+        self.assertEqual(self.valor_de('lobby_departamentos{estado="ativo"}'), 1)
+        self.assertEqual(self.valor_de('lobby_departamentos{estado="inativo"}'), 1)
+        self.assertLess(self.valor_de("lobby_segundos_desde_sincronizacao_departamentos"), 60)
+
 
 @override_settings(LOBBY_METRICS_TOKEN=TOKEN)
 class AcessoTest(TestCase):
