@@ -11,6 +11,18 @@ apagaria a venda em andamento, que só existe no estado do React.
 A versão é um hash do que o consultor VÊ (código, nome e posição dos ativos), e
 não da hora da sincronização. Sincronizar de hora em hora sem mudança nenhuma não
 pode fazer toda tela aberta achar que a lista mudou.
+
+O DEPARTAMENTO FIXO (TSK-585)
+
+Quando a diretoria fixa um departamento no `/admin`, quem aplica é ESTE arquivo,
+e não o `index.html`: a rota pública passa a devolver só o fixo, com
+`modo: "fixo"`. O lobby novo lê o modo e trava o campo. Um lobby com o HTML
+antigo, aberto desde antes do deploy, ignora o modo e mostra uma lista de um item
+só, e continua vendendo certo. Se a regra morasse no front, essa tela seguiria
+oferecendo a lista inteira.
+
+A versão também muda quando o modo muda, e é por ela que a tela aberta percebe
+que a diretoria fixou ou soltou o campo.
 """
 import hashlib
 import json
@@ -20,12 +32,16 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from .models import Departamento
+from .models import ConfiguracaoDepartamento, Departamento
 from .omie import DepartamentoOmie
 
 
 class ListagemVazia(Exception):
     """O Omie respondeu, mas sem departamento nenhum."""
+
+
+class ConfiguracaoInvalida(Exception):
+    """Recusa de gravação da aba Departamentos. A mensagem vai crua para a tela."""
 
 
 @dataclass
@@ -124,8 +140,14 @@ def ativos():
     return Departamento.objects.filter(ativo=True).order_by("estrutura", "descricao", "codigo")
 
 
-def versao(departamentos) -> str:
+def versao(departamentos, modo=ConfiguracaoDepartamento.Modo.LISTA) -> str:
     chave = [[d.codigo, d.descricao, d.estrutura] for d in departamentos]
+    if modo == ConfiguracaoDepartamento.Modo.FIXO:
+        # Só o fixo entra marcado. A lista fica com o mesmo hash de antes da
+        # TSK-585: sem isso, o deploy faria toda tela aberta achar que a lista
+        # mudou. E a marca não é enfeite: fixo num departamento que é o único
+        # ativo daria a mesma lista, e o lobby não saberia que tem de travar.
+        chave = ["fixo", chave]
     return hashlib.sha256(json.dumps(chave, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
 
@@ -138,14 +160,99 @@ def ultima_sincronizacao():
     return Departamento.objects.aggregate(ultima=Max("visto_em"))["ultima"]
 
 
+def _publico(d: Departamento) -> dict:
+    return {"codigo": d.codigo, "descricao": d.descricao, "estrutura": d.estrutura}
+
+
+def configuracao_atual() -> ConfiguracaoDepartamento | None:
+    """A última gravação da aba, ou None se a diretoria nunca a salvou."""
+    return ConfiguracaoDepartamento.objects.select_related("departamento").first()
+
+
+def fixo_em_vigor(configuracao=None) -> Departamento | None:
+    """O departamento que o consultor vê travado, ou None quando vale a lista.
+
+    Fixo inativo no Omie conta como lista: ver `ConfiguracaoDepartamento`.
+    """
+    configuracao = configuracao if configuracao is not None else configuracao_atual()
+    if configuracao is None or configuracao.modo != ConfiguracaoDepartamento.Modo.FIXO:
+        return None
+    departamento = configuracao.departamento
+    return departamento if departamento is not None and departamento.ativo else None
+
+
 def estado_publico() -> dict:
-    lista = list(ativos())
+    fixo = fixo_em_vigor()
+    if fixo is not None:
+        modo, lista = ConfiguracaoDepartamento.Modo.FIXO, [fixo]
+    else:
+        modo, lista = ConfiguracaoDepartamento.Modo.LISTA, list(ativos())
     ultima = ultima_sincronizacao()
     return {
-        "versao": versao(lista),
+        "versao": versao(lista, modo),
         "sincronizado_em": ultima.isoformat() if ultima else None,
-        "departamentos": [
-            {"codigo": d.codigo, "descricao": d.descricao, "estrutura": d.estrutura}
-            for d in lista
-        ],
+        # Com "fixo", `departamentos` tem um item só, e é ele que vai na venda.
+        "modo": str(modo),
+        "departamentos": [_publico(d) for d in lista],
     }
+
+
+def estado_configuracao() -> dict:
+    """O que a aba Departamentos do `/admin` precisa para abrir.
+
+    `modo` é o que a diretoria salvou; `modo_em_vigor` é o que o consultor vê
+    agora. Os dois só divergem quando o fixo foi inativado no Omie, e a aba
+    avisa.
+    """
+    configuracao = configuracao_atual()
+    fixo = configuracao.departamento if configuracao is not None else None
+    ultima = ultima_sincronizacao()
+    return {
+        "modo": configuracao.modo if configuracao is not None else ConfiguracaoDepartamento.Modo.LISTA.value,
+        "modo_em_vigor": (
+            ConfiguracaoDepartamento.Modo.FIXO.value
+            if fixo_em_vigor(configuracao) is not None
+            else ConfiguracaoDepartamento.Modo.LISTA.value
+        ),
+        "fixo": {**_publico(fixo), "ativo": fixo.ativo} if fixo is not None else None,
+        "departamentos": [_publico(d) for d in ativos()],
+        "sincronizado_em": ultima.isoformat() if ultima else None,
+        "alterado_em": configuracao.criado_em.isoformat() if configuracao is not None else None,
+        # Sem autor numa gravação que existe só se a conta foi apagada; a cópia
+        # do e-mail fica. None aqui é "ninguém salvou ainda".
+        "alterado_por": (configuracao.autor_email or None) if configuracao is not None else None,
+    }
+
+
+def salvar_configuracao(dados, *, autor) -> ConfiguracaoDepartamento:
+    """Grava a escolha da aba como uma linha nova. Nada é editado."""
+    if not isinstance(dados, dict):
+        raise ConfiguracaoInvalida("Configuração inválida.")
+
+    modo = str(dados.get("modo") or "").strip()
+    if modo not in ConfiguracaoDepartamento.Modo.values:
+        raise ConfiguracaoInvalida("Escolha entre a lista completa e um departamento fixo.")
+
+    departamento = None
+    if modo == ConfiguracaoDepartamento.Modo.FIXO:
+        codigo = str(dados.get("codigo") or "").strip()
+        if not codigo:
+            raise ConfiguracaoInvalida("Escolha qual departamento fica fixo.")
+        departamento = Departamento.objects.filter(codigo=codigo).first()
+        if departamento is None:
+            raise ConfiguracaoInvalida(
+                f"O departamento {codigo} não está na lista do Omie. Recarregue a página."
+            )
+        if not departamento.ativo:
+            # A lista da tela pode ser de antes da última sincronização.
+            raise ConfiguracaoInvalida(
+                f"{departamento.descricao} está inativo no Omie e não pode ficar fixo. "
+                "Recarregue a página."
+            )
+
+    return ConfiguracaoDepartamento.objects.create(
+        modo=modo,
+        departamento=departamento,
+        autor=autor if getattr(autor, "is_authenticated", False) else None,
+        autor_email=getattr(autor, "email", "") or "",
+    )

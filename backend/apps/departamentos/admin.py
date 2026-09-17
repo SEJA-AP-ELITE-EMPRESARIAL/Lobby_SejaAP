@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Departamento
+from .models import ConfiguracaoDepartamento, Departamento
 
 
 @admin.register(Departamento)
@@ -17,6 +17,27 @@ class DepartamentoAdmin(admin.ModelAdmin):
     search_fields = ("descricao", "codigo")
     ordering = ("estrutura", "descricao")
     readonly_fields = tuple(f.name for f in Departamento._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ConfiguracaoDepartamento)
+class ConfiguracaoDepartamentoAdmin(admin.ModelAdmin):
+    """Somente leitura: quem configura é a diretoria, na aba Departamentos do
+    `/admin`. Gravar por aqui pularia o autor e a validação de departamento
+    ativo — e editar uma linha antiga reescreveria o registro de quem decidiu.
+    """
+
+    list_display = ("criado_em", "modo", "departamento", "autor_email")
+    list_filter = ("modo",)
+    readonly_fields = tuple(f.name for f in ConfiguracaoDepartamento._meta.fields)
 
     def has_add_permission(self, request):
         return False

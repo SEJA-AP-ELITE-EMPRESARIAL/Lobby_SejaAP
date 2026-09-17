@@ -146,6 +146,14 @@ index.html ◄──── GET /api/departamentos (anônimo, só os ativos) ─�
 - Departamento que sai do Omie vira **inativo** no banco, nunca é apagado: o
   código pode estar em vendas já enviadas. O `/django-admin/` mostra a lista,
   somente leitura.
+- **Departamento fixo** (desde 17/09/2026, TSK-585). Na aba **Departamentos** do
+  `/admin`, a diretoria escolhe entre a lista completa e um departamento fixo. Com
+  fixo, o `GET /api/departamentos` devolve `modo: "fixo"` e um item só, e o lobby
+  mostra o campo preenchido e travado. Quem filtra é o backend, então um lobby com
+  o HTML antigo ainda aberto vê uma lista de um item e continua vendendo certo.
+  Cada gravação é uma linha nova em `ConfiguracaoDepartamento`, com autor, e sem
+  linha nenhuma vale a lista. Se o fixo for inativado no Omie, o consultor volta a
+  ver a lista (a aba avisa), e o fixo volta a valer sozinho quando o Omie o reativa.
 - Para trazer uma mudança do Omie na hora, sem esperar a rodada:
   `docker exec lobby-backend python manage.py sincronizar_departamentos`.
 
@@ -237,11 +245,12 @@ Fecha três coisas: **forjar** (precisa da chave), **reusar** (nonce de uso úni
 ## Personalização rápida
 
 O **`/admin`** é a tela de configuração da diretoria (login do Conecta ID), com
-quatro abas — e tudo o que se faz por lá fica registrado com autor e período:
+cinco abas — e tudo o que se faz por lá fica registrado com autor e período:
 
 | Aba | O que configura |
 |---|---|
 | **Valores** | Mensalidade / valor à vista de cada produto. |
+| **Departamentos** | Se o consultor escolhe o departamento da venda (Elite e APN) na lista do Omie ou se toda venda sai com um departamento fixo. |
 | **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — geral e por produto. |
 | **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
 | **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |

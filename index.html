@@ -220,6 +220,11 @@ const PIX_COBRANCA_ATIVA = false;
  * só existe no estado do React. Por isso a tela reconsulta sozinha (a cada
  * DEPARTAMENTOS_RECONSULTA_MS, ao voltar para a aba e logo antes de enviar),
  * troca a lista no lugar e só avisa quando o departamento ESCOLHIDO saiu dela.
+ *
+ * DEPARTAMENTO FIXO (TSK-585, 17/09/2026). A diretoria pode fixar o departamento
+ * no /admin. Aí a rota devolve `modo: "fixo"` e um item só, e esta tela mostra o
+ * campo preenchido e travado. Quem filtra é o backend; aqui só se lê o modo. Sem
+ * `modo` na resposta (backend de antes da TSK-585), vale a lista.
  * ========================================================================== */
 const DEPARTAMENTOS_URL = '/api/departamentos';
 const DEPARTAMENTOS_RECONSULTA_MS = 5 * 60 * 1000;
@@ -232,6 +237,7 @@ async function buscaDepartamentos() {
   if (!d || !Array.isArray(d.departamentos)) throw new Error('resposta sem departamentos');
   return {
     versao: String(d.versao || ''),
+    modo: d.modo === 'fixo' ? 'fixo' : 'lista',
     lista: d.departamentos
       .filter((x) => x && x.codigo && x.descricao)
       .map((x) => ({ codigo: String(x.codigo), descricao: String(x.descricao), estrutura: String(x.estrutura || '') })),
@@ -1182,7 +1188,8 @@ function App() {
   // resto do formulário.
   // `estado`: 'carregando' até a primeira resposta; 'ok' ou 'erro' depois.
   // `atualizadaEm`: quando a lista mudou com a tela aberta (null na 1ª carga).
-  const [deps, setDeps] = useState({ versao: null, lista: [], estado: 'carregando', atualizadaEm: null });
+  // `modo`: 'fixo' quando a diretoria fixou o departamento — a lista tem um item.
+  const [deps, setDeps] = useState({ versao: null, modo: 'lista', lista: [], estado: 'carregando', atualizadaEm: null });
 
   // Reconsulta e, se a versão mudou, troca a lista no lugar. Se o departamento
   // escolhido não está mais nela, limpa a escolha e deixa o aviso. Falha de
@@ -1199,10 +1206,20 @@ function App() {
     }
     setDeps((d) => (d.versao === novo.versao
       ? { ...d, estado: 'ok' }
-      : { versao: novo.versao, lista: novo.lista, estado: 'ok', atualizadaEm: d.versao === null ? null : new Date() }));
-    patch((d) => (!d.departamento || novo.lista.some((x) => x.codigo === d.departamento)
-      ? {}
-      : { departamento: '', departamentoAviso: 'O departamento escolhido saiu da lista do Omie. Escolha outro.' }));
+      : { versao: novo.versao, modo: novo.modo, lista: novo.lista, estado: 'ok', atualizadaEm: d.versao === null ? null : new Date() }));
+    if (novo.modo === 'fixo' && novo.lista.length) {
+      // Com fixo, a escolha acompanha a diretoria sem aviso: o consultor não
+      // escolheu nada. E fica gravada no `s` de propósito — se a diretoria soltar
+      // a lista no meio da venda, ela segue com o departamento que já mostrava.
+      const fixo = novo.lista[0].codigo;
+      patch((d) => (d.departamento === fixo && !d.departamentoAviso ? {} : { departamento: fixo, departamentoAviso: '' }));
+    } else {
+      // "Não está mais disponível", e não "saiu do Omie": desde a TSK-585 quem
+      // tira um departamento da tela também pode ser a diretoria.
+      patch((d) => (!d.departamento || novo.lista.some((x) => x.codigo === d.departamento)
+        ? {}
+        : { departamento: '', departamentoAviso: 'O departamento escolhido não está mais disponível. Escolha outro.' }));
+    }
     return novo;
   };
   useEffect(() => {
@@ -1447,18 +1464,32 @@ function App() {
   // ar, ou o Omie ainda não sincronizado — a venda SEGUE sem departamento, com
   // aviso na tela: pelo mesmo motivo do CATS embutido, consultor em campo não
   // perde venda por causa de infra.
-  const departamentoSel = deps.lista.find((d) => d.codigo === s.departamento) || null;
+  // Com fixo, o departamento é o da lista, e não o do `s`: o `restart` limpa o
+  // `s`, e a próxima venda não pode esperar a reconsulta para poder avançar.
+  const departamentoSel = (deps.modo === 'fixo'
+    ? deps.lista[0]
+    : deps.lista.find((d) => d.codigo === s.departamento)) || null;
   const departamentoOk = !!departamentoSel || (deps.estado !== 'carregando' && deps.lista.length === 0);
   const rotuloDepartamento = departamentoSel ? departamentoSel.descricao : (departamentoOk ? '—' : 'Escolha na etapa do cliente');
   // Última conferência, no momento que importa: a lista pode ter mudado depois
   // da última reconsulta. Devolve o departamento como está no Omie AGORA, null
   // se a venda segue sem, ou `false` se o escolhido saiu da lista — aí o envio
   // para e a tela volta para a etapa do cliente, com o aviso.
+  //
+  // Com fixo, vale o fixo de AGORA: se a diretoria trocou de A para B com a venda
+  // aberta, ela sai com B, em vez de parar dizendo que A saiu da lista.
   const departamentoNoEnvio = async () => {
-    if (!s.departamento) return null;
+    if (deps.modo !== 'fixo' && !s.departamento) return null;
     const novo = await atualizaDepartamentos();
     if (!novo) return departamentoSel;   // consulta falhou: segue com o que a tela mostrava
-    return novo.lista.find((d) => d.codigo === s.departamento) || false;
+    if (novo.modo === 'fixo') return novo.lista[0] || null;
+    const escolhido = novo.lista.find((d) => d.codigo === s.departamento);
+    if (escolhido) return escolhido;
+    if (novo.lista.length === 0) return null;
+    // A diretoria soltou a lista numa venda que nasceu depois do `restart`, sem
+    // departamento no `s`: o consultor precisa escolher, e precisa saber por quê.
+    if (!s.departamento) patch({ departamentoAviso: 'A diretoria liberou a escolha do departamento. Escolha um na lista.' });
+    return false;
   };
 
   // ----- Gating -----
@@ -2160,6 +2191,7 @@ function App() {
   // cliente. É da VENDA, não do cliente: por isso vem depois dos dados dele.
   const renderDepartamento = () => {
     const semLista = deps.estado !== 'carregando' && deps.lista.length === 0;
+    const fixo = deps.modo === 'fixo' && departamentoSel;
     const aviso = (icone, texto) => (
       <div role="status" style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
         <span className="ms-icon" style={{ fontSize: 16 }}>{icone}</span>{texto}
@@ -2168,19 +2200,36 @@ function App() {
     return (
       <div className="card" style={{ marginTop: 18 }}>
         <div className="sec-title" style={{ marginBottom: 6 }}>Departamento</div>
-        <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px' }}>Área da Seja AP a que esta venda pertence. A lista vem do Omie.</p>
-        <label className="lbl" htmlFor="departamento">Departamento da venda{!semLista && <span style={{ color: 'var(--primary)' }}> *</span>}</label>
-        <select id="departamento" className="inp" style={{ height: 46 }} value={departamentoSel ? s.departamento : ''} disabled={deps.lista.length === 0}
-          onChange={(e) => patch({ departamento: e.target.value, departamentoAviso: '' })}>
-          <option value="">{deps.estado === 'carregando' ? 'Carregando departamentos…' : semLista ? 'Nenhum departamento disponível' : 'Selecione o departamento'}</option>
-          {deps.lista.map((d) => <option key={d.codigo} value={d.codigo}>{d.descricao}</option>)}
-        </select>
+        <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+          {fixo ? 'Área da Seja AP a que esta venda pertence, definida pela diretoria.' : 'Área da Seja AP a que esta venda pertence. A lista vem do Omie.'}
+        </p>
+        {fixo ? (
+          <>
+            {/* Um texto travado, e não um <select> desabilitado: campo cinza
+                convida a tentar trocar, e aqui não há o que trocar. */}
+            <div className="lbl">Departamento da venda</div>
+            <div className="inp" role="status" aria-label={'Departamento da venda: ' + fixo.descricao}
+              style={{ height: 46, display: 'flex', alignItems: 'center', gap: 8, cursor: 'default' }}>
+              <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>lock</span>
+              <span style={{ fontWeight: 500 }}>{fixo.descricao}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <label className="lbl" htmlFor="departamento">Departamento da venda{!semLista && <span style={{ color: 'var(--primary)' }}> *</span>}</label>
+            <select id="departamento" className="inp" style={{ height: 46 }} value={departamentoSel ? s.departamento : ''} disabled={deps.lista.length === 0}
+              onChange={(e) => patch({ departamento: e.target.value, departamentoAviso: '' })}>
+              <option value="">{deps.estado === 'carregando' ? 'Carregando departamentos…' : semLista ? 'Nenhum departamento disponível' : 'Selecione o departamento'}</option>
+              {deps.lista.map((d) => <option key={d.codigo} value={d.codigo}>{d.descricao}</option>)}
+            </select>
+          </>
+        )}
         {s.departamentoAviso && aviso('sync_problem', s.departamentoAviso)}
         {semLista && aviso('cloud_off', 'Não foi possível carregar os departamentos agora. A venda pode seguir sem ele.')}
         {!s.departamentoAviso && deps.atualizadaEm && (
           <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
             <span className="ms-icon" style={{ fontSize: 14 }}>sync</span>
-            Lista atualizada pelo Omie às {deps.atualizadaEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.
+            {fixo ? 'Departamento atualizado' : 'Lista atualizada'} às {deps.atualizadaEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.
           </div>
         )}
       </div>
