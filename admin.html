@@ -117,6 +117,11 @@ const { useState, useEffect, useMemo, useCallback } = React;
  *   Histórico — a linha do tempo (o que valeu, quando, por decisão de quem) e,
  *               desde 09/09/2026, as publicações: cada vez que alguém apertou
  *               publicar, com o resumo do que mudou naquela vez.
+ *
+ * Em 17/09/2026 (TSK-585) entrou a quinta, logo depois de Valores:
+ *
+ *   Departamentos — se o consultor escolhe o departamento da venda na lista do
+ *               Omie ou se toda venda sai com um departamento fixo.
  * ========================================================================== */
 const CHAVE_TOKEN = 'lobby_sessao_diretoria';
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -528,7 +533,191 @@ function AbaValores({ api, catalogo, atualizadoEm, ultimaPublicacao, aoPublicar 
   );
 }
 
-/* ===== Aba 2: datas de cobrança =========================================== */
+/* ===== Aba 2: departamento da venda ======================================= */
+
+/* Lista completa ou departamento fixo, para o Elite e a APN (TSK-585).
+ *
+ * Quem aplica a escolha é o backend: com um fixo, o `/api/departamentos` que o
+ * lobby lê passa a devolver só ele. Por isso não há nada aqui sobre o
+ * `index.html` — salvar vale para a próxima consulta de qualquer lobby, inclusive
+ * os que já estão abertos (a cada 5 minutos, ao voltar para a aba e antes de
+ * enviar).
+ *
+ * `modo` é o que foi salvo; `modo_em_vigor` é o que o consultor vê. Só divergem
+ * quando o fixo foi inativado no Omie: aí o lobby volta à lista, para não travar
+ * venda nem mandar ao Omie um código que ele recusa, e a aba avisa. */
+function OpcaoDeModo({ ativo, icone, titulo, children, onClick, desabilitado }) {
+  return (
+    <button type="button" onClick={onClick} disabled={desabilitado} aria-pressed={ativo}
+      style={{
+        display: 'flex', gap: 12, alignItems: 'flex-start', textAlign: 'left', padding: '16px 18px', borderRadius: 12,
+        cursor: desabilitado ? 'not-allowed' : 'pointer', opacity: desabilitado ? 0.5 : 1,
+        background: ativo ? 'var(--primary-subtle)' : 'var(--surface-elevated)',
+        border: `1px solid ${ativo ? 'var(--primary)' : 'var(--border-light)'}`,
+        boxShadow: ativo ? 'var(--focus-ring)' : 'none', color: 'var(--text)', transition: 'border-color .15s, background .15s',
+      }}>
+      <span className="ms-icon" style={{ fontSize: 22, color: ativo ? 'var(--primary)' : 'var(--text-muted)' }}>{ativo ? 'radio_button_checked' : 'radio_button_unchecked'}</span>
+      <span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, font: '600 14.5px var(--font-primary)' }}>
+          <span className="ms-icon" style={{ fontSize: 19, color: 'var(--primary)' }}>{icone}</span>{titulo}
+        </span>
+        <span style={{ display: 'block', font: '400 12.5px/1.5 var(--font-secondary)', color: 'var(--text-muted)', marginTop: 4 }}>{children}</span>
+      </span>
+    </button>
+  );
+}
+
+function AbaDepartamentos({ api }) {
+  const [dados, setDados] = useState(null);
+  const [escolha, setEscolha] = useState({ modo: 'lista', codigo: '' });
+  const [estado, setEstado] = useState('carregando');
+  const [msg, setMsg] = useState('');
+
+  const aplica = (d) => {
+    setDados(d);
+    // O código fica guardado mesmo na lista: voltar para "fixo" sem salvar
+    // recupera o que estava escolhido.
+    setEscolha({ modo: d.modo, codigo: d.fixo?.codigo || '' });
+  };
+
+  const carregar = useCallback(async () => {
+    setEstado('carregando'); setMsg('');
+    try {
+      aplica(await api('/api/departamentos/configuracao'));
+      setEstado('pronto');
+    } catch (err) { setMsg(err.message); setEstado('erro'); }
+  }, [api]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  if (estado === 'carregando') return <Carregando />;
+  if (estado === 'erro') return <Falhou msg={msg} aoTentar={carregar} />;
+
+  const lista = dados.departamentos;
+  const salvoCodigo = dados.fixo?.codigo || '';
+  const sujo = escolha.modo !== dados.modo || (escolha.modo === 'fixo' && escolha.codigo !== salvoCodigo);
+  const escolhido = lista.find((d) => d.codigo === escolha.codigo) || null;
+  const podeSalvar = escolha.modo === 'lista' || !!escolhido;
+  const fixoInativo = dados.modo === 'fixo' && dados.modo_em_vigor === 'lista';
+
+  const muda = (parcial) => { setEscolha((e) => ({ ...e, ...parcial })); setMsg(''); };
+  const descartar = () => { setEscolha({ modo: dados.modo, codigo: salvoCodigo }); setMsg(''); };
+
+  const salvar = async () => {
+    if (!sujo || !podeSalvar) return;
+    // Só o fixo pede confirmação: um departamento errado aqui manda TODA venda
+    // seguinte para o lugar errado no Omie, sem ninguém na tela perceber.
+    if (escolha.modo === 'fixo' && !confirm(`Fixar o departamento em "${escolhido.descricao}"?\n\nToda venda do Elite e da APN passa a sair com ele, e o consultor não consegue trocar.`)) return;
+    setEstado('salvando'); setMsg('');
+    try {
+      const corpo = escolha.modo === 'fixo' ? { modo: 'fixo', codigo: escolha.codigo } : { modo: 'lista' };
+      aplica(await api('/api/departamentos/configuracao', { method: 'PUT', body: JSON.stringify(corpo) }));
+      setMsg('ok');
+    } catch (err) { setMsg(err.message); }
+    finally { setEstado('pronto'); }
+  };
+
+  return (
+    <div style={{ paddingBottom: sujo ? 90 : 0 }}>
+      <Aviso tipo="info">
+        O departamento é a área da Seja AP a que a venda pertence, no <strong>Elite</strong> e na <strong>APN</strong>.
+        A lista vem do Omie, de hora em hora. Aqui você decide se o consultor escolhe nela ou se toda
+        venda sai com um departamento fixo.
+        <br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>
+          {dados.alterado_em
+            ? (dados.alterado_por
+              ? <>Última alteração por <strong style={{ color: 'var(--text-secondary)' }}>{dados.alterado_por}</strong> em {dataHora(dados.alterado_em)}</>
+              : <>Última alteração: {dataHora(dados.alterado_em)}</>)
+            : 'Nunca alterado: o consultor escolhe na lista completa.'}
+          {' · '}Lista do Omie sincronizada {dados.sincronizado_em ? `em ${dataHora(dados.sincronizado_em)}` : 'nunca'}
+        </span>
+      </Aviso>
+
+      {msg === 'ok' && <Aviso tipo="ok">Salvo. As próximas vendas já saem assim, e os lobbies que estão abertos se atualizam em até 5 minutos, sem perder a venda em andamento.</Aviso>}
+      {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+      {fixoInativo && (
+        <Aviso tipo="atencao">
+          <strong>{dados.fixo.descricao}</strong>, o departamento fixo, está inativo no Omie. Enquanto isso, o
+          consultor volta a ver a lista completa. Se o Omie reativá-lo, o fixo volta a valer sozinho. Para mudar
+          agora, escolha outro departamento ou salve a lista completa.
+        </Aviso>
+      )}
+      {lista.length === 0 && (
+        <Aviso tipo="atencao">
+          A lista do Omie ainda não chegou ao Lobby, então não há departamento para fixar. Enquanto ela não
+          chegar, as vendas seguem sem departamento.
+        </Aviso>
+      )}
+
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>apartment</span>
+          <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>Campo Departamento da venda</h2>
+          <span className="chip neutro">Elite e APN</span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
+          <OpcaoDeModo ativo={escolha.modo === 'lista'} icone="list" titulo="Lista completa" onClick={() => muda({ modo: 'lista' })}>
+            O consultor escolhe entre os {lista.length} departamento{lista.length === 1 ? '' : 's'} ativo{lista.length === 1 ? '' : 's'} do Omie.
+          </OpcaoDeModo>
+          <OpcaoDeModo ativo={escolha.modo === 'fixo'} icone="push_pin" titulo="Departamento fixo" desabilitado={lista.length === 0 && dados.modo !== 'fixo'} onClick={() => muda({ modo: 'fixo' })}>
+            Toda venda sai com o mesmo departamento. O consultor vê o campo preenchido e não consegue trocar.
+          </OpcaoDeModo>
+        </div>
+
+        {escolha.modo === 'fixo' && (
+          <div style={{ marginTop: 18, maxWidth: 460 }}>
+            <label className="lbl" htmlFor="departamento-fixo">Departamento fixo</label>
+            <select id="departamento-fixo" className={'inp' + (sujo ? ' mudou' : '')} value={escolhido ? escolha.codigo : ''} onChange={(e) => muda({ codigo: e.target.value })}>
+              <option value="">Escolha o departamento…</option>
+              {lista.map((d) => <option key={d.codigo} value={d.codigo}>{d.descricao}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div style={{ marginTop: 18, padding: '14px 16px', borderRadius: 10, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)' }}>
+          <div className="sec-title" style={{ marginBottom: 10 }}>Como o consultor vê</div>
+          {escolha.modo === 'fixo' ? (
+            escolhido ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>lock</span>
+                Departamento da venda: <strong style={{ color: 'var(--text)' }}>{escolhido.descricao}</strong>
+                <span style={{ color: 'var(--text-muted)' }}>· definido pela diretoria</span>
+              </div>
+            ) : (
+              <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>Escolha o departamento acima para ver.</div>
+            )
+          ) : (
+            <div style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+              Uma lista para escolher, obrigatória:{' '}
+              <span style={{ color: 'var(--text-muted)' }}>
+                {lista.slice(0, 4).map((d) => d.descricao).join(', ')}{lista.length > 4 ? ` e mais ${lista.length - 4}` : ''}.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {sujo && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
+          <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            {podeSalvar ? 'Departamento da venda alterado, ainda não salvo.' : 'Escolha qual departamento fica fixo.'}
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button className="btn-ghost" onClick={descartar} disabled={estado === 'salvando'}>Descartar</button>
+            <button className="btn-prim" onClick={salvar} disabled={estado === 'salvando' || !podeSalvar}>
+              {estado === 'salvando'
+                ? <><span className="ms-icon rot" style={{ fontSize: 19 }}>progress_activity</span>Salvando…</>
+                : <><span className="ms-icon" style={{ fontSize: 19 }}>check</span>Salvar</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===== Aba 3: datas de cobrança =========================================== */
 
 // Explica a regra com a data de hoje, porque "mes_seguinte" não diz nada a quem
 // só quer saber quando o cliente vai ser cobrado.
@@ -746,7 +935,7 @@ function AbaCobranca({ api, catalogo, aoPublicar }) {
   );
 }
 
-/* ===== Aba 3: produtos ==================================================== */
+/* ===== Aba 4: produtos ==================================================== */
 const PRODUTO_VAZIO = {
   categoria_id: '', nome: '', sigla: '', descricao: '', duracao: '', icone: 'workspace_premium',
   recorrente: true, mensalidade: '', vigencia_meses: 12, valor: '',
@@ -986,7 +1175,7 @@ function AbaProdutos({ api, catalogo, aoPublicar }) {
   );
 }
 
-/* ===== Aba 4: histórico ===================================================
+/* ===== Aba 5: histórico ===================================================
  * Duas tabelas, e a diferença entre elas é a razão de as duas existirem:
  *
  *   Linha do tempo (`/api/historico`, a `Vigencia`) — ESTADO. "12.997 valeu de
@@ -1174,6 +1363,7 @@ function Falhou({ msg, aoTentar }) {
 /* ===== Casca: abas, sessão e o catálogo compartilhado ===================== */
 const ABAS = [
   { id: 'valores', rotulo: 'Valores', icone: 'sell' },
+  { id: 'departamentos', rotulo: 'Departamentos', icone: 'apartment' },
   { id: 'cobranca', rotulo: 'Cobrança', icone: 'event_repeat' },
   { id: 'produtos', rotulo: 'Produtos', icone: 'inventory_2' },
   { id: 'historico', rotulo: 'Histórico', icone: 'history' },
@@ -1265,6 +1455,7 @@ function Editor({ sessao: sess, aoSair }) {
         {estado === 'pronto' && (
           <>
             {aba === 'valores' && <AbaValores api={api} catalogo={catalogo} atualizadoEm={atualizadoEm} ultimaPublicacao={ultimaPublicacao} aoPublicar={aoPublicar} />}
+            {aba === 'departamentos' && <AbaDepartamentos api={api} />}
             {aba === 'cobranca' && <AbaCobranca api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'produtos' && <AbaProdutos api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'historico' && <AbaHistorico api={api} catalogo={catalogo} />}
