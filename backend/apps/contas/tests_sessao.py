@@ -129,11 +129,13 @@ class LoginTest(TestCase):
                 {"email": "fulano@sejaap.com.br", "senha": "x"},
                 format="json",
                 REMOTE_ADDR="172.23.0.5",
-                HTTP_CF_CONNECTING_IP="203.0.113.9",
-                HTTP_X_FORWARDED_FOR="8.8.8.8, 203.0.113.9, 172.71.238.240, 172.23.0.1",
+                # IP público: o middleware recusa endereço de documentação,
+                # privado ou de loopback no CF-Connecting-IP.
+                HTTP_CF_CONNECTING_IP="177.10.20.9",
+                HTTP_X_FORWARDED_FOR="8.8.8.8, 177.10.20.9, 172.71.238.240, 172.23.0.1",
             )
             _, kwargs = Cliente.return_value.verificar.call_args
-            self.assertEqual(kwargs["ip"], "203.0.113.9")
+            self.assertEqual(kwargs["ip"], "177.10.20.9")
 
     def test_email_e_normalizado_para_minusculas(self):
         self._com_papel(Papel.GERENTE)

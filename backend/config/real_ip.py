@@ -46,12 +46,27 @@ LIMITE CONHECIDO, QUE SÓ SE FECHA NA INFRA
 
 A 443 da .164 aceita conexão de qualquer origem (ufw `443 ALLOW Anywhere`, sem
 lista de ranges da Cloudflare no nginx). Quem bater direto no IP da VPS,
-contornando a Cloudflare, ainda escolhe o `CF-Connecting-IP`. O fecho é o mesmo
-da TSK-286 no ConectaAP: aceitar na 443 só os ranges da Cloudflare.
+contornando a Cloudflare, ainda escreve o `CF-Connecting-IP`. Com isso ele foge
+do próprio balde E consegue encher o balde de outro IP público (o de um
+escritório, por exemplo), coisa que o `X-Forwarded-For` inteiro como chave não
+permitia. Endereço de dentro (loopback, rede privada, reservado) é recusado no
+header, então o balde do healthcheck (`127.0.0.1`, que bate no catálogo) fica
+fora do alcance. O fecho é o mesmo da TSK-286 no ConectaAP: aceitar na 443 só os
+ranges da Cloudflare.
+
+E UMA ARMADILHA: se a Cloudflare sair da frente (DNS em "DNS only"), o header
+some e todo visitante passa a ter o IP do container do nginx: um balde só no
+throttle e um IP só para o Conecta ID, cujo bloqueio por origem vira bloqueio
+geral. Antes de tirar a nuvem laranja, configure `real_ip` no nginx do host.
 """
 import ipaddress
 
 HEADER_CLOUDFLARE = "HTTP_CF_CONNECTING_IP"
+
+# Pseudo IPv4 da Cloudflare: com a opção em "Overwrite headers", o visitante
+# IPv6 chega no `CF-Connecting-IP` como um endereço da classe E. O `ipaddress`
+# não o considera global, mas ele também nunca é de ninguém da malha.
+PSEUDO_IPV4_CLOUDFLARE = ipaddress.ip_network("240.0.0.0/4")
 
 
 def _eh_da_malha(ip_bruto):
@@ -67,17 +82,25 @@ def _eh_da_malha(ip_bruto):
     return endereco.is_private or endereco.is_loopback
 
 
-def _ip_valido(valor):
-    """O endereço do header, se for um IP; senão `None`.
+def _ip_publico(valor):
+    """O endereço do header, se for um IP público; senão `None`.
 
-    Header com lixo não pode virar chave de balde nem ir para uma coluna
-    `GenericIPAddressField`.
+    Público porque é o único que a Cloudflare escreve ali: ela vê o visitante
+    pela internet. Loopback, rede privada ou endereço reservado nesse header foi
+    escrito por quem contornou a Cloudflare, e aceitá-lo deixaria essa pessoa
+    cair no balde de alguém de dentro: `127.0.0.1` é o healthcheck do compose,
+    que bate no `/api/catalogo`, e com o balde cheio o container vira
+    "unhealthy". Header com lixo também não pode virar chave de balde nem ir
+    para uma coluna `GenericIPAddressField`.
     """
     candidato = (valor or "").split(",")[0].strip()
     try:
-        return str(ipaddress.ip_address(candidato))
+        endereco = ipaddress.ip_address(candidato)
     except ValueError:
         return None
+    if endereco.is_global or endereco in PSEUDO_IPV4_CLOUDFLARE:
+        return str(endereco)
+    return None
 
 
 class RealIPMiddleware:
@@ -98,7 +121,7 @@ class RealIPMiddleware:
             meta["X_FORWARDED_FOR_ORIGINAL"] = meta["HTTP_X_FORWARDED_FOR"]
 
         if _eh_da_malha(original):
-            ip_real = _ip_valido(meta.get(HEADER_CLOUDFLARE))
+            ip_real = _ip_publico(meta.get(HEADER_CLOUDFLARE))
             if ip_real:
                 meta["REMOTE_ADDR"] = ip_real
 

@@ -28,14 +28,34 @@ from apps.catalogo.throttling import CatalogoPublicoThrottle
 from apps.vendas.models import ComprovanteVenda
 from apps.vendas.tests_comprovante import venda_de_tabela
 
-IP_VISITANTE = "203.0.113.45"   # TEST-NET-3
-IP_OUTRO = "198.51.100.7"       # TEST-NET-2
+# Visitantes com endereço público de verdade: o middleware recusa no
+# `CF-Connecting-IP` o que não for global, e os TEST-NET (203.0.113.0/24,
+# 198.51.100.0/24) não são globais para o `ipaddress`.
+IP_VISITANTE = "177.10.20.45"
+IP_OUTRO = "189.30.40.7"
 IP_CONTAINER = "172.23.0.5"     # lobby-frontend na rede do compose
 IP_GATEWAY = "172.23.0.1"       # o que o nginx do container anexa
 IP_BORDA_CF = "172.71.238.240"  # uma borda da Cloudflare vista no access log
-# `ipaddress` considera os TEST-NET privados; para "conexão pública" é preciso um
-# endereço global de verdade.
-IP_PUBLICO = "8.8.8.8"
+IP_PUBLICO = "8.8.8.8"          # quem fala direto com o gunicorn, de fora
+IP_HEALTHCHECK = "127.0.0.1"    # o healthcheck do compose, que bate no catálogo
+
+# O que a Cloudflare nunca escreve no `CF-Connecting-IP`: quem manda um destes
+# contornou a Cloudflare e quer cair no balde de alguém de dentro.
+IPS_DE_DENTRO = [
+    IP_HEALTHCHECK,
+    "::1",
+    IP_CONTAINER,
+    IP_GATEWAY,
+    "10.0.0.1",
+    "192.168.1.10",
+    "169.254.169.254",
+    "100.64.0.1",        # CGNAT
+    "203.0.113.9",       # documentação
+    "0.0.0.0",
+    "fd00::1",
+    "fe80::1",
+    "::ffff:127.0.0.1",
+]
 
 
 def xff_de_producao(forjado, visitante=IP_VISITANTE):
@@ -121,9 +141,32 @@ class RealIPMiddlewareTest(SimpleTestCase):
 
     def test_ipv6_da_cloudflare_e_aceito(self):
         request = _processar(
-            REMOTE_ADDR=IP_CONTAINER, HTTP_CF_CONNECTING_IP="2001:db8::1"
+            REMOTE_ADDR=IP_CONTAINER, HTTP_CF_CONNECTING_IP="2804:14c:5b80::45"
         )
-        self.assertEqual(request.META["REMOTE_ADDR"], "2001:db8::1")
+        self.assertEqual(request.META["REMOTE_ADDR"], "2804:14c:5b80::45")
+
+    def test_pseudo_ipv4_da_cloudflare_e_aceito(self):
+        """Com Pseudo IPv4 em "Overwrite headers", o visitante IPv6 chega assim.
+
+        Recusá-lo juntaria todo visitante IPv6 no balde do container.
+        """
+        request = _processar(
+            REMOTE_ADDR=IP_CONTAINER, HTTP_CF_CONNECTING_IP="240.16.0.1"
+        )
+        self.assertEqual(request.META["REMOTE_ADDR"], "240.16.0.1")
+
+    def test_cf_connecting_ip_de_dentro_da_malha_e_recusado(self):
+        """Loopback, privado e reservado no header: quem mandou contornou a
+        Cloudflare. Aceitar poria o atacante no balde do healthcheck."""
+        for de_dentro in IPS_DE_DENTRO:
+            with self.subTest(cf=de_dentro):
+                request = _processar(
+                    REMOTE_ADDR=IP_CONTAINER,
+                    HTTP_CF_CONNECTING_IP=de_dentro,
+                    HTTP_X_FORWARDED_FOR=f"{de_dentro}, 8.8.8.8, {IP_GATEWAY}",
+                )
+                self.assertEqual(request.META["REMOTE_ADDR"], IP_CONTAINER)
+                self.assertEqual(request.META["HTTP_X_FORWARDED_FOR"], IP_CONTAINER)
 
     # ----- o cliente copiado do Conecta ID ------------------------------
 
@@ -184,6 +227,18 @@ class ThrottleAnonimoTest(TestCase):
             outro = self._catalogo(**headers_de_producao(visitante=IP_OUTRO))
         self.assertEqual(bloqueado.status_code, 429)
         self.assertEqual(outro.status_code, 200)
+
+    def test_cf_de_loopback_nao_enche_o_balde_do_healthcheck(self):
+        """O healthcheck do compose faz GET /api/catalogo de 127.0.0.1, sem
+        header. Quem contorna a Cloudflare e manda `CF-Connecting-IP: 127.0.0.1`
+        não pode cair no balde dele: com o balde cheio, o healthcheck leva 429 e
+        o `lobby-backend` vira "unhealthy"."""
+        ataque = {"REMOTE_ADDR": IP_CONTAINER, "HTTP_CF_CONNECTING_IP": IP_HEALTHCHECK}
+        with self._com_teto("3/hour"):
+            codigos_ataque = [self._catalogo(**ataque).status_code for _ in range(3)]
+            healthcheck = self._catalogo(REMOTE_ADDR=IP_HEALTHCHECK).status_code
+        self.assertEqual(codigos_ataque, [200, 200, 200])
+        self.assertEqual(healthcheck, 200)
 
     def test_chave_do_throttle_e_o_ip_real(self):
         with self._com_teto("5/hour"):
