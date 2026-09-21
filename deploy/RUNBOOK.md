@@ -347,6 +347,24 @@ janela de indisponibilidade:
   > acesso ao cache, que é o **throttle do login**. Ao ligar a variável, adicione
   > `redis>=5.1.0` ao `requirements-prod.txt` no mesmo commit (o 5.1.0 é o piso
   > que o Django 6.0 exige).
+- **A origem aceita conexão de fora da Cloudflare** (medido em 21/09/2026, TSK-195).
+  O IP do visitante vem do `CF-Connecting-IP` (`backend/config/real_ip.py`), e ele só é
+  confiável quando a requisição passou pela Cloudflare. Mas a 443 da .164 responde a
+  qualquer um (`ufw`: `443 ALLOW Anywhere`; nenhuma lista de ranges no nginx), então
+  quem bater direto no IP da VPS com `Host: lobby.sejaap.com.br` escolhe o próprio IP
+  — para o throttle e para o que vai ao Conecta ID. Com isso ele foge do próprio balde
+  e também consegue encher o balde de outro IP público (o de um escritório, por
+  exemplo). Endereço de dentro (loopback, rede privada) é recusado no header, então o
+  balde do healthcheck fica fora do alcance. O fecho é de infra, igual ao da
+  TSK-286 no ConectaAP: aceitar na 443 só os ranges da Cloudflare (`geo` sobre
+  `$realip_remote_addr`, nunca `allow`/`deny` junto de `set_real_ip_from`).
+- **Não tire a nuvem laranja do `lobby.sejaap.com.br` sem antes configurar `real_ip`
+  no nginx do host** (TSK-195). Sem a Cloudflare na frente, o `CF-Connecting-IP` some
+  e o `real_ip.py` não tem outro header confiável para usar: o `X-Real-IP` é o gateway
+  do docker. Todo visitante passa a ter o IP do container do nginx, e isso vale para
+  o throttle (um balde só para todo mundo) e para o login: o Conecta ID passa a ver um
+  IP só, e o bloqueio por origem de lá vira bloqueio geral, com um consultor errando a
+  senha trancando os outros.
 - **A trava do valor por venda ainda não tem efeito — mas o motivo mudou.** O lado do
   servidor está pronto e no ar: `/api/venda/comprovante` assina os valores e
   `/api/venda/validar` recusa comprovante forjado, reusado ou adulterado. Só que
