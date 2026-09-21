@@ -64,6 +64,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # PRIMEIRO, sempre: troca o IP do container pelo do visitante
+    # (CF-Connecting-IP) antes que qualquer outro componente leia REMOTE_ADDR.
+    # Ver config/real_ip.py.
+    "config.real_ip.RealIPMiddleware",
     "django.middleware.security.SecurityMiddleware",
     # WhiteNoise serve os estáticos do /django-admin/ em produção.
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -215,6 +219,12 @@ REST_FRAMEWORK = {
     # 403 de permissão chegaria como {"detail": ...} e viraria "Falha ao salvar"
     # na tela, escondendo o motivo real.
     "EXCEPTION_HANDLER": "config.erros.tratar_excecao",
+    # Os throttles anônimos abaixo contam por IP, e o IP que vale é o
+    # REMOTE_ADDR que o `RealIPMiddleware` já trocou pelo do visitante. Sem esta
+    # linha o DRF usa o X-Forwarded-For INTEIRO como chave do balde, e trocar o
+    # header a cada requisição zerava o limite (TSK-195). Zero, e não o número
+    # de saltos: contar saltos quebra em silêncio quando a topologia muda.
+    "NUM_PROXIES": 0,
     "DEFAULT_THROTTLE_RATES": {
         # Leitura do catálogo: é a primeira chamada de toda venda, e o consultor
         # em campo recarrega a página com frequência.

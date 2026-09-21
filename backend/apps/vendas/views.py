@@ -26,17 +26,12 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from config.real_ip import ip_do_cliente
+
 from .servicos import VendaRecusada, emitir, validar
 from .throttling import ComprovanteThrottle
 
 logger = logging.getLogger(__name__)
-
-
-def _ip(request):
-    encaminhado = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if encaminhado:
-        return encaminhado.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR")
 
 
 class JWTOpcional(JWTAuthentication):
@@ -65,7 +60,7 @@ def emitir_comprovante(request):
         comprovante = emitir(
             request.data or {},
             usuario=request.user if request.user.is_authenticated else None,
-            ip=_ip(request),
+            ip=ip_do_cliente(request),
         )
     except VendaRecusada as erro:
         # 422 e não 400: o corpo está bem formado, o que não passa é a regra de

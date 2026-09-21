@@ -57,6 +57,8 @@ from identidade_client import (
     central_ativa,
 )
 
+from config.real_ip import ip_do_cliente
+
 from .identidade import resolver_usuario
 from .models import papel_de
 from .throttling import DefinicaoSenhaThrottle, LoginThrottle
@@ -91,11 +93,12 @@ def _ip_do_usuario(request):
     repassá-lo, todas as tentativas chegam lá com o mesmo IP — o do backend — e
     o bloqueio por origem vira bloqueio geral: um consultor errando a senha
     trancaria a empresa inteira.
+
+    E tem que ser o IP REAL. Até a TSK-195 isto lia o `X-Forwarded-For[0]`, a
+    posição que o cliente escreve: quem chutava senha mandava um IP novo a cada
+    tentativa e nunca enchia o bloqueio por origem. Ver `config/real_ip.py`.
     """
-    encaminhado = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if encaminhado:
-        return encaminhado.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR")
+    return ip_do_cliente(request)
 
 
 def _resposta(mensagem, codigo):

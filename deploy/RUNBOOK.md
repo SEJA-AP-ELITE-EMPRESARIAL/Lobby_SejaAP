@@ -347,6 +347,14 @@ janela de indisponibilidade:
   > acesso ao cache, que é o **throttle do login**. Ao ligar a variável, adicione
   > `redis>=5.1.0` ao `requirements-prod.txt` no mesmo commit (o 5.1.0 é o piso
   > que o Django 6.0 exige).
+- **A origem aceita conexão de fora da Cloudflare** (medido em 21/09/2026, TSK-195).
+  O IP do visitante vem do `CF-Connecting-IP` (`backend/config/real_ip.py`), e ele só é
+  confiável quando a requisição passou pela Cloudflare. Mas a 443 da .164 responde a
+  qualquer um (`ufw`: `443 ALLOW Anywhere`; nenhuma lista de ranges no nginx), então
+  quem bater direto no IP da VPS com `Host: lobby.sejaap.com.br` escolhe o próprio IP
+  — para o throttle e para o que vai ao Conecta ID. O fecho é de infra, igual ao da
+  TSK-286 no ConectaAP: aceitar na 443 só os ranges da Cloudflare (`geo` sobre
+  `$realip_remote_addr`, nunca `allow`/`deny` junto de `set_real_ip_from`).
 - **A trava do valor por venda ainda não tem efeito — mas o motivo mudou.** O lado do
   servidor está pronto e no ar: `/api/venda/comprovante` assina os valores e
   `/api/venda/validar` recusa comprovante forjado, reusado ou adulterado. Só que

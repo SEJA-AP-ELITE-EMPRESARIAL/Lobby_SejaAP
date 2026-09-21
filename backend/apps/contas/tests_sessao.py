@@ -115,7 +115,12 @@ class LoginTest(TestCase):
 
     def test_ip_do_usuario_final_e_repassado(self):
         """Sem isso o Conecta ID vê sempre o IP do container, e o bloqueio por
-        origem vira bloqueio geral."""
+        origem vira bloqueio geral.
+
+        O IP é o que a Cloudflare escreveu, e não a primeira posição do
+        X-Forwarded-For, que é do cliente (TSK-195). Este teste afirmava o
+        contrário até então: codificava o defeito.
+        """
         self._com_papel(Papel.GERENTE)
         with patch(ALVO) as Cliente:
             Cliente.return_value.verificar.return_value = IDENTIDADE_OK
@@ -123,7 +128,9 @@ class LoginTest(TestCase):
                 "/api/sessao",
                 {"email": "fulano@sejaap.com.br", "senha": "x"},
                 format="json",
-                HTTP_X_FORWARDED_FOR="203.0.113.9, 10.0.0.1",
+                REMOTE_ADDR="172.23.0.5",
+                HTTP_CF_CONNECTING_IP="203.0.113.9",
+                HTTP_X_FORWARDED_FOR="8.8.8.8, 203.0.113.9, 172.71.238.240, 172.23.0.1",
             )
             _, kwargs = Cliente.return_value.verificar.call_args
             self.assertEqual(kwargs["ip"], "203.0.113.9")
