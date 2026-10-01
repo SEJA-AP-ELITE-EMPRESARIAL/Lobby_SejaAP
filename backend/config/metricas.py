@@ -44,6 +44,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from apps.catalogo.models import Categoria, Produto, PublicacaoCatalogo
+from apps.categorias_financeiras.models import CategoriaFinanceira
 from apps.contas.models import Papel, VinculoIdentidade
 from apps.departamentos.models import Departamento
 from apps.vendas.models import ComprovanteVenda
@@ -213,6 +214,29 @@ def _coletar():
             "# HELP lobby_segundos_desde_sincronizacao_departamentos Idade da última sincronização bem-sucedida com o Omie.",
             "# TYPE lobby_segundos_desde_sincronizacao_departamentos gauge",
             f"lobby_segundos_desde_sincronizacao_departamentos {ultima_sincronizacao}",
+        ]
+
+    # ---- categorias financeiras (APN) ------------------------------------
+    #
+    # Mesma leitura dos departamentos, pelo mesmo motivo. Até a API ser ligada
+    # (TSK-877), as contagens ficam em zero e a série de frescor não sai.
+    categorias = CategoriaFinanceira.objects.aggregate(
+        n_ativos=Count("id", filter=Q(ativo=True)),
+        n_inativos=Count("id", filter=Q(ativo=False)),
+        ultima=Max("visto_em"),
+    )
+    linhas += [
+        "# HELP lobby_categorias_financeiras Categorias financeiras no banco do Lobby, por estado.",
+        "# TYPE lobby_categorias_financeiras gauge",
+        f'lobby_categorias_financeiras{{estado="ativo"}} {categorias["n_ativos"]}',
+        f'lobby_categorias_financeiras{{estado="inativo"}} {categorias["n_inativos"]}',
+    ]
+    ultima_sincronizacao = _idade_em_segundos(categorias["ultima"])
+    if ultima_sincronizacao is not None:
+        linhas += [
+            "# HELP lobby_segundos_desde_sincronizacao_categorias_financeiras Idade da última sincronização bem-sucedida das categorias financeiras.",
+            "# TYPE lobby_segundos_desde_sincronizacao_categorias_financeiras gauge",
+            f"lobby_segundos_desde_sincronizacao_categorias_financeiras {ultima_sincronizacao}",
         ]
 
     # ---- gente -----------------------------------------------------------

@@ -249,6 +249,40 @@ async function buscaDepartamentos() {
 const departamentoParaPayload = (d) => (d ? { codigo: d.codigo, descricao: d.descricao, estrutura: d.estrutura } : null);
 
 /* ============================================================================
+ * CATEGORIA FINANCEIRA — só na APN, ao lado do departamento (TSK-877, 01/10/2026).
+ *
+ * "Categoria financeira" no código porque "categoria" já é o card do catálogo
+ * (a própria APN é uma), e o payload já leva `categoria: {id: 'apn'}`. Na tela,
+ * o rótulo é só "Categoria".
+ *
+ * Mesmo desenho do departamento, acima: a lista vem do backend
+ * (GET /api/categorias-financeiras), a tela reconsulta sozinha e a diretoria pode
+ * fixar uma categoria no /admin. A diferença: enquanto o backend nunca
+ * sincronizou (`sincronizado_em: null`, a API ainda não ligada), o cartão nem
+ * aparece e a venda segue sem categoria. Um 404 conta igual — é um backend de
+ * antes deste campo.
+ * ========================================================================== */
+const CATEGORIAS_FIN_URL = '/api/categorias-financeiras';
+
+async function buscaCategoriasFin() {
+  const r = await fetch(CATEGORIAS_FIN_URL, { cache: 'no-store' });
+  if (r.status === 404) return { versao: '', modo: 'lista', lista: [], sincronizado: false };
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  if (!d || !Array.isArray(d.categorias)) throw new Error('resposta sem categorias');
+  return {
+    versao: String(d.versao || ''),
+    modo: d.modo === 'fixo' ? 'fixo' : 'lista',
+    lista: d.categorias
+      .filter((x) => x && x.codigo && x.descricao)
+      .map((x) => ({ codigo: String(x.codigo), descricao: String(x.descricao) })),
+    sincronizado: !!d.sincronizado_em,
+  };
+}
+
+const categoriaFinParaPayload = (c) => (c ? { codigo: c.codigo, descricao: c.descricao } : null);
+
+/* ============================================================================
  * AUTORIZAÇÃO DE NEGOCIAÇÃO — destrava a alteração de valores numa venda.
  *
  * O LOBBY NÃO TEM TELA DE LOGIN. Qualquer consultor abre, navega, cota, cadastra
@@ -1155,6 +1189,8 @@ function App() {
     // Departamento da venda (código do Omie) e o aviso de quando ele saiu da
     // lista com a tela aberta. A LISTA não mora aqui — ver `deps` abaixo.
     departamento: '', departamentoAviso: '',
+    // Categoria financeira da venda da APN e o aviso dela — ver `cfins` abaixo.
+    categoriaFin: '', categoriaFinAviso: '',
     // ----- Fluxo APN (categoria de fluxo próprio) -----
     // Valor livre da venda, forma de pagamento (parcelável só no crédito) e a
     // origem da venda em texto livre.
@@ -1228,6 +1264,42 @@ function App() {
     // Tablet no balcão: a aba pode ter passado horas em segundo plano, com o
     // timer estrangulado pelo navegador. Ao voltar, reconsulta na hora.
     const aoVoltar = () => { if (document.visibilityState === 'visible') atualizaDepartamentos(); };
+    document.addEventListener('visibilitychange', aoVoltar);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
+  }, []);
+
+  // Lista de categorias financeiras da APN: o mesmo que `deps`, com um campo a
+  // mais. `sincronizado`: se o backend já sincronizou alguma vez — sem isso o
+  // cartão não aparece (ver o bloco CATEGORIA FINANCEIRA no topo).
+  const [cfins, setCfins] = useState({ versao: null, modo: 'lista', lista: [], sincronizado: false, estado: 'carregando', atualizadaEm: null });
+
+  // O `atualizaDepartamentos` para as categorias.
+  const atualizaCategoriasFin = async () => {
+    let novo;
+    try {
+      novo = await buscaCategoriasFin();
+    } catch (e) {
+      console.warn('[lobby] categorias financeiras indisponíveis; mantendo a lista atual.', e);
+      setCfins((c) => (c.estado === 'carregando' ? { ...c, estado: 'erro' } : c));
+      return null;
+    }
+    setCfins((c) => (c.versao === novo.versao && c.sincronizado === novo.sincronizado
+      ? { ...c, estado: 'ok' }
+      : { ...novo, estado: 'ok', atualizadaEm: c.versao === null || !c.sincronizado ? null : new Date() }));
+    if (novo.modo === 'fixo' && novo.lista.length) {
+      const fixa = novo.lista[0].codigo;
+      patch((d) => (d.categoriaFin === fixa && !d.categoriaFinAviso ? {} : { categoriaFin: fixa, categoriaFinAviso: '' }));
+    } else {
+      patch((d) => (!d.categoriaFin || novo.lista.some((x) => x.codigo === d.categoriaFin)
+        ? {}
+        : { categoriaFin: '', categoriaFinAviso: 'A categoria escolhida não está mais disponível. Escolha outra.' }));
+    }
+    return novo;
+  };
+  useEffect(() => {
+    atualizaCategoriasFin();
+    const id = setInterval(atualizaCategoriasFin, DEPARTAMENTOS_RECONSULTA_MS);
+    const aoVoltar = () => { if (document.visibilityState === 'visible') atualizaCategoriasFin(); };
     document.addEventListener('visibilitychange', aoVoltar);
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
   }, []);
@@ -1492,6 +1564,40 @@ function App() {
     return false;
   };
 
+  // ----- Categoria financeira (só APN) -----
+  // As mesmas regras do departamento, com uma a mais: sem nenhuma sincronização
+  // no backend, o cartão some, e a lista vazia deixa a venda seguir.
+  const categoriaFinVisivel = cfins.sincronizado;
+  const categoriaFinSel = (cfins.modo === 'fixo'
+    ? cfins.lista[0]
+    : cfins.lista.find((c) => c.codigo === s.categoriaFin)) || null;
+  const categoriaFinOk = !!categoriaFinSel || (cfins.estado !== 'carregando' && cfins.lista.length === 0);
+  const rotuloCategoriaFin = categoriaFinSel ? categoriaFinSel.descricao : (categoriaFinOk ? '—' : 'Escolha na etapa do cliente');
+  // O `departamentoNoEnvio` para a categoria: a de AGORA, null se a venda segue
+  // sem, ou `false` se a escolhida saiu da lista.
+  //
+  // Diferente do departamento, reconsulta SEMPRE, mesmo sem nada escolhido. Sem
+  // escolha, a tela só deixou chegar aqui porque a lista estava vazia: nunca
+  // sincronizada (a API ligada com a página aberta), ou a primeira consulta
+  // falhou. Se agora vier lista, a venda volta para a etapa do cliente pedindo a
+  // categoria, em vez de sair sem ela. É um GET a mais por venda da APN.
+  const categoriaFinNoEnvio = async () => {
+    const novo = await atualizaCategoriasFin();
+    if (!novo) return categoriaFinSel;
+    if (novo.modo === 'fixo') return novo.lista[0] || null;
+    const escolhida = novo.lista.find((c) => c.codigo === s.categoriaFin);
+    if (escolhida) return escolhida;
+    if (novo.lista.length === 0) return null;
+    if (!s.categoriaFin) {
+      // `cfins` aqui ainda é o de antes da reconsulta: com fixa, quem mudou foi a
+      // diretoria; com lista vazia, foram as categorias que chegaram.
+      patch({ categoriaFinAviso: cfins.modo === 'fixo'
+        ? 'A diretoria liberou a escolha da categoria. Escolha uma na lista.'
+        : 'As categorias carregaram agora. Escolha a categoria da venda.' });
+    }
+    return false;
+  };
+
   // ----- Gating -----
   const empresaValid = (
     isCNPJ(s.cnpj) &&
@@ -1682,7 +1788,7 @@ function App() {
    * não é pedido na tela — vai só o que a consulta ao CNPJ trouxer, e `dados_receita`
    * diz se ele veio mesmo da Receita ou se o CNPJ não foi consultado com sucesso.
    */
-  const buildApnPayload = (departamento) => {
+  const buildApnPayload = (departamento, categoriaFin) => {
     const nowIso = new Date().toISOString();
     const valor = round2(Number(s.apnValor) || 0);
     return {
@@ -1690,6 +1796,10 @@ function App() {
       etapa: 'envio_venda_apn',
       // Mesmo bloco do Elite — ver `buildPayload`.
       departamento: departamentoParaPayload(departamento),
+      // A categoria em que a venda entra no financeiro (TSK-877), não o card
+      // do catálogo, que é o `categoria` logo abaixo. null quando o campo não
+      // apareceu ou a lista não pôde ser carregada.
+      categoria_financeira: categoriaFinParaPayload(categoriaFin),
       categoria: { id: cat ? cat.id : 'apn', nome: cat ? cat.name : 'APN' },
       // Nem todo comprador da APN tem CNPJ. `tipo_pessoa` diz qual dos dois
       // blocos abaixo está preenchido (o outro vem null), e `cliente` traz a
@@ -1734,14 +1844,16 @@ function App() {
   };
 
   const finalizeApn = async () => {
-    if (!apnPagamentoValid || !apnEnvioConfigurado || !departamentoOk || s.sendState === 'sending') return;
+    if (!apnPagamentoValid || !apnEnvioConfigurado || !departamentoOk || !categoriaFinOk || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
     const departamento = await departamentoNoEnvio();
     if (departamento === false) { patch({ sendState: 'idle', step: 0 }); return; }
+    const categoriaFin = await categoriaFinNoEnvio();
+    if (categoriaFin === false) { patch({ sendState: 'idle', step: 0 }); return; }
     // Mesmo formato de protocolo do Elite; a sigla vem da categoria (APN).
     const protocolo = buildProtocol({ sigla: (cat && cat.sigla) || 'APN' }, s.apnForma, new Date());
     try {
-      const payload = buildApnPayload(departamento);
+      const payload = buildApnPayload(departamento, categoriaFin);
       payload.protocolo = protocolo;
 
       // A APN tem valor livre por decisão de produto — não há tabela contra a
@@ -1930,6 +2042,7 @@ function App() {
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
     priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '', departamento: '', departamentoAviso: '',
+    categoriaFin: '', categoriaFinAviso: '',
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
     dhVagas: [novaVagaDh()], dhAdiantamentoEdit: false,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
@@ -2187,20 +2300,28 @@ function App() {
     </>
   );
 
+  // Aviso amarelo dos cartões de departamento e de categoria.
+  const avisoDaVenda = (icone, texto) => (
+    <div role="status" style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+      <span className="ms-icon" style={{ fontSize: 16 }}>{icone}</span>{texto}
+    </div>
+  );
+
+  // `ladoALado`: na APN, os cartões de departamento e de categoria dividem a
+  // linha. A margem de cima passa a ser da linha, e a descrição reserva duas
+  // linhas, para os dois selects ficarem na mesma altura quando só um texto quebra.
+  const estiloDoCartao = (ladoALado) => ({ marginTop: ladoALado ? 0 : 18 });
+  const estiloDaDescricao = (ladoALado) => ({ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px', minHeight: ladoALado ? '2.5em' : undefined });
+
   // Cartão do departamento — o mesmo no Elite e na APN, no fim da etapa do
   // cliente. É da VENDA, não do cliente: por isso vem depois dos dados dele.
-  const renderDepartamento = () => {
+  const renderDepartamento = (ladoALado) => {
     const semLista = deps.estado !== 'carregando' && deps.lista.length === 0;
     const fixo = deps.modo === 'fixo' && departamentoSel;
-    const aviso = (icone, texto) => (
-      <div role="status" style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
-        <span className="ms-icon" style={{ fontSize: 16 }}>{icone}</span>{texto}
-      </div>
-    );
     return (
-      <div className="card" style={{ marginTop: 18 }}>
+      <div className="card" style={estiloDoCartao(ladoALado)}>
         <div className="sec-title" style={{ marginBottom: 6 }}>Departamento</div>
-        <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+        <p style={estiloDaDescricao(ladoALado)}>
           {fixo ? 'Área da Seja AP a que esta venda pertence, definida pela diretoria.' : 'Área da Seja AP a que esta venda pertence. A lista vem do Omie.'}
         </p>
         {fixo ? (
@@ -2224,12 +2345,54 @@ function App() {
             </select>
           </>
         )}
-        {s.departamentoAviso && aviso('sync_problem', s.departamentoAviso)}
-        {semLista && aviso('cloud_off', 'Não foi possível carregar os departamentos agora. A venda pode seguir sem ele.')}
+        {s.departamentoAviso && avisoDaVenda('sync_problem', s.departamentoAviso)}
+        {semLista && avisoDaVenda('cloud_off', 'Não foi possível carregar os departamentos agora. A venda pode seguir sem ele.')}
         {!s.departamentoAviso && deps.atualizadaEm && (
           <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
             <span className="ms-icon" style={{ fontSize: 14 }}>sync</span>
             {fixo ? 'Departamento atualizado' : 'Lista atualizada'} às {deps.atualizadaEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Cartão da categoria financeira — só na APN, sempre ao lado do departamento,
+  // e só depois que o backend sincronizou a lista alguma vez (`categoriaFinVisivel`).
+  const renderCategoriaFin = () => {
+    const semLista = cfins.estado !== 'carregando' && cfins.lista.length === 0;
+    const fixa = cfins.modo === 'fixo' && categoriaFinSel;
+    return (
+      <div className="card" style={estiloDoCartao(true)}>
+        <div className="sec-title" style={{ marginBottom: 6 }}>Categoria</div>
+        <p style={estiloDaDescricao(true)}>
+          {fixa ? 'Categoria financeira desta venda, definida pela diretoria.' : 'Categoria financeira em que esta venda entra.'}
+        </p>
+        {fixa ? (
+          <>
+            <div className="lbl">Categoria da venda</div>
+            <div className="inp" role="status" aria-label={'Categoria da venda: ' + fixa.descricao}
+              style={{ height: 46, display: 'flex', alignItems: 'center', gap: 8, cursor: 'default' }}>
+              <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>lock</span>
+              <span style={{ fontWeight: 500 }}>{fixa.descricao}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <label className="lbl" htmlFor="categoria-financeira">Categoria da venda{!semLista && <span style={{ color: 'var(--primary)' }}> *</span>}</label>
+            <select id="categoria-financeira" className="inp" style={{ height: 46 }} value={categoriaFinSel ? s.categoriaFin : ''} disabled={cfins.lista.length === 0}
+              onChange={(e) => patch({ categoriaFin: e.target.value, categoriaFinAviso: '' })}>
+              <option value="">{cfins.estado === 'carregando' ? 'Carregando categorias…' : semLista ? 'Nenhuma categoria disponível' : 'Selecione a categoria'}</option>
+              {cfins.lista.map((c) => <option key={c.codigo} value={c.codigo}>{c.descricao}</option>)}
+            </select>
+          </>
+        )}
+        {s.categoriaFinAviso && avisoDaVenda('sync_problem', s.categoriaFinAviso)}
+        {semLista && avisoDaVenda('cloud_off', 'Não foi possível carregar as categorias agora. A venda pode seguir sem ela.')}
+        {!s.categoriaFinAviso && cfins.atualizadaEm && (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, font: '400 11.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
+            <span className="ms-icon" style={{ fontSize: 14 }}>sync</span>
+            {fixa ? 'Categoria atualizada' : 'Lista atualizada'} às {cfins.atualizadaEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.
           </div>
         )}
       </div>
@@ -2569,7 +2732,14 @@ function App() {
           )}
         </div>
 
-        {renderDepartamento()}
+        {/* Departamento e categoria lado a lado, empilhados em tela estreita.
+            Sem a categoria, o departamento fica como sempre foi, igual ao Elite. */}
+        {categoriaFinVisivel ? (
+          <div style={{ marginTop: 18, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
+            {renderDepartamento(true)}
+            {renderCategoriaFin()}
+          </div>
+        ) : renderDepartamento()}
       </>
     );
   };
@@ -2668,7 +2838,7 @@ function App() {
             {(apnPf
               ? [['Nome', s.repNome || '—'], ['CPF', s.apnCpf || '—'], ['Tipo', 'Pessoa física'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]]
               : [['Razão social', s.razaoSocial || '—'], ['CNPJ', s.cnpj || '—'], ['Contato', s.repNome || '—'], ['E-mail / telefone', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')]]
-            ).concat([['Departamento', rotuloDepartamento]]).map(([k, v]) => (
+            ).concat([['Departamento', rotuloDepartamento]], categoriaFinVisivel ? [['Categoria', rotuloCategoriaFin]] : []).map(([k, v]) => (
               <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
             ))}
           </div>
@@ -3191,13 +3361,13 @@ function App() {
   let primaryLabel = 'Continuar', primaryIcon = 'arrow_forward', primaryAction = next, enabled = true;
   if (isApn) {
     // APN: Cliente → Pagamento → Resumo. Sem Pix, sem divergência de cronograma.
-    if (s.step === 0) enabled = apnClienteValid && departamentoOk;
+    if (s.step === 0) enabled = apnClienteValid && departamentoOk && categoriaFinOk;
     else if (s.step === 1) enabled = apnPagamentoValid;
     else {
       primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro';
       primaryIcon = 'check';
       primaryAction = finalizeApn;
-      enabled = apnPagamentoValid && apnEnvioConfigurado && departamentoOk && !sending;
+      enabled = apnPagamentoValid && apnEnvioConfigurado && departamentoOk && categoriaFinOk && !sending;
     }
   } else if (isDh) {
     // DH: Produto → Contratante → Quadro comercial → Resumo. Sem Pix, sem

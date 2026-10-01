@@ -122,6 +122,10 @@ const { useState, useEffect, useMemo, useCallback } = React;
  *
  *   Departamentos — se o consultor escolhe o departamento da venda na lista do
  *               Omie ou se toda venda sai com um departamento fixo.
+ *
+ * Em 01/10/2026 (TSK-877) entrou a sexta, logo depois de Departamentos:
+ *
+ *   Categorias — a mesma escolha para a categoria financeira da venda da APN.
  * ========================================================================== */
 const CHAVE_TOKEN = 'lobby_sessao_diretoria';
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -702,6 +706,168 @@ function AbaDepartamentos({ api }) {
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
           <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
             {podeSalvar ? 'Departamento da venda alterado, ainda não salvo.' : 'Escolha qual departamento fica fixo.'}
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button className="btn-ghost" onClick={descartar} disabled={estado === 'salvando'}>Descartar</button>
+            <button className="btn-prim" onClick={salvar} disabled={estado === 'salvando' || !podeSalvar}>
+              {estado === 'salvando'
+                ? <><span className="ms-icon rot" style={{ fontSize: 19 }}>progress_activity</span>Salvando…</>
+                : <><span className="ms-icon" style={{ fontSize: 19 }}>check</span>Salvar</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===== Aba 2b: categoria financeira da venda da APN ====================== */
+
+/* A aba Departamentos para a categoria financeira da APN (TSK-877): lista
+ * completa ou categoria fixa, aplicada pelo backend em
+ * `/api/categorias-financeiras`. As regras são as de lá.
+ *
+ * O que é só daqui: enquanto a lista nunca foi sincronizada (a API ainda não
+ * ligada), o lobby nem mostra o campo, e a aba diz isso. */
+function AbaCategorias({ api }) {
+  const [dados, setDados] = useState(null);
+  const [escolha, setEscolha] = useState({ modo: 'lista', codigo: '' });
+  const [estado, setEstado] = useState('carregando');
+  const [msg, setMsg] = useState('');
+
+  const aplica = (d) => {
+    setDados(d);
+    setEscolha({ modo: d.modo, codigo: d.fixa?.codigo || '' });
+  };
+
+  const carregar = useCallback(async () => {
+    setEstado('carregando'); setMsg('');
+    try {
+      aplica(await api('/api/categorias-financeiras/configuracao'));
+      setEstado('pronto');
+    } catch (err) { setMsg(err.message); setEstado('erro'); }
+  }, [api]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  if (estado === 'carregando') return <Carregando />;
+  if (estado === 'erro') return <Falhou msg={msg} aoTentar={carregar} />;
+
+  const lista = dados.categorias;
+  const salvoCodigo = dados.fixa?.codigo || '';
+  const sujo = escolha.modo !== dados.modo || (escolha.modo === 'fixo' && escolha.codigo !== salvoCodigo);
+  const escolhida = lista.find((c) => c.codigo === escolha.codigo) || null;
+  const podeSalvar = escolha.modo === 'lista' || !!escolhida;
+  const fixaInativa = dados.modo === 'fixo' && dados.modo_em_vigor === 'lista';
+  const nuncaSincronizada = !dados.sincronizado_em;
+
+  const muda = (parcial) => { setEscolha((e) => ({ ...e, ...parcial })); setMsg(''); };
+  const descartar = () => { setEscolha({ modo: dados.modo, codigo: salvoCodigo }); setMsg(''); };
+
+  const salvar = async () => {
+    if (!sujo || !podeSalvar) return;
+    if (escolha.modo === 'fixo' && !confirm(`Fixar a categoria em "${escolhida.descricao}"?\n\nToda venda da APN passa a sair com ela, e o consultor não consegue trocar.`)) return;
+    setEstado('salvando'); setMsg('');
+    try {
+      const corpo = escolha.modo === 'fixo' ? { modo: 'fixo', codigo: escolha.codigo } : { modo: 'lista' };
+      aplica(await api('/api/categorias-financeiras/configuracao', { method: 'PUT', body: JSON.stringify(corpo) }));
+      setMsg('ok');
+    } catch (err) { setMsg(err.message); }
+    finally { setEstado('pronto'); }
+  };
+
+  return (
+    <div style={{ paddingBottom: sujo ? 90 : 0 }}>
+      <Aviso tipo="info">
+        A categoria é a categoria financeira em que a venda da <strong>APN</strong> entra. A lista é
+        sincronizada de hora em hora. Aqui você decide se o consultor escolhe nela ou se toda venda sai
+        com uma categoria fixa.
+        <br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>
+          {dados.alterado_em
+            ? (dados.alterado_por
+              ? <>Última alteração por <strong style={{ color: 'var(--text-secondary)' }}>{dados.alterado_por}</strong> em {dataHora(dados.alterado_em)}</>
+              : <>Última alteração: {dataHora(dados.alterado_em)}</>)
+            : 'Nunca alterado: o consultor escolhe na lista completa.'}
+          {' · '}Lista sincronizada {dados.sincronizado_em ? `em ${dataHora(dados.sincronizado_em)}` : 'nunca'}
+        </span>
+      </Aviso>
+
+      {msg === 'ok' && <Aviso tipo="ok">Salvo. As próximas vendas já saem assim, e os lobbies que estão abertos se atualizam em até 5 minutos, sem perder a venda em andamento.</Aviso>}
+      {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+      {fixaInativa && (
+        <Aviso tipo="atencao">
+          <strong>{dados.fixa.descricao}</strong>, a categoria fixa, está inativa. Enquanto isso, o consultor
+          volta a ver a lista completa. Se ela for reativada, a fixa volta a valer sozinha. Para mudar agora,
+          escolha outra categoria ou salve a lista completa.
+        </Aviso>
+      )}
+      {nuncaSincronizada ? (
+        <Aviso tipo="atencao">
+          A lista de categorias ainda não chegou ao Lobby. Enquanto ela não chegar, o campo Categoria não
+          aparece na APN e as vendas seguem sem ele.
+        </Aviso>
+      ) : lista.length === 0 && (
+        <Aviso tipo="atencao">
+          Não há categoria ativa na lista, então não há o que fixar. Enquanto isso, as vendas da APN seguem
+          sem categoria.
+        </Aviso>
+      )}
+
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>category</span>
+          <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>Campo Categoria da venda</h2>
+          <span className="chip neutro">APN</span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
+          <OpcaoDeModo ativo={escolha.modo === 'lista'} icone="list" titulo="Lista completa" onClick={() => muda({ modo: 'lista' })}>
+            O consultor escolhe entre as {lista.length} categoria{lista.length === 1 ? '' : 's'} ativa{lista.length === 1 ? '' : 's'}.
+          </OpcaoDeModo>
+          <OpcaoDeModo ativo={escolha.modo === 'fixo'} icone="push_pin" titulo="Categoria fixa" desabilitado={lista.length === 0 && dados.modo !== 'fixo'} onClick={() => muda({ modo: 'fixo' })}>
+            Toda venda sai com a mesma categoria. O consultor vê o campo preenchido e não consegue trocar.
+          </OpcaoDeModo>
+        </div>
+
+        {escolha.modo === 'fixo' && (
+          <div style={{ marginTop: 18, maxWidth: 460 }}>
+            <label className="lbl" htmlFor="categoria-fixa">Categoria fixa</label>
+            <select id="categoria-fixa" className={'inp' + (sujo ? ' mudou' : '')} value={escolhida ? escolha.codigo : ''} onChange={(e) => muda({ codigo: e.target.value })}>
+              <option value="">Escolha a categoria…</option>
+              {lista.map((c) => <option key={c.codigo} value={c.codigo}>{c.descricao}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div style={{ marginTop: 18, padding: '14px 16px', borderRadius: 10, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)' }}>
+          <div className="sec-title" style={{ marginBottom: 10 }}>Como o consultor vê</div>
+          {nuncaSincronizada ? (
+            <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>Ainda não vê o campo.</div>
+          ) : escolha.modo === 'fixo' ? (
+            escolhida ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>lock</span>
+                Categoria da venda: <strong style={{ color: 'var(--text)' }}>{escolhida.descricao}</strong>
+                <span style={{ color: 'var(--text-muted)' }}>· definida pela diretoria</span>
+              </div>
+            ) : (
+              <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-muted)' }}>Escolha a categoria acima para ver.</div>
+            )
+          ) : (
+            <div style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+              Uma lista para escolher, obrigatória:{' '}
+              <span style={{ color: 'var(--text-muted)' }}>
+                {lista.slice(0, 4).map((c) => c.descricao).join(', ')}{lista.length > 4 ? ` e mais ${lista.length - 4}` : ''}.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {sujo && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
+          <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            {podeSalvar ? 'Categoria da venda alterada, ainda não salva.' : 'Escolha qual categoria fica fixa.'}
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <button className="btn-ghost" onClick={descartar} disabled={estado === 'salvando'}>Descartar</button>
@@ -1364,6 +1530,7 @@ function Falhou({ msg, aoTentar }) {
 const ABAS = [
   { id: 'valores', rotulo: 'Valores', icone: 'sell' },
   { id: 'departamentos', rotulo: 'Departamentos', icone: 'apartment' },
+  { id: 'categorias', rotulo: 'Categorias', icone: 'category' },
   { id: 'cobranca', rotulo: 'Cobrança', icone: 'event_repeat' },
   { id: 'produtos', rotulo: 'Produtos', icone: 'inventory_2' },
   { id: 'historico', rotulo: 'Histórico', icone: 'history' },
@@ -1456,6 +1623,7 @@ function Editor({ sessao: sess, aoSair }) {
           <>
             {aba === 'valores' && <AbaValores api={api} catalogo={catalogo} atualizadoEm={atualizadoEm} ultimaPublicacao={ultimaPublicacao} aoPublicar={aoPublicar} />}
             {aba === 'departamentos' && <AbaDepartamentos api={api} />}
+            {aba === 'categorias' && <AbaCategorias api={api} />}
             {aba === 'cobranca' && <AbaCobranca api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'produtos' && <AbaProdutos api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'historico' && <AbaHistorico api={api} catalogo={catalogo} />}
