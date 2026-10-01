@@ -1575,15 +1575,24 @@ function App() {
   const rotuloCategoriaFin = categoriaFinSel ? categoriaFinSel.descricao : (categoriaFinOk ? '—' : 'Escolha na etapa do cliente');
   // O `departamentoNoEnvio` para a categoria: a de AGORA, null se a venda segue
   // sem, ou `false` se a escolhida saiu da lista.
+  //
+  // Primeira consulta que falhou é caso à parte: o cartão nem apareceu, e isso
+  // não quer dizer que não haja lista. Então reconsulta mesmo sem escolha, e se
+  // agora vier lista, volta para a etapa do cliente pedindo a categoria.
   const categoriaFinNoEnvio = async () => {
-    if (cfins.modo !== 'fixo' && !s.categoriaFin) return null;
+    const nuncaCarregou = cfins.estado === 'erro' && !cfins.sincronizado;
+    if (cfins.modo !== 'fixo' && !s.categoriaFin && !nuncaCarregou) return null;
     const novo = await atualizaCategoriasFin();
     if (!novo) return categoriaFinSel;
     if (novo.modo === 'fixo') return novo.lista[0] || null;
     const escolhida = novo.lista.find((c) => c.codigo === s.categoriaFin);
     if (escolhida) return escolhida;
     if (novo.lista.length === 0) return null;
-    if (!s.categoriaFin) patch({ categoriaFinAviso: 'A diretoria liberou a escolha da categoria. Escolha uma na lista.' });
+    if (!s.categoriaFin) {
+      patch({ categoriaFinAviso: nuncaCarregou
+        ? 'As categorias carregaram agora. Escolha a categoria da venda.'
+        : 'A diretoria liberou a escolha da categoria. Escolha uma na lista.' });
+    }
     return false;
   };
 

@@ -8,8 +8,12 @@ sincronização boa, o lobby nem mostra o campo (ver `servicos.estado_publico`).
 
 O CONTRATO QUE O CLIENTE DA API TEM DE CUMPRIR
 
-- Devolver TODAS as categorias, ativas e inativas, de todas as páginas. Quem não
-  vem na listagem é desativado no banco.
+- Devolver só as categorias que o consultor pode escolher numa venda da APN
+  (as de receita, por exemplo), e não o plano de contas inteiro. A rota que serve
+  a lista é ANÔNIMA: tudo o que entra aqui vai para o navegador de qualquer um, e
+  uma categoria de despesa no select é venda lançada no lugar errado.
+- Dentro desse recorte, devolver TODAS, ativas e inativas, de todas as páginas.
+  Quem não vem na listagem é desativado no banco.
 - Qualquer falha (fora do ar, credencial errada, resposta que não é a esperada)
   vira `FonteIndisponivel`, com uma mensagem que vai para o log. Nunca a
   credencial na mensagem.

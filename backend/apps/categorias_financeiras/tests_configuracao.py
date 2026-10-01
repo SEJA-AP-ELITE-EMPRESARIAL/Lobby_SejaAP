@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from apps.catalogo.tests_escrita import cria_pessoa
 from apps.contas.models import Papel
 
-from .models import CategoriaFinanceira, ConfiguracaoCategoriaFinanceira
+from .models import ConfiguracaoCategoriaFinanceira
 from .servicos import sincronizar
 from .tests_categorias import cat
 
@@ -194,4 +194,4 @@ class RestricaoDoBancoTest(TestCase):
         """A validação mora no serviço; o CHECK segura quem gravar por fora dele."""
         with self.assertRaises(IntegrityError), transaction.atomic():
             ConfiguracaoCategoriaFinanceira.objects.create(modo="fixo")
-        self.assertFalse(CategoriaFinanceira.objects.exists())
+        self.assertFalse(ConfiguracaoCategoriaFinanceira.objects.exists())
