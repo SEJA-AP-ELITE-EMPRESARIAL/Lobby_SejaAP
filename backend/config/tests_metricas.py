@@ -148,6 +148,23 @@ class ColetaTest(TestCase):
         self.assertEqual(self.valor_de('lobby_departamentos{estado="inativo"}'), 1)
         self.assertLess(self.valor_de("lobby_segundos_desde_sincronizacao_departamentos"), 60)
 
+    def test_categorias_financeiras_sem_sincronizacao_nao_tem_serie_de_frescor(self):
+        """É o estado de produção até a API ser ligada (TSK-877)."""
+        self.assertEqual(self.valor_de('lobby_categorias_financeiras{estado="ativo"}'), 0)
+        self.assertNotIn(
+            "lobby_segundos_desde_sincronizacao_categorias_financeiras",
+            self.coletar().content.decode(),
+        )
+
+    def test_categorias_financeiras_contadas_e_frescor_da_ultima_sincronizacao(self):
+        from apps.categorias_financeiras.fonte import CategoriaDaFonte
+        from apps.categorias_financeiras.servicos import sincronizar
+
+        sincronizar([CategoriaDaFonte("1.01", "Consultoria", True), CategoriaDaFonte("1.02", "Eventos", False)])
+        self.assertEqual(self.valor_de('lobby_categorias_financeiras{estado="ativo"}'), 1)
+        self.assertEqual(self.valor_de('lobby_categorias_financeiras{estado="inativo"}'), 1)
+        self.assertLess(self.valor_de("lobby_segundos_desde_sincronizacao_categorias_financeiras"), 60)
+
 
 @override_settings(LOBBY_METRICS_TOKEN=TOKEN)
 class AcessoTest(TestCase):

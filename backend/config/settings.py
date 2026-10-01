@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "apps.contas",
     "apps.vendas",
     "apps.departamentos",
+    "apps.categorias_financeiras",
 ]
 
 MIDDLEWARE = [
@@ -252,6 +253,8 @@ REST_FRAMEWORK = {
         # para a aba e antes de enviar — e vários consultores dividem o IP do
         # escritório. Uma resposta de 10 linhas lidas do banco, sem Omie no meio.
         "departamentos_publico": os.environ.get("LOBBY_RATE_DEPARTAMENTOS", "600/hour"),
+        # Categorias financeiras da APN (TSK-877): mesmo ritmo dos departamentos.
+        "categorias_financeiras_publico": os.environ.get("LOBBY_RATE_CATEGORIAS_FINANCEIRAS", "600/hour"),
     },
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }
