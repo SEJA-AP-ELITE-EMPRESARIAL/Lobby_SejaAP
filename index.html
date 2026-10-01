@@ -1576,12 +1576,12 @@ function App() {
   // O `departamentoNoEnvio` para a categoria: a de AGORA, null se a venda segue
   // sem, ou `false` se a escolhida saiu da lista.
   //
-  // Primeira consulta que falhou é caso à parte: o cartão nem apareceu, e isso
-  // não quer dizer que não haja lista. Então reconsulta mesmo sem escolha, e se
-  // agora vier lista, volta para a etapa do cliente pedindo a categoria.
+  // Diferente do departamento, reconsulta SEMPRE, mesmo sem nada escolhido. Sem
+  // escolha, a tela só deixou chegar aqui porque a lista estava vazia: nunca
+  // sincronizada (a API ligada com a página aberta), ou a primeira consulta
+  // falhou. Se agora vier lista, a venda volta para a etapa do cliente pedindo a
+  // categoria, em vez de sair sem ela. É um GET a mais por venda da APN.
   const categoriaFinNoEnvio = async () => {
-    const nuncaCarregou = cfins.estado === 'erro' && !cfins.sincronizado;
-    if (cfins.modo !== 'fixo' && !s.categoriaFin && !nuncaCarregou) return null;
     const novo = await atualizaCategoriasFin();
     if (!novo) return categoriaFinSel;
     if (novo.modo === 'fixo') return novo.lista[0] || null;
@@ -1589,9 +1589,11 @@ function App() {
     if (escolhida) return escolhida;
     if (novo.lista.length === 0) return null;
     if (!s.categoriaFin) {
-      patch({ categoriaFinAviso: nuncaCarregou
-        ? 'As categorias carregaram agora. Escolha a categoria da venda.'
-        : 'A diretoria liberou a escolha da categoria. Escolha uma na lista.' });
+      // `cfins` aqui ainda é o de antes da reconsulta: com fixa, quem mudou foi a
+      // diretoria; com lista vazia, foram as categorias que chegaram.
+      patch({ categoriaFinAviso: cfins.modo === 'fixo'
+        ? 'A diretoria liberou a escolha da categoria. Escolha uma na lista.'
+        : 'As categorias carregaram agora. Escolha a categoria da venda.' });
     }
     return false;
   };
