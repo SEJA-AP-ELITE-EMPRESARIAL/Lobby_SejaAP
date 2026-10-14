@@ -1027,15 +1027,20 @@ function aplicaValoresAvaliacao(itens, valores) {
   return out;
 }
 
-// As modalidades vendidas cujo valor na tela deixou de ser o fixo de agora — a
-// diretoria fixou (ou mudou o fixo) com a venda aberta. Vazio = nada mudou.
-const fixosQueMudaram = (itens, valores) => MODALIDADES_AVALIACAO.filter((m) => {
+// As modalidades VENDIDAS cujo valor na tela muda com os valores novos da
+// diretoria: a que ficou fixa (ou mudou de fixo), e a livre em que o consultor
+// não digitou e cujo valor sugerido mudou. Vazio = o total que ele viu continua
+// valendo.
+const valoresQueMudaram = (itens, valores) => MODALIDADES_AVALIACAO.filter((m) => {
   const cfg = valores[m.id];
   const item = itens && itens[m.id];
-  return cfg && cfg.fixo && qtdItemAvaliacao(item) > 0 && round2(Number(item.valor)) !== round2(cfg.valor);
+  if (!cfg || qtdItemAvaliacao(item) === 0 || (!cfg.fixo && item.editado)) return false;
+  return round2(Number(item.valor)) !== round2(cfg.valor);
 });
-const avisoDosFixos = (mudaram, valores) => mudaram
-  .map((m) => `A diretoria fixou o valor ${DA_MODALIDADE[m.id]} em ${fmtBRL(valores[m.id].valor)}.`)
+const avisoDosValores = (mudaram, valores) => mudaram
+  .map((m) => (valores[m.id].fixo
+    ? `A diretoria fixou o valor ${DA_MODALIDADE[m.id]} em ${fmtBRL(valores[m.id].valor)}.`
+    : `A diretoria mudou o valor sugerido ${DA_MODALIDADE[m.id]} para ${fmtBRL(valores[m.id].valor)}.`))
   .join(' ') + ' Confira o total antes de seguir.';
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -1452,9 +1457,9 @@ function App() {
   // `estado`: 'carregando' até a 1ª resposta; 'ok' ou 'erro' (vale o padrão).
   const [valsAval, setValsAval] = useState({ versao: null, valores: VALORES_AVALIACAO_PADRAO, estado: 'carregando' });
 
-  // Reconsulta e leva os valores aos itens. Se um valor que a tela mostrava numa
-  // modalidade vendida deixou de ser o fixo, avisa na etapa Itens. Falha de rede
-  // não apaga nada. Devolve o que veio, ou null se a consulta falhou.
+  // Reconsulta e leva os valores aos itens. Se o valor de uma modalidade vendida
+  // mudou (ver `valoresQueMudaram`), deixa o aviso. Falha de rede não apaga
+  // nada. Devolve o que veio, ou null se a consulta falhou.
   const atualizaValoresAvaliacao = async () => {
     let novo;
     try {
@@ -1466,10 +1471,10 @@ function App() {
     }
     setValsAval((v) => (v.versao === novo.versao ? { ...v, estado: 'ok' } : { versao: novo.versao, valores: novo.valores, estado: 'ok' }));
     patch((d) => {
-      const mudaram = fixosQueMudaram(d.avalItens, novo.valores);
+      const mudaram = valoresQueMudaram(d.avalItens, novo.valores);
       return {
         avalItens: aplicaValoresAvaliacao(d.avalItens, novo.valores),
-        ...(mudaram.length ? { avalAviso: avisoDosFixos(mudaram, novo.valores) } : {}),
+        ...(mudaram.length ? { avalAviso: avisoDosValores(mudaram, novo.valores) } : {}),
       };
     });
     return novo;
@@ -1919,7 +1924,9 @@ function App() {
   const avalFixo = (id) => !!avalCfg(id).fixo;
   const avalItem = (id) => (s.avalItens && s.avalItens[id]) || novoItemAvaliacao();
   const avalQtd = (id) => qtdItemAvaliacao(avalItem(id));
-  const avalValor = (id) => (avalFixo(id) ? avalCfg(id).valor : Number(avalItem(id).valor));
+  // Arredondado como o servidor o assina: "150,555" vale 150,56 na tela, na
+  // soma e no comprovante — senão o total enviado não fecharia com os itens.
+  const avalValor = (id) => (avalFixo(id) ? avalCfg(id).valor : round2(Number(avalItem(id).valor)));
   const avalSubtotal = (id) => {
     const v = avalValor(id);
     return round2(avalQtd(id) * (Number.isFinite(v) ? v : 0));
@@ -1958,7 +1965,12 @@ function App() {
 
   const setAvalItem = (id, campo, valor) => patch((d) => ({
     avalAviso: '',
-    avalItens: { ...d.avalItens, [id]: { ...((d.avalItens && d.avalItens[id]) || novoItemAvaliacao()), [campo]: valor, ...(campo === 'valor' ? { editado: true } : {}) } },
+    avalItens: { ...d.avalItens, [id]: {
+      ...((d.avalItens && d.avalItens[id]) || novoItemAvaliacao()),
+      ...(campo === 'valor'
+        ? { valor: Number.isFinite(valor) ? round2(valor) : NaN, editado: true }
+        : { [campo]: valor }),
+    } },
   }));
   const setAvalForma = (forma) => patch((d) => ({
     avalForma: forma,
@@ -2285,13 +2297,13 @@ function App() {
   const finalizeDhAvaliacao = async () => {
     if (!avalContratanteValid || !avalItensValid || !avalPagamentoValid || !dhAvaliacaoEnvioConfigurado || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
-    // Última conferência da trava, no momento que importa. Se a diretoria fixou
-    // (ou trocou o fixo de) uma modalidade vendida, a reconsulta já levou o valor
-    // novo aos itens e deixou o aviso: o envio para e volta para a etapa Itens,
-    // em vez de mandar um total que o consultor não viu. Consulta que falha
-    // segue com o que a tela mostra — o comprovante confere de novo no servidor.
+    // Última conferência dos valores, no momento que importa. Se a diretoria
+    // fixou (ou mudou) o valor de uma modalidade vendida, a reconsulta já levou o
+    // valor novo aos itens e deixou o aviso: o envio para e volta para a etapa
+    // Itens, em vez de mandar um total que o consultor não viu. Consulta que
+    // falha segue com o que a tela mostra — o comprovante confere no servidor.
     const novo = await atualizaValoresAvaliacao();
-    if (novo && fixosQueMudaram(s.avalItens, novo.valores).length) {
+    if (novo && valoresQueMudaram(s.avalItens, novo.valores).length) {
       patch({ sendState: 'idle', step: 2 });
       return;
     }
@@ -2326,6 +2338,9 @@ function App() {
       patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
     } catch (e) {
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
+      // Recusa do servidor (um valor fixo que a reconsulta não pegou, por
+      // exemplo): reconsulta de novo, para a etapa Itens já mostrar o certo.
+      if (e && e.handled) atualizaValoresAvaliacao();
     }
   };
 
@@ -3792,6 +3807,13 @@ function App() {
           <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Revise as informações antes de finalizar o cadastro.</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* O valor de uma modalidade mudou com a venda aberta (ver
+              `valoresQueMudaram`): o total abaixo já é o novo. */}
+          {s.avalAviso && (
+            <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, font: '500 13px/1.5 var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '10px 14px', borderRadius: 10 }}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>sync_problem</span>{s.avalAviso}
+            </div>
+          )}
           <div className="card" style={{ padding: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <span className="sec-title" style={{ fontSize: 12 }}>Contratante</span>
