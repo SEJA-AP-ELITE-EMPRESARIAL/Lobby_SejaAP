@@ -190,6 +190,11 @@ LOBBY_N8N_TOKEN = os.environ.get("LOBBY_N8N_TOKEN", "")
 OMIE_APP_KEY = os.environ.get("OMIE_APP_KEY", "")
 OMIE_APP_SECRET = os.environ.get("OMIE_APP_SECRET", "")
 OMIE_TIMEOUT = int(os.environ.get("OMIE_TIMEOUT", "20"))
+# Categorias financeiras da APN (TSK-879): a mesma chave, o `ListarCategorias`.
+# Só entram as categorias sob estes prefixos do plano de contas, separados por
+# vírgula. "1.10" é o grupo "APN" do Omie, com uma categoria por turma. Ver
+# `apps/categorias_financeiras/fonte.py`.
+CATEGORIAS_FINANCEIRAS_PREFIXOS = os.environ.get("CATEGORIAS_FINANCEIRAS_PREFIXOS", "1.10")
 
 # === Prometheus ===
 # Token do /metrics. Vazio = endpoint desabilitado (404), que é o padrão certo:
