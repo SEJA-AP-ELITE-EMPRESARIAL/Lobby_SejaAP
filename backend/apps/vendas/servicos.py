@@ -43,6 +43,15 @@ def _reais(valor: Decimal) -> str:
     return "R$ " + f"{valor:.2f}".replace(".", ",")
 
 
+# Teto da conversão para `int`, em casas decimais, e não regra de negócio (a
+# regra é o `QUANTIDADE_MAX`, conferido adiante, com mensagem própria). Existe
+# porque `int(Decimal("1e5000000"))` leva minutos: sem ele, um POST anônimo com
+# uma quantidade em notação exponencial prenderia um worker do gunicorn. É o
+# expoente que se olha, e não `abs(numero) > teto`: a aritmética do Decimal
+# estoura (`Overflow`) antes de comparar um número desses.
+INTEIRO_MAX_EXPOENTE = 9
+
+
 def _inteiro(valor, campo: str) -> int:
     """Quantidade é contagem: 3, e não 2,5. `True` não é 1 aqui."""
     if isinstance(valor, bool):
@@ -51,7 +60,9 @@ def _inteiro(valor, campo: str) -> int:
         numero = Decimal(str(valor if valor is not None else 0))
     except (InvalidOperation, ValueError, TypeError):
         raise VendaRecusada(f"Valor inválido em {campo}.")
-    if not numero.is_finite() or numero != numero.to_integral_value():
+    if not numero.is_finite() or numero.adjusted() > INTEIRO_MAX_EXPOENTE:
+        raise VendaRecusada(f"Valor inválido em {campo}.")
+    if numero != numero.to_integral_value():
         raise VendaRecusada(f"Valor inválido em {campo}.")
     return int(numero)
 
@@ -131,6 +142,23 @@ def _confere_soma(valores: dict):
         )
 
 
+def _recusa_produto_de_formulario(produto):
+    """Produto de fluxo próprio não se vende pela tabela.
+
+    O caso real: uma aba do lobby aberta antes do deploy que transformou o
+    Avaliações em DH - Avaliação (TSK-1056). Ela ainda o mostra como produto de
+    tabela e pede comprovante de Elite. Sem esta recusa, a conferência contra a
+    tabela comparava o total com um preço que não existe (`None`) e o servidor
+    respondia 500 — e a venda seguia para o webhook do Elite sem comprovante.
+    Com 422, a tela para e mostra a mensagem.
+    """
+    if produto.de_formulario:
+        raise VendaRecusada(
+            f'"{produto.nome}" agora tem formulário próprio. Recarregue a página '
+            "e faça a venda por ele."
+        )
+
+
 def _confere_contra_a_tabela(valores: dict):
     """Venda sem negociação: os valores TÊM que ser os do catálogo."""
     try:
@@ -142,6 +170,7 @@ def _confere_contra_a_tabela(valores: dict):
             "Produto não encontrado no catálogo. Recarregue a página e tente de novo."
         )
 
+    _recusa_produto_de_formulario(produto)
     total = Decimal(valores["valor_total"])
     if not _bate(total, produto.preco):
         raise VendaRecusada(
@@ -210,10 +239,13 @@ def _confere_avaliacao(valores: dict):
         if not (Decimal(0) < unitario <= VALOR_UNITARIO_MAX):
             raise VendaRecusada(f"O valor unitário {rotulo} está fora da faixa permitida.")
         fixo = vigentes[modalidade]
-        if fixo["fixo"] and not _bate(unitario, fixo["valor"]):
+        # Igualdade exata, sem a tolerância de `_bate`: os dois lados já são
+        # Decimal de duas casas, e um centavo de folga por unidade viraria R$ 100
+        # abaixo do fixo numa venda de 10.000 unidades.
+        if fixo["fixo"] and unitario != fixo["valor"]:
             raise VendaRecusada(
                 f"O valor {rotulo} é fixado pela diretoria em {_reais(fixo['valor'])}. "
-                "Recarregue a página e tente de novo."
+                "Volte à etapa Itens e confira o total."
             )
         soma += unitario * item["quantidade"]
 
@@ -256,6 +288,13 @@ def emitir(dados: dict, *, usuario=None, ip=None) -> ComprovanteVenda:
                 raise VendaRecusada(
                     "Esta conta não tem permissão para autorizar negociação."
                 )
+            # Negociado não passa pela tabela, mas também não vende produto de
+            # formulário pelo cronograma do Elite (ver `_recusa_produto_de_formulario`).
+            produto = Produto.objects.filter(
+                categoria__slug=valores["categoria_id"], slug=valores["produto_id"]
+            ).first()
+            if produto is not None:
+                _recusa_produto_de_formulario(produto)
         else:
             _confere_contra_a_tabela(valores)
     elif valores["fluxo"] == ComprovanteVenda.Fluxo.DH:

@@ -144,6 +144,17 @@ class ValorFixoTest(Base):
         )
         self.assertEqual(resposta.status_code, 200, resposta.json())
 
+    def test_um_centavo_abaixo_do_fixo_tambem_e_recusado(self):
+        """Sem folga: um centavo por unidade, em 10.000 unidades, são R$ 100."""
+        fixa(devolutiva=480)
+        self.assertRecusa(
+            venda_avaliacao(
+                valor_total=4_799_900, entrada=4_799_900,
+                itens=itens(relatorio=None, devolutiva=(10000, 479.99)),
+            ),
+            "fixado pela diretoria",
+        )
+
     def test_vale_a_ultima_gravacao(self):
         fixa(devolutiva=480)
         fixa()  # a diretoria soltou de novo
@@ -177,6 +188,17 @@ class ItensQueNaoSeSustentamTest(Base):
             venda_avaliacao(valor_total=1575, entrada=1575, itens=itens(relatorio=(10.5, 150), devolutiva=None)),
             "quantidade",
         )
+
+    def test_quantidade_em_notacao_exponencial_e_recusada_na_hora(self):
+        """`int(Decimal("1e5000000"))` leva minutos e prenderia um worker."""
+        import time
+
+        inicio = time.monotonic()
+        self.assertRecusa(
+            venda_avaliacao(itens=[{"modalidade": "relatorio", "quantidade": "1e5000000", "valor_unitario": 150}]),
+            "quantidade",
+        )
+        self.assertLess(time.monotonic() - inicio, 2)
 
     def test_quantidade_absurda(self):
         self.assertRecusa(
@@ -242,6 +264,31 @@ class ValidacaoTest(Base):
         corpo = self.validar(token, trocado)
         self.assertFalse(corpo["valido"])
         self.assertEqual(corpo["motivo"], "valores_adulterados")
+
+
+class AbaAntigaDoLobbyTest(Base):
+    """Uma aba aberta antes do deploy ainda mostra o Avaliações como produto de
+    tabela (AVL, R$ 1.500) e pede comprovante de Elite. Sem a recusa, o servidor
+    caía em 500 e a venda seguia para o webhook do Elite sem comprovante."""
+
+    def venda_elite_do_avaliacoes(self, **mudancas):
+        dados = venda_de_tabela(
+            categoria_id="produtos", produto_id="avaliacoes", valor_total=1500,
+            valor_mensal=None, entrada=1500, cronograma=[], protocolo="AVL-261014012345",
+        )
+        dados.update(mudancas)
+        return dados
+
+    def test_venda_pela_tabela_e_recusada_com_422(self):
+        self.assertRecusa(self.venda_elite_do_avaliacoes(), "agora tem formulário próprio")
+
+    def test_nem_negociada_com_gerente(self):
+        gerente = cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE)
+        self.assertRecusa(
+            self.venda_elite_do_avaliacoes(negociado=True, valor_total=1200, entrada=1200),
+            "agora tem formulário próprio",
+            usuario=gerente,
+        )
 
 
 class OutrosFluxosNaoMudamTest(TestCase):
