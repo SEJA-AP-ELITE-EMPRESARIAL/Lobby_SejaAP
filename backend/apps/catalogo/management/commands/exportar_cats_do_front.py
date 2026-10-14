@@ -37,7 +37,7 @@ from apps.catalogo.serializers import serializa_catalogo
 # `desc` na seguinte, produtos em bloco. Seguir o formato do arquivo mantém o diff
 # do deploy legível — sem isto, colar esta saída reescreveria linhas que não
 # mudaram de valor, só de posição.
-ORDEM_CATEGORIA = ["id", "name", "icon", "color", "flow", "sigla", "locked"]
+ORDEM_CATEGORIA = ["id", "name", "icon", "color", "flow", "sigla", "locked", "produtoPrimeiro"]
 ORDEM_PRODUTO = [
     "id", "name", "sigla", "desc", "duration",
     "monthly", "price", "recurring", "vigencia", "flow", "icon", "cobranca",

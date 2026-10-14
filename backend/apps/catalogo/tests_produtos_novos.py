@@ -378,6 +378,15 @@ class FallbackDoFrontTest(TestCase):
             self.bloco,
         )
 
+    def test_produtos_sai_comecando_pela_escolha_do_produto(self):
+        """Sem a chave no fallback, o lobby offline voltaria a pedir a empresa
+        antes do produto em "Produtos"."""
+        self.assertIn(
+            "{ id: 'produtos', name: 'Produtos', icon: 'inventory_2', color: 'green', "
+            "produtoPrimeiro: true,",
+            self.bloco,
+        )
+
     def test_apn_sai_sem_bloco_de_produtos_vazio(self):
         """Categoria de fluxo próprio não tem produto e nunca vai ter."""
         self.assertIn("flow: 'apn', sigla: 'APN',", self.bloco)

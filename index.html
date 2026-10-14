@@ -806,6 +806,10 @@ function normalizePixResponse(raw) {
  *  campos: { id, name, desc, duration, price (TOTAL do contrato), icon,
  *            recurring?, monthly?, vigencia?, cobranca?, flow? }
  *
+ *  `produtoPrimeiro` numa CATEGORIA quer dizer que a venda começa pela lista
+ *  de produtos, e só depois pede os dados de quem contrata (ver
+ *  `stepsDoFluxo`).
+ *
  *  `flow` num PRODUTO (hoje só 'dh') quer dizer que ele não tem preço: o
  *  consultor cai num formulário próprio e os valores saem de lá. É por isso que
  *  o Recrutamento e Seleção aparece aqui sem `price` — a ausência é o contrato,
@@ -814,8 +818,8 @@ function normalizePixResponse(raw) {
 let CATS = [
   // Gerado por `manage.py exportar_cats_do_front`. Ativas: Elite (planos de
   // tabela), APN (fluxo próprio de categoria) e Produtos (com o Recrutamento e
-  // Seleção, de fluxo próprio de produto). Treinamentos fica "Em implementação"
-  // (locked) e sem produtos.
+  // Seleção, de fluxo próprio de produto, e começando pela escolha do produto).
+  // Treinamentos fica "Em implementação" (locked) e sem produtos.
   { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
     desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
     products: [
@@ -832,7 +836,7 @@ let CATS = [
   { id: 'apn', name: 'APN', icon: 'rocket_launch', color: 'blue', flow: 'apn', sigla: 'APN',
     desc: 'Aceleração de Performance de Negócios — valor definido na negociação.',
     products: [] },
-  { id: 'produtos', name: 'Produtos', icon: 'inventory_2', color: 'green',
+  { id: 'produtos', name: 'Produtos', icon: 'inventory_2', color: 'green', produtoPrimeiro: true,
     desc: 'Produtos e serviços avulsos — cada um com o seu formulário de contratação.',
     products: [
       { id: 'recrutamento-selecao', name: 'Recrutamento e Seleção', sigla: 'RES', desc: 'Processo seletivo conduzido pela Seja AP, vaga a vaga', duration: 'por vaga', flow: 'dh', icon: 'person_search' },
@@ -846,6 +850,10 @@ const COLORS = {
 };
 const getCat = (id) => CATS.find((c) => c.id === id) || null;
 const STEPS = ['Empresa', 'Produto', 'Pagamento', 'Resumo'];
+// O mesmo fluxo de tabela, na ordem de uma categoria `produtoPrimeiro`
+// (Produtos): cada produto ali pede dados de contratante próprios, então a
+// escolha vem antes da empresa. Campos, validações e payload são os do STEPS.
+const STEPS_PRODUTO_PRIMEIRO = ['Produto', 'Empresa', 'Pagamento', 'Resumo'];
 // A APN tem um fluxo mais curto: não há produto a escolher nem cronograma de
 // parcelas — só cliente, valor/forma/origem e conferência.
 const STEPS_APN = ['Cliente', 'Pagamento', 'Resumo'];
@@ -864,6 +872,11 @@ const STEPS_DH = ['Produto', 'Contratante', 'Quadro comercial', 'Resumo'];
  * TODOS concordam — é o que mantém o stepper honesto na primeira tela de uma
  * categoria de um fluxo só. Se a categoria misturar fluxos, cai no padrão até o
  * consultor escolher, e `onProduct` reposiciona a etapa.
+ *
+ * A ORDEM das etapas do fluxo padrão é da categoria: com `produtoPrimeiro`
+ * (Produtos), a lista de produtos vem antes da empresa. É o que faz a categoria
+ * misturada abrir na escolha mesmo caindo no padrão, e o que põe produto novo de
+ * tabela ali na mesma ordem, sem `if` pelo id dele.
  */
 const fluxoDoProduto = (p) => (p && p.flow) || '';
 const fluxoUniformeDosProdutos = (c) => {
@@ -871,10 +884,17 @@ const fluxoUniformeDosProdutos = (c) => {
   return fluxos.size === 1 ? [...fluxos][0] : '';
 };
 const fluxoDaVenda = (c, p) => (c && c.flow) || fluxoDoProduto(p) || fluxoUniformeDosProdutos(c);
-const stepsDoFluxo = (fluxo) => (fluxo === 'apn' ? STEPS_APN : fluxo === 'dh' ? STEPS_DH : STEPS);
+const comecaPeloProduto = (c) => !!(c && c.produtoPrimeiro);
+const stepsDoFluxo = (fluxo, c) => (
+  fluxo === 'apn' ? STEPS_APN
+    : fluxo === 'dh' ? STEPS_DH
+      : comecaPeloProduto(c) ? STEPS_PRODUTO_PRIMEIRO : STEPS
+);
 // Em que etapa fica a lista de produtos, no fluxo de cada um. É por ela que
 // `onProduct` reposiciona quando a escolha do produto muda o próprio fluxo.
-const etapaDoProduto = (fluxo) => (fluxo === 'dh' ? 0 : 1);
+const etapaDoProduto = (fluxo, c) => (fluxo === 'dh' || comecaPeloProduto(c) ? 0 : 1);
+// E a da empresa, no fluxo padrão: a outra das duas primeiras.
+const etapaDaEmpresa = (c) => (comecaPeloProduto(c) ? 1 : 0);
 
 // Uma linha do quadro comercial do DH. `salario` e `adiantamento` nascem NaN, e
 // não zero: zero é um valor que alguém digitou, NaN é campo em branco — e a
@@ -1319,8 +1339,11 @@ function App() {
   // (ver `fluxoDaVenda`), então vale já na lista de produtos da categoria.
   const fluxo = fluxoDaVenda(cat, product);
   const isDh = fluxo === 'dh';
-  const steps = stepsDoFluxo(fluxo);
+  const steps = stepsDoFluxo(fluxo, cat);
   const ultimoStep = steps.length - 1;
+  // Fluxo padrão: Empresa e Produto trocam de lugar em categoria `produtoPrimeiro`.
+  const etapaProduto = etapaDoProduto(fluxo, cat);
+  const etapaEmpresa = etapaDaEmpresa(cat);
 
   // Quem autorizou esta negociação, se alguém autorizou.
   const autorizado = !!s.autorizacao;
@@ -1353,7 +1376,7 @@ function App() {
     const trocouDeFluxo = fluxoNovo !== fluxoDaVenda(cat, d.product);
     return {
       product: p, priceEdit: false, editMode: false, dhAdiantamentoEdit: false, autorizacao: null, observacao: '',
-      ...(trocouDeFluxo ? { step: etapaDoProduto(fluxoNovo) } : {}),
+      ...(trocouDeFluxo ? { step: etapaDoProduto(fluxoNovo, cat) } : {}),
       ...(p.flow
         ? { unitValue: 0, entradaValor: 0, entradaData: '', parcelas: [] }
         : { unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) }),
@@ -1998,7 +2021,7 @@ function App() {
     if (!pagamentoValid || !departamentoOk || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
     const departamento = await departamentoNoEnvio();
-    if (departamento === false) { patch({ sendState: 'idle', step: 0 }); return; }
+    if (departamento === false) { patch({ sendState: 'idle', step: etapaEmpresa }); return; }
     // Código da venda gerado no cliente (formato SSS-YYMMDDPRRRRR) e enviado ao
     // webhook dentro do payload. Também é o protocolo exibido na tela de sucesso.
     const protocolo = buildProtocol(product, s.entradaForma, new Date());
@@ -3161,7 +3184,7 @@ function App() {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="card" style={{ padding: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Empresa & Representante</span><button className="linkbtn" onClick={() => goStep(0)}>Editar</button></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Empresa & Representante</span><button className="linkbtn" onClick={() => goStep(etapaEmpresa)}>Editar</button></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
               {[['Razão social', s.razaoSocial], ['CNPJ', s.cnpj], ['Representante', s.repNome || '—'], ['Contato', (s.repEmail || '—') + (s.repTelefone ? ' · ' + s.repTelefone : '')], ['Departamento', rotuloDepartamento]].map(([k, v]) => (
                 <div key={k}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2 }}>{v}</div></div>
@@ -3169,7 +3192,7 @@ function App() {
             </div>
           </div>
           <div className="card" style={{ padding: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Produto</span><button className="linkbtn" onClick={() => goStep(1)}>Editar</button></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}><span className="sec-title" style={{ fontSize: 12 }}>Produto</span><button className="linkbtn" onClick={() => goStep(etapaProduto)}>Editar</button></div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div><div style={{ font: '600 16px var(--font-primary)', color: 'var(--text)' }}>{product.name}</div><div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{cat.name} · {product.duration}</div></div>
               <div style={{ font: '700 17px var(--font-primary)', color: 'var(--primary)' }}>{fmt(total)}</div>
@@ -3381,8 +3404,8 @@ function App() {
       primaryAction = finalizeDh;
       enabled = dhContratanteValid && dhQuadroValid && dhEnvioConfigurado && !sending;
     }
-  } else if (s.step === 0) enabled = empresaValid && departamentoOk;
-  else if (s.step === 1) enabled = !!product;
+  } else if (s.step === etapaEmpresa) enabled = empresaValid && departamentoOk;
+  else if (s.step === etapaProduto) enabled = !!product;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
   else {
     // Etapa Resumo: com a cobrança Pix ATIVA, é preciso gerar o QR e confirmar o
@@ -3432,8 +3455,8 @@ function App() {
                 </>
               ) : (
                 <>
-                  {s.step === 0 && renderEmpresa()}
-                  {s.step === 1 && renderProduto()}
+                  {s.step === etapaEmpresa && renderEmpresa()}
+                  {s.step === etapaProduto && renderProduto()}
                   {s.step === 2 && renderPagamento()}
                   {s.step === 3 && renderResumo()}
                 </>
