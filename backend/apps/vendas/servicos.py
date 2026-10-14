@@ -79,9 +79,17 @@ def _itens_normalizados(brutos) -> list[dict]:
     for bruto in brutos:
         if not isinstance(bruto, dict):
             raise VendaRecusada("Itens inválidos.")
-        unitario = _decimal(bruto.get("valor_unitario"), "valor unitário")
+        enviado = bruto.get("valor_unitario")
+        unitario = _decimal(enviado, "valor unitário")
         if not unitario.is_finite():
             raise VendaRecusada("Valor inválido em valor unitário.")
+        # Fração de centavo é recusada, e não arredondada: arredondar faria
+        # 479,995 virar o 480,00 fixo no que é assinado, enquanto os itens do
+        # payload seguiriam dizendo 479,995 — R$ 50 a menos em 10.000 unidades,
+        # com o comprovante válido. O lobby manda sempre duas casas.
+        # (`_decimal` já recusou o que não é número; ausente conta como zero.)
+        if Decimal(str(enviado if enviado is not None else 0)) != unitario:
+            raise VendaRecusada("Valor unitário com fração de centavo.")
         itens.append({
             "modalidade": str(bruto.get("modalidade") or ""),
             "quantidade": _inteiro(bruto.get("quantidade"), "quantidade"),

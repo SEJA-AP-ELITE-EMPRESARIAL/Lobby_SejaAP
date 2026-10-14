@@ -155,6 +155,18 @@ class ValorFixoTest(Base):
             "fixado pela diretoria",
         )
 
+    def test_fracao_de_centavo_nao_vira_o_fixo_no_arredondamento(self):
+        """479,995 arredondaria para os 480,00 fixos no bloco assinado, e os
+        itens do payload diriam outra coisa."""
+        fixa(devolutiva=480)
+        self.assertRecusa(
+            venda_avaliacao(
+                valor_total=4_800_000, entrada=4_800_000,
+                itens=itens(relatorio=None, devolutiva=(10000, "479.995")),
+            ),
+            "fração de centavo",
+        )
+
     def test_vale_a_ultima_gravacao(self):
         fixa(devolutiva=480)
         fixa()  # a diretoria soltou de novo
@@ -211,6 +223,22 @@ class ItensQueNaoSeSustentamTest(Base):
             venda_avaliacao(valor_total=1350, entrada=1350, itens=itens(relatorio=(10, 0))),
             "fora da faixa",
         )
+
+    def test_valor_livre_com_fracao_de_centavo(self):
+        self.assertRecusa(
+            venda_avaliacao(valor_total=1505.55, entrada=1505.55, itens=itens(relatorio=(10, 150.555), devolutiva=None)),
+            "fração de centavo",
+        )
+
+    def test_valor_com_zeros_a_mais_nao_e_fracao(self):
+        """"150.000" é 150,00: zero à direita não é fração de centavo."""
+        resposta = self.emitir(venda_avaliacao(itens=itens(relatorio=(10, "150.000"), devolutiva=(3, "450.0"))))
+        self.assertEqual(resposta.status_code, 200, resposta.json())
+
+    def test_valor_unitario_ausente(self):
+        dados = venda_avaliacao()
+        del dados["itens"][0]["valor_unitario"]
+        self.assertRecusa(dados, "fora da faixa")
 
     def test_valor_unitario_que_nao_e_numero(self):
         self.assertRecusa(venda_avaliacao(itens=itens(relatorio=(10, "NaN"))), "valor unitário")
