@@ -136,9 +136,14 @@ class FluxoProduto(models.TextChoices):
     corresponde a um formulário escrito no `index.html`, e um valor que o front
     não conhece é um produto que abre sem preço e sem formulário — quebrado, em
     silêncio. Acrescentar um valor aqui é sempre deploy do front junto.
+
+    `dh_avaliacao` (14/10/2026, TSK-1056) é o DH - Avaliação: contratante PJ ou
+    PF, itens por modalidade (Relatório e Devolutiva) e pagamento. Os valores
+    unitários são do consultor, salvo os que a diretoria fixar (`apps.dh_avaliacao`).
     """
 
     DH = "dh", "Formulário DH (Recrutamento e Seleção)"
+    DH_AVALIACAO = "dh_avaliacao", "Formulário DH - Avaliação (PROFILER)"
 
 
 class Categoria(models.Model):
