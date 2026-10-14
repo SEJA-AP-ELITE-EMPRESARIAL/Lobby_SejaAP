@@ -144,12 +144,47 @@ class ClienteOmieTest(TestCase):
             with self.assertRaises(FonteIndisponivel):
                 listar_categorias()
 
-    def test_item_sem_descricao_e_ignorado(self):
+    def assertRodadaFalha(self, respostas, trecho):
+        with mock.patch("urllib.request.urlopen", side_effect=respostas):
+            with self.assertRaises(FonteIndisponivel) as contexto:
+                listar_categorias()
+        self.assertIn(trecho, str(contexto.exception))
+
+    def test_item_do_grupo_sem_descricao_derruba_a_rodada(self):
+        """Pular desativaria uma turma que continua no Omie."""
         itens = [item_do_omie("1.10.93", "  "), item_do_omie("1.10.94", "APN (Indefinido)")]
-        with mock.patch("urllib.request.urlopen", return_value=_Resposta(pagina_do_omie(itens))):
-            with self.assertLogs("apps.categorias_financeiras.fonte", level="WARNING"):
-                categorias = listar_categorias()
-        self.assertEqual([c.codigo for c in categorias], ["1.10.94"])
+        self.assertRodadaFalha([_Resposta(pagina_do_omie(itens))], "1.10.93")
+
+    def test_segunda_pagina_com_faultstring_e_status_200(self):
+        self.assertRodadaFalha(
+            [
+                _Resposta(pagina_do_omie([item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS")], 1, 2)),
+                _Resposta({"faultstring": "ERROR: Consumo redundante", "faultcode": "SOAP-ENV:Client-6"}),
+            ],
+            "Consumo redundante",
+        )
+
+    def test_segunda_pagina_sem_categoria_cadastro(self):
+        self.assertRodadaFalha(
+            [
+                _Resposta(pagina_do_omie([item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS")], 1, 2)),
+                _Resposta({"pagina": 2, "total_de_paginas": 2}),
+            ],
+            "página 2",
+        )
+
+    def test_menos_registros_que_o_anunciado(self):
+        pagina = pagina_do_omie([item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS")])
+        pagina["total_de_registros"] = 2
+        self.assertRodadaFalha([_Resposta(pagina)], "anunciou 2")
+
+    def test_mais_paginas_que_o_teto_falha_em_vez_de_cortar(self):
+        pagina = pagina_do_omie([item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS")], 1, 21)
+        self.assertRodadaFalha([_Resposta(pagina)], "21 páginas")
+
+    def test_grupo_so_com_totalizadora_diz_o_motivo(self):
+        itens = [item_do_omie("1.10.90", "APN Subgrupo", totalizadora="S"), item_do_omie("1.06.95", "EAP")]
+        self.assertRodadaFalha([_Resposta(pagina_do_omie(itens))], "totalizadoras")
 
     @override_settings(CATEGORIAS_FINANCEIRAS_PREFIXOS="9.99")
     def test_prefixo_que_nao_acha_nada_diz_o_motivo(self):
@@ -326,7 +361,9 @@ class ComandoTest(TestCase):
 
         self.assertIn("2 ativas", saida.getvalue())
         corpo = APIClient().get(ROTA).json()
-        self.assertEqual(
+        # Sem depender da ordem: o SQLite do CI e o Postgres de produção ordenam
+        # a pontuação diferente.
+        self.assertCountEqual(
             corpo["categorias"],
             [
                 {"codigo": "1.10.94", "descricao": "APN (Indefinido)"},
@@ -334,6 +371,21 @@ class ComandoTest(TestCase):
             ],
         )
         self.assertIsNotNone(corpo["sincronizado_em"])
+
+    @override_settings(OMIE_APP_KEY=CHAVE, OMIE_APP_SECRET=SEGREDO, CATEGORIAS_FINANCEIRAS_PREFIXOS="1.10")
+    def test_resposta_incompleta_do_omie_nao_desativa_ninguem(self):
+        """Ponta a ponta: a 2ª página vem com faultstring, e o banco fica como estava."""
+        sincronizar([cat("1.10.93", "APN 107 FLORIANÓPOLIS"), cat("1.10.99", "APN 108 FORTALEZA")])
+        respostas = [
+            _Resposta(pagina_do_omie([item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS")], 1, 2)),
+            _Resposta({"faultstring": "ERROR: Consumo redundante"}),
+        ]
+        with mock.patch("urllib.request.urlopen", side_effect=respostas):
+            with self.assertRaises(CommandError):
+                call_command(
+                    "sincronizar_categorias_financeiras", stdout=io.StringIO(), stderr=io.StringIO()
+                )
+        self.assertEqual(CategoriaFinanceira.objects.filter(ativo=True).count(), 2)
 
     def test_rodada_unica_que_falha_nao_mexe_na_lista(self):
         sincronizar(self.LISTA)

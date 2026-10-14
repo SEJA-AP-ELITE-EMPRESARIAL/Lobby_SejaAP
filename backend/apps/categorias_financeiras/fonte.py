@@ -40,19 +40,20 @@ O QUE O SINCRONIZADOR ESPERA DESTE ARQUIVO
 - Todas as categorias do recorte, ativas e inativas, de todas as páginas. Quem não
   vem é desativado no banco.
 - Qualquer falha vira `FonteIndisponivel`, com uma mensagem que vai para o log, e
-  nunca a credencial. Página que falha no meio derruba a rodada inteira: uma lista
-  parcial desativaria o resto.
+  nunca a credencial. Resposta incompleta derruba a rodada inteira, porque uma
+  lista parcial desativaria o resto: página que falha no meio, página sem itens
+  ou com `faultstring` (mesmo com status 200), menos registros que o
+  `total_de_registros` anunciado, mais páginas que `MAX_PAGINAS`, ou item do
+  recorte sem descrição.
 """
 import html
 import json
-import logging
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
 from django.conf import settings
 
-logger = logging.getLogger(__name__)
 
 URL = "https://app.omie.com.br/api/v1/geral/categorias/"
 REGISTROS_POR_PAGINA = 100
@@ -120,36 +121,57 @@ def listar_categorias() -> list[CategoriaDaFonte]:
         raise FonteIndisponivel("CATEGORIAS_FINANCEIRAS_PREFIXOS está vazio.")
 
     categorias: list[CategoriaDaFonte] = []
-    vistas = 0
+    vistas = no_grupo = 0
+    esperadas = None
     pagina = 1
     while True:
         dados = _chama(pagina)
-        for item in dados.get("categoria_cadastro") or []:
+        if dados.get("faultstring"):
+            # Erro de negócio com status 200: a página não veio, e seguir sem ela
+            # seria lista parcial.
+            raise FonteIndisponivel(f"Omie respondeu erro na página {pagina}: {dados['faultstring']}")
+        itens = dados.get("categoria_cadastro")
+        if not isinstance(itens, list) or not itens:
+            raise FonteIndisponivel(f"O Omie respondeu a página {pagina} sem categorias.")
+        total = int(dados.get("total_de_paginas") or 1)
+        if total > MAX_PAGINAS:
+            raise FonteIndisponivel(f"O Omie diz ter {total} páginas de categorias; o teto é {MAX_PAGINAS}.")
+        if esperadas is None:
+            esperadas = int(dados.get("total_de_registros") or 0)
+        for item in itens:
             vistas += 1
             codigo = str(item.get("codigo") or "").strip()
             if not _no_recorte(codigo, prefixos):
                 continue
+            no_grupo += 1
             if str(item.get("totalizadora") or "N").strip().upper() == "S":
                 continue
             descricao = html.unescape(str(item.get("descricao") or "")).strip()
             if not descricao:
-                logger.warning("Categoria do Omie sem descrição, ignorada: %s", codigo)
-                continue
+                # Pular desativaria uma turma que continua no Omie: é falha da
+                # rodada, e a lista do banco fica como estava.
+                raise FonteIndisponivel(f"A categoria {codigo} veio do Omie sem descrição.")
             inativa = str(item.get("conta_inativa") or "N").strip().upper() == "S"
             oculta = str(item.get("nao_exibir") or "N").strip().upper() == "S"
             categorias.append(
                 CategoriaDaFonte(codigo=codigo, descricao=descricao[:120], ativo=not (inativa or oculta))
             )
-        total = int(dados.get("total_de_paginas") or 1)
-        if pagina >= min(total, MAX_PAGINAS):
+        if pagina >= total:
             break
         pagina += 1
 
-    if vistas and not categorias:
-        # O Omie respondeu, mas nada cai no recorte: prefixo errado, ou o grupo
-        # foi renumerado lá. Falha com o motivo, em vez do "listagem vazia".
-        raise FonteIndisponivel(
-            f"Nenhuma das {vistas} categorias do Omie está sob {', '.join(prefixos)} "
-            "(CATEGORIAS_FINANCEIRAS_PREFIXOS)."
-        )
+    if esperadas and vistas < esperadas:
+        # Faltou item entre as páginas (uma exclusão no meio da paginação, por
+        # exemplo). Lista incompleta desativaria quem ficou de fora.
+        raise FonteIndisponivel(f"O Omie anunciou {esperadas} categorias e entregou {vistas}.")
+    if not categorias:
+        # O Omie respondeu, mas nada aproveitável no recorte. Falha com o motivo,
+        # em vez do "listagem vazia" genérico.
+        grupo = ", ".join(prefixos)
+        if not no_grupo:
+            raise FonteIndisponivel(
+                f"Nenhuma das {vistas} categorias do Omie está sob {grupo} "
+                "(CATEGORIAS_FINANCEIRAS_PREFIXOS): o grupo foi renumerado no Omie?"
+            )
+        raise FonteIndisponivel(f"As {no_grupo} categorias sob {grupo} são todas totalizadoras.")
     return categorias
