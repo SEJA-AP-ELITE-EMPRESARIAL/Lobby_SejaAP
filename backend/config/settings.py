@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "apps.vendas",
     "apps.departamentos",
     "apps.categorias_financeiras",
+    "apps.dh_avaliacao",
 ]
 
 MIDDLEWARE = [
@@ -260,6 +261,9 @@ REST_FRAMEWORK = {
         "departamentos_publico": os.environ.get("LOBBY_RATE_DEPARTAMENTOS", "600/hour"),
         # Categorias financeiras da APN (TSK-877): mesmo ritmo dos departamentos.
         "categorias_financeiras_publico": os.environ.get("LOBBY_RATE_CATEGORIAS_FINANCEIRAS", "600/hour"),
+        # Valores das modalidades do DH - Avaliação (TSK-1056): o lobby os
+        # reconsulta no ritmo dos departamentos.
+        "dh_avaliacao_publico": os.environ.get("LOBBY_RATE_DH_AVALIACAO", "600/hour"),
     },
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }
