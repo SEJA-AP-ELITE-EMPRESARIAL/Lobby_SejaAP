@@ -165,8 +165,8 @@ cartão ao lado do departamento e no mesmo estilo. No código ela se chama
 no payload), porque "categoria" já é o card do catálogo — a própria APN é uma.
 
 ```text
-API das categorias ──► lobby-categorias (laço, a cada 1 h) ──► Postgres `lobby`
-                                                                    │
+Omie ──ListarCategorias──► lobby-categorias (laço, a cada 1 h) ──► Postgres `lobby`
+                                                                       │
 index.html ◄── GET /api/categorias-financeiras (anônimo, só as ativas) ──┘
 ```
 
@@ -178,12 +178,14 @@ fixa (`ConfiguracaoCategoriaFinanceira`, uma linha por gravação). O que muda:
 - **Só a APN.** O Elite não pede categoria.
 - **Sem nenhuma sincronização, o campo não existe.** Enquanto a rota responder
   `sincronizado_em: null`, o lobby não mostra o cartão e a venda segue como
-  antes. Por isso o deploy pode sair antes da API.
-- **A API ainda não está ligada.** O cliente dela é
-  `apps/categorias_financeiras/fonte.py`, que hoje só levanta
-  `FonteIndisponivel`: cada rodada do `lobby-categorias` loga "NÃO
-  sincronizadas" e o banco fica vazio. O contrato que o cliente precisa cumprir
-  está no cabeçalho do arquivo.
+  antes (é o que vale também se a chave do Omie faltar).
+- **Só o grupo APN do plano de contas** (TSK-879, 14/10/2026). O
+  `ListarCategorias` do Omie devolve o plano inteiro, receitas e despesas. Entram
+  só as categorias sob `CATEGORIAS_FINANCEIRAS_PREFIXOS` (padrão `1.10`, o grupo
+  "APN", com uma categoria por turma: "APN 107 FLORIANÓPOLIS"…), sem a
+  totalizadora. Turma nova criada no Omie debaixo do grupo aparece sozinha. A
+  rota é anônima, então o resto do plano de contas não vai para o navegador.
+  Mesma chave dos departamentos (`OMIE_APP_KEY`/`OMIE_APP_SECRET`).
 - Para sincronizar na hora:
   `docker exec lobby-backend python manage.py sincronizar_categorias_financeiras`.
 
@@ -238,7 +240,7 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 - **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `protocolo`, `departamento`, `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
 - **Venda APN** — `POST https://n8n.sejaap.com.br/webhook/lobby-apn` → payload próprio (sem cronograma nem destino), com o mesmo bloco `departamento` e, desde a TSK-877, a `categoria_financeira`.
   - `departamento` — `{ codigo, descricao, estrutura }` como está no Omie, ou `null` quando a lista não pôde ser carregada. O `codigo` é o que o Omie entende. **Os fluxos do n8n ainda não o leem:** até alguém mapear o campo do lado de lá, ele viaja e é ignorado.
-  - `categoria_financeira` — só na APN: `{ codigo, descricao }` como a fonte das categorias os tem, ou `null` quando o campo não apareceu (nenhuma sincronização ainda) ou a lista não pôde ser carregada. Não confundir com `categoria`, que é o card do catálogo (`{ id: "apn", nome: "APN" }`). **Também não é lida pelo n8n** até alguém mapear o campo.
+  - `categoria_financeira` — só na APN: `{ codigo, descricao }` como o Omie os tem (o `codigo` do plano de contas, ex.: `1.10.99`), ou `null` quando o campo não apareceu (nenhuma sincronização ainda) ou a lista não pôde ser carregada. Não confundir com `categoria`, que é o card do catálogo (`{ id: "apn", nome: "APN" }`). **Também não é lida pelo n8n** até alguém mapear o campo.
 - **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `adiantamento_calculado`, `adiantamento_negociado`, `data_pagamento`, `tipo_pagamento`), mais `totais` (com `percentual_adiantamento`), `autorizado_por` e o `comprovante`. O adiantamento é **50% do salário de referência**, calculado pelo formulário e travado — só a autorização de um gerente/diretoria (Conecta ID) libera a edição, e ela vale só para aquela venda.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
 - **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:
@@ -335,7 +337,7 @@ Cloudflare (proxied, Full strict)
                  └── /api/        →  lobby-backend (Django + gunicorn)
                                         └── db-tunnel → Postgres na db-sejaap:5437
    lobby-departamentos (sem porta) ── a cada 1 h: Omie → db-tunnel
-   lobby-categorias    (sem porta) ── a cada 1 h: API das categorias → db-tunnel
+   lobby-categorias    (sem porta) ── a cada 1 h: Omie (ListarCategorias) → db-tunnel
 ```
 
 - **Domínio:** <https://lobby.sejaap.com.br>. O DNS **precisa ficar proxiado** — em

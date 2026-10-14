@@ -1,38 +1,188 @@
 """
-Categorias financeiras: a fonte ainda desligada, a sincronização, a rota pública
-e o laço.
+Categorias financeiras: o cliente do Omie, a sincronização, a rota pública e o
+laço.
 
 Mesma guarda dos testes de departamento: cada falha da fonte deixa a lista do
-banco exatamente como estava. E uma só daqui: antes da primeira sincronização
-boa, a rota pública diz `sincronizado_em: null`, que é o que esconde o campo no
-lobby enquanto a API não for ligada.
+banco exatamente como estava. E duas só daqui: o recorte (só o grupo APN do
+plano de contas, sem a totalizadora) e, antes da primeira sincronização boa, a
+rota pública dizendo `sincronizado_em: null`, que é o que esconde o campo no
+lobby.
 """
 import io
+import json
+import urllib.error
 from datetime import timedelta
 from unittest import mock
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .fonte import CategoriaDaFonte, FonteIndisponivel, listar_categorias
+from .fonte import URL, CategoriaDaFonte, FonteIndisponivel, listar_categorias
 from .models import CategoriaFinanceira
 from .servicos import ListagemVazia, sincronizar
 
 COMANDO = "apps.categorias_financeiras.management.commands.sincronizar_categorias_financeiras"
 ROTA = "/api/categorias-financeiras"
+CHAVE = "chave-de-teste"
+SEGREDO = "segredo-que-nao-pode-vazar"
 
 
 def cat(codigo, descricao, ativo=True):
     return CategoriaDaFonte(codigo=codigo, descricao=descricao, ativo=ativo)
 
 
-class FonteTest(TestCase):
-    def test_sem_api_ligada_a_fonte_esta_indisponivel(self):
-        with self.assertRaises(FonteIndisponivel):
-            listar_categorias()
+class _Resposta:
+    """O suficiente de uma resposta do `urlopen` para o `with`."""
+
+    def __init__(self, corpo):
+        self._corpo = json.dumps(corpo).encode("utf-8")
+
+    def read(self):
+        return self._corpo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def item_do_omie(codigo, descricao, *, inativa="N", totalizadora="N", nao_exibir="N", receita="S"):
+    """Os campos que importam de um item real do ListarCategorias (14/10/2026)."""
+    return {
+        "codigo": codigo,
+        "descricao": descricao,
+        "descricao_padrao": descricao,
+        "categoria_superior": codigo.rsplit(".", 1)[0],
+        "conta_inativa": inativa,
+        "conta_receita": receita,
+        "conta_despesa": "N" if receita == "S" else "S",
+        "totalizadora": totalizadora,
+        "transferencia": "N",
+        "nao_exibir": nao_exibir,
+        "definida_pelo_usuario": "S",
+        "natureza": "",
+        "tipo_categoria": "",
+    }
+
+
+def pagina_do_omie(itens, pagina=1, total_de_paginas=1):
+    """Mesmo formato da resposta real (14/10/2026: 319 categorias em 4 páginas de 100)."""
+    return {
+        "pagina": pagina,
+        "total_de_paginas": total_de_paginas,
+        "registros": len(itens),
+        "total_de_registros": len(itens),
+        "categoria_cadastro": itens,
+    }
+
+
+PLANO = [
+    item_do_omie("1.06.95", "EAP"),
+    item_do_omie("1.07.99", "APN"),
+    item_do_omie("1.10", "APN", totalizadora="S"),
+    item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS"),
+    item_do_omie("1.10.94", "APN (Indefinido)"),
+    item_do_omie("1.10.95", "APN 112 SÃO PAULO", inativa="S"),
+    item_do_omie("1.10.96", "&lt;Disponível&gt;", nao_exibir="S"),
+    item_do_omie("1.100.01", "Não é do grupo 1.10"),
+    item_do_omie("2.10.01", "Despesa qualquer", receita="N"),
+]
+
+
+@override_settings(OMIE_APP_KEY=CHAVE, OMIE_APP_SECRET=SEGREDO, CATEGORIAS_FINANCEIRAS_PREFIXOS="1.10")
+class ClienteOmieTest(TestCase):
+    def test_so_o_grupo_apn_sem_a_totalizadora(self):
+        with mock.patch("urllib.request.urlopen", return_value=_Resposta(pagina_do_omie(PLANO))) as urlopen:
+            categorias = listar_categorias()
+
+        self.assertEqual(
+            categorias,
+            [
+                cat("1.10.93", "APN 107 FLORIANÓPOLIS"),
+                cat("1.10.94", "APN (Indefinido)"),
+                cat("1.10.95", "APN 112 SÃO PAULO", ativo=False),
+                # Entidade HTML desfeita, e "não exibir" no Omie conta como inativa.
+                cat("1.10.96", "<Disponível>", ativo=False),
+            ],
+        )
+        pedido = urlopen.call_args.args[0]
+        corpo = json.loads(pedido.data)
+        self.assertEqual(pedido.full_url, URL)
+        self.assertEqual(corpo["call"], "ListarCategorias")
+        self.assertEqual(corpo["app_key"], CHAVE)
+        self.assertEqual(corpo["app_secret"], SEGREDO)
+
+    @override_settings(CATEGORIAS_FINANCEIRAS_PREFIXOS=" 1.06 , 1.07. ")
+    def test_mais_de_um_prefixo_pela_variavel(self):
+        with mock.patch("urllib.request.urlopen", return_value=_Resposta(pagina_do_omie(PLANO))):
+            categorias = listar_categorias()
+        self.assertEqual([c.codigo for c in categorias], ["1.06.95", "1.07.99"])
+
+    def test_percorre_todas_as_paginas(self):
+        respostas = [
+            _Resposta(pagina_do_omie([item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS")], 1, 2)),
+            _Resposta(pagina_do_omie([item_do_omie("1.10.99", "APN 108 FORTALEZA")], 2, 2)),
+        ]
+        with mock.patch("urllib.request.urlopen", side_effect=respostas) as urlopen:
+            categorias = listar_categorias()
+
+        self.assertEqual([c.codigo for c in categorias], ["1.10.93", "1.10.99"])
+        paginas = [json.loads(c.args[0].data)["param"][0]["pagina"] for c in urlopen.call_args_list]
+        self.assertEqual(paginas, [1, 2])
+
+    def test_pagina_que_falha_no_meio_derruba_a_rodada(self):
+        """Lista parcial desativaria o resto: é falha, e o banco fica como estava."""
+        respostas = [
+            _Resposta(pagina_do_omie([item_do_omie("1.10.93", "APN 107 FLORIANÓPOLIS")], 1, 2)),
+            urllib.error.URLError("timed out"),
+        ]
+        with mock.patch("urllib.request.urlopen", side_effect=respostas):
+            with self.assertRaises(FonteIndisponivel):
+                listar_categorias()
+
+    def test_item_sem_descricao_e_ignorado(self):
+        itens = [item_do_omie("1.10.93", "  "), item_do_omie("1.10.94", "APN (Indefinido)")]
+        with mock.patch("urllib.request.urlopen", return_value=_Resposta(pagina_do_omie(itens))):
+            with self.assertLogs("apps.categorias_financeiras.fonte", level="WARNING"):
+                categorias = listar_categorias()
+        self.assertEqual([c.codigo for c in categorias], ["1.10.94"])
+
+    @override_settings(CATEGORIAS_FINANCEIRAS_PREFIXOS="9.99")
+    def test_prefixo_que_nao_acha_nada_diz_o_motivo(self):
+        with mock.patch("urllib.request.urlopen", return_value=_Resposta(pagina_do_omie(PLANO))):
+            with self.assertRaises(FonteIndisponivel) as contexto:
+                listar_categorias()
+        self.assertIn("9.99", str(contexto.exception))
+
+    def test_faultstring_vira_indisponivel_sem_vazar_a_chave(self):
+        corpo = json.dumps({"faultstring": "ERROR: Chave de acesso inválida", "faultcode": "SOAP-ENV:Client-102"}).encode()
+        erro = urllib.error.HTTPError(URL, 403, "Forbidden", {}, io.BytesIO(corpo))
+        with mock.patch("urllib.request.urlopen", side_effect=erro):
+            with self.assertRaises(FonteIndisponivel) as contexto:
+                listar_categorias()
+        mensagem = str(contexto.exception)
+        self.assertIn("403", mensagem)
+        self.assertIn("Chave de acesso inválida", mensagem)
+        self.assertNotIn(CHAVE, mensagem)
+        self.assertNotIn(SEGREDO, mensagem)
+
+    @override_settings(OMIE_APP_KEY="", OMIE_APP_SECRET="")
+    def test_sem_credencial_nem_chama_o_omie(self):
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(FonteIndisponivel):
+                listar_categorias()
+        urlopen.assert_not_called()
+
+    @override_settings(CATEGORIAS_FINANCEIRAS_PREFIXOS=" , ")
+    def test_prefixo_vazio_nem_chama_o_omie(self):
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(FonteIndisponivel):
+                listar_categorias()
+        urlopen.assert_not_called()
 
 
 class SincronizacaoTest(TestCase):
@@ -157,14 +307,33 @@ class ComandoTest(TestCase):
         self.assertIn("2 ativas", saida.getvalue())
         self.assertEqual(CategoriaFinanceira.objects.filter(ativo=True).count(), 2)
 
-    def test_sem_api_ligada_a_rodada_falha_e_diz_por_que(self):
-        """O estado de produção até a API chegar: o container loga e segue."""
+    @override_settings(OMIE_APP_KEY="", OMIE_APP_SECRET="")
+    def test_sem_chave_do_omie_a_rodada_falha_e_diz_por_que(self):
+        """O container loga e segue; o banco fica como estava."""
         erro = io.StringIO()
         with self.assertRaises(CommandError):
             call_command("sincronizar_categorias_financeiras", stdout=io.StringIO(), stderr=erro)
 
-        self.assertIn("ainda não foi ligada", erro.getvalue())
+        self.assertIn("OMIE_APP_KEY", erro.getvalue())
         self.assertFalse(CategoriaFinanceira.objects.exists())
+
+    @override_settings(OMIE_APP_KEY=CHAVE, OMIE_APP_SECRET=SEGREDO, CATEGORIAS_FINANCEIRAS_PREFIXOS="1.10")
+    def test_do_omie_ao_banco(self):
+        """Ponta a ponta, sem mock no meio: resposta do Omie, comando, rota pública."""
+        saida = io.StringIO()
+        with mock.patch("urllib.request.urlopen", return_value=_Resposta(pagina_do_omie(PLANO))):
+            call_command("sincronizar_categorias_financeiras", stdout=saida)
+
+        self.assertIn("2 ativas", saida.getvalue())
+        corpo = APIClient().get(ROTA).json()
+        self.assertEqual(
+            corpo["categorias"],
+            [
+                {"codigo": "1.10.94", "descricao": "APN (Indefinido)"},
+                {"codigo": "1.10.93", "descricao": "APN 107 FLORIANÓPOLIS"},
+            ],
+        )
+        self.assertIsNotNone(corpo["sincronizado_em"])
 
     def test_rodada_unica_que_falha_nao_mexe_na_lista(self):
         sincronizar(self.LISTA)

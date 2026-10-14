@@ -9,8 +9,8 @@ laço do `sincronizar_departamentos`, pelos mesmos motivos: nenhuma rodada ruim
 derruba o processo, porque o `restart` o subiria chamando a fonte de novo na
 mesma hora, em laço apertado.
 
-Enquanto a API não for ligada (ver `fonte.py`), toda rodada loga
-"NÃO sincronizadas" e o banco fica vazio.
+A fonte é o `ListarCategorias` do Omie, com o recorte do grupo APN (ver
+`fonte.py`).
 """
 import logging
 import time

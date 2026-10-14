@@ -18,7 +18,7 @@ Operação do Lobby na **prod.solucoes (187.77.48.164)**.
 | Coleta de métricas | **8096** (backend direto, só o Prometheus — sem caminho público) |
 | Identidade | Conecta ID, por `identidade-api:8000` na rede `identidade-net` |
 | Departamentos | `lobby-departamentos` — traz a lista do Omie para o dropdown do Elite e da APN, de hora em hora; sem porta |
-| Categorias | `lobby-categorias` — traz as categorias financeiras para o campo Categoria da APN, de hora em hora; sem porta. Até a API ser ligada (TSK-877), cada rodada só loga a falha |
+| Categorias | `lobby-categorias` — traz as categorias financeiras para o campo Categoria da APN, de hora em hora, pelo `ListarCategorias` do Omie com a mesma chave dos departamentos; sem porta |
 
 Portas vizinhas já tomadas nesta VPS — confira antes de mexer:
 8090 conecta-crm · 8091 kanban-frontend · 8092 kanban-mcp · 8093 formularios ·
@@ -241,8 +241,8 @@ Nesses casos: corrija o dado (pelo `/django-admin/`) e rode o `migrate` de novo.
 sudo docker compose ps                                                           # 3 healthy + departamentos e categorias running
 sudo docker compose logs --tail 3 departamentos                                  # "Departamentos sincronizados: N ativos…"
 curl -s https://lobby.sejaap.com.br/api/departamentos | head -c 200              # JSON público, só os ativos
-sudo docker compose logs --tail 3 categorias                                     # "Categorias financeiras sincronizadas: N ativas…" (sem a API: "NÃO sincronizadas")
-curl -s https://lobby.sejaap.com.br/api/categorias-financeiras | head -c 200     # JSON público; sem a API, sincronizado_em null
+sudo docker compose logs --tail 3 categorias                                     # "Categorias financeiras sincronizadas: N ativas…"
+curl -s https://lobby.sejaap.com.br/api/categorias-financeiras | head -c 200     # JSON público, só as turmas da APN (grupo 1.10)
 curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/            # 200
 curl -s https://lobby.sejaap.com.br/api/catalogo | head -c 200                   # JSON público
 curl -s -o /dev/null -w '%{http_code}\n' -X PUT https://lobby.sejaap.com.br/api/catalogo  # 401
@@ -328,12 +328,14 @@ motivo está no log do sincronizador (é a `faultstring` do Omie):
 sincroniza na subida. Para trazer uma mudança do Omie na hora, sem esperar a
 rodada: `sudo docker compose exec backend python manage.py sincronizar_departamentos`.
 
-**API das categorias fora do ar** → o mesmo, para o campo Categoria da APN: ele
-fica com a última lista sincronizada. O motivo está em
+O mesmo vale para o **campo Categoria da APN**, que usa a mesma chave: ele fica
+com a última lista sincronizada. O motivo está em
 `sudo docker compose logs --tail 20 categorias`, e a rodada na hora é
 `sudo docker compose exec backend python manage.py sincronizar_categorias_financeiras`.
-Se nenhuma rodada deu certo ainda, o campo nem aparece na APN — é o estado até
-a API ser ligada (TSK-877).
+Se nenhuma rodada deu certo ainda, o campo nem aparece na APN. "Nenhuma das N
+categorias do Omie está sob 1.10" quer dizer que o grupo APN foi renumerado no
+Omie: ajuste `CATEGORIAS_FINANCEIRAS_PREFIXOS` no `lobby.env` e recrie o
+container `categorias`.
 
 **`AUTH_CENTRAL_ATIVO=false` não é rollback, é tranca.** Não há senha local neste app;
 desligar tira todo mundo, inclusive a diretoria.

@@ -258,7 +258,7 @@ const departamentoParaPayload = (d) => (d ? { codigo: d.codigo, descricao: d.des
  * Mesmo desenho do departamento, acima: a lista vem do backend
  * (GET /api/categorias-financeiras), a tela reconsulta sozinha e a diretoria pode
  * fixar uma categoria no /admin. A diferença: enquanto o backend nunca
- * sincronizou (`sincronizado_em: null`, a API ainda não ligada), o cartão nem
+ * sincronizou (`sincronizado_em: null`), o cartão nem
  * aparece e a venda segue sem categoria. Um 404 conta igual — é um backend de
  * antes deste campo.
  * ========================================================================== */

@@ -218,8 +218,8 @@ def _coletar():
 
     # ---- categorias financeiras (APN) ------------------------------------
     #
-    # Mesma leitura dos departamentos, pelo mesmo motivo. Até a API ser ligada
-    # (TSK-877), as contagens ficam em zero e a série de frescor não sai.
+    # Mesma leitura dos departamentos, pelo mesmo motivo. Antes da primeira
+    # rodada boa, as contagens ficam em zero e a série de frescor não sai.
     categorias = CategoriaFinanceira.objects.aggregate(
         n_ativos=Count("id", filter=Q(ativo=True)),
         n_inativos=Count("id", filter=Q(ativo=False)),

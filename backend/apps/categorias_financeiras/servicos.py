@@ -7,8 +7,8 @@ não o `index.html`. O porquê de cada regra está lá.
 
 O QUE É SÓ DAQUI: O CAMPO SÓ APARECE DEPOIS DA PRIMEIRA SINCRONIZAÇÃO
 
-O app pode ir para produção antes da API das categorias. Enquanto nenhuma
-rodada deu certo, `sincronizado_em` sai null, e o lobby lê isso como "o campo
+Enquanto nenhuma rodada deu certo (a chave do Omie faltando no deploy, por
+exemplo), `sincronizado_em` sai null, e o lobby lê isso como "o campo
 ainda não existe": não mostra o cartão e a venda segue como antes. Sem essa
 regra, o deploy poria um cartão vazio, com aviso de erro, em toda venda da APN.
 """
