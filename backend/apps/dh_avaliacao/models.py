@@ -16,7 +16,9 @@ diretoria decide, na aba DH - Avaliação do `/admin`, é:
   quando, é a própria tabela que responde;
 - quem aplica a trava é o backend, pela rota pública que o lobby lê. Um lobby
   aberto desde antes da gravação pega a trava na reconsulta seguinte, e um
-  payload montado à mão para fugir dela esbarra no comprovante.
+  payload montado à mão para fugir dela não ganha comprovante. O comprovante só
+  segura de verdade quando o n8n fatura pelos itens assinados
+  (`comprovante_valores.itens`) — ver `deploy/N8N-VALIDACAO.md`.
 
 Sem linha nenhuma valem os VALORES INICIAIS do pedido — Relatório R$ 150 e
 Devolutiva R$ 450, livres —, e a migration não semeia nada: uma gravação sem

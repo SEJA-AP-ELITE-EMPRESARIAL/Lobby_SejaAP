@@ -211,7 +211,7 @@ class DhAvaliacaoNoCatalogoTest(TestCase):
             slug="avaliacoes",
             nome="DH - Avaliação",
             sigla="LBA",
-            descricao="Avaliação comportamental PROFILER",
+            descricao="Avaliação comportamental PROFILER — relatório e devolutiva",
             duracao="por avaliação",
             icone="psychology",
             fluxo="dh_avaliacao",
@@ -247,7 +247,7 @@ class DhAvaliacaoNoCatalogoTest(TestCase):
         call_command("exportar_cats_do_front", stdout=saida, stderr=StringIO())
         self.assertIn(
             "{ id: 'avaliacoes', name: 'DH - Avaliação', sigla: 'LBA', "
-            "desc: 'Avaliação comportamental PROFILER', duration: 'por avaliação', "
+            "desc: 'Avaliação comportamental PROFILER — relatório e devolutiva', duration: 'por avaliação', "
             "flow: 'dh_avaliacao', icon: 'psychology' },",
             saida.getvalue(),
         )
