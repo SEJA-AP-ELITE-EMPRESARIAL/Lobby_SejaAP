@@ -103,6 +103,26 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  categorias:
+    # Mesmo laço do `departamentos`, para as categorias financeiras do campo
+    # Categoria da APN (TSK-877). Ver
+    # backend/apps/categorias_financeiras/management/commands/sincronizar_categorias_financeiras.py.
+    #
+    # Fala com o Omie (ListarCategorias) pela mesma chave dos departamentos, e só
+    # traz as categorias sob CATEGORIAS_FINANCEIRAS_PREFIXOS (padrão 1.10, o grupo
+    # "APN"). Ver apps/categorias_financeiras/fonte.py.
+    build: ./backend
+    container_name: lobby-categorias
+    command: ["python", "manage.py", "sincronizar_categorias_financeiras", "--a-cada", "3600"]
+    env_file: .env
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - db-tunnel
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
   frontend:
     build:
       # Contexto na raiz: o index.html e o admin.html continuam no lugar de
