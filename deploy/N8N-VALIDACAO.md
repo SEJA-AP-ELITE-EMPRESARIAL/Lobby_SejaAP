@@ -210,8 +210,14 @@ burlado. Então, no fluxo:
 
 1. Fature a partir de `comprovante_valores.itens`; **ou**
 2. antes de faturar, compare `itens` com `comprovante_valores.itens`, modalidade a
-   modalidade (`quantidade` e `valor_unitario` iguais), e mande para conferência
-   manual quando divergir.
+   modalidade (`quantidade` e `valor_unitario` iguais), e **bloqueie** quando
+   divergirem — a saída 2, *Bloquear*, e não a 1, *Conferir*, que deixa a venda
+   entrar. Divergência não tem causa inocente: o Lobby monta os dois blocos dos
+   mesmos itens. É o `valores_adulterados` da tabela de motivos.
+
+Venda que chega sem comprovante (o Lobby fora do ar no envio) segue pela saída
+1, como nos outros fluxos, por decisão de produto: nesse caso nada foi
+assinado, e a trava do valor fixo não tem como valer.
 
 É o mesmo desenho do Elite com o `valor_total`. O que muda aqui é que o valor
 unitário é digitado pelo consultor, salvo o que a diretoria fixou.
