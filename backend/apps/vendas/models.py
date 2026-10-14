@@ -74,6 +74,10 @@ class ComprovanteVenda(models.Model):
         # "estes valores saíram do Lobby" — mas o que ele atesta é a soma dos
         # adiantamentos do quadro de vagas, e não um preço de tabela.
         DH = "dh", "DH (valores do formulário)"
+        # O DH - Avaliação (TSK-1056), outro fluxo de produto. O que ele atesta
+        # são os itens (modalidade, quantidade, valor unitário) e o total que
+        # eles somam — com o valor que a diretoria fixou, quando fixou.
+        DH_AVALIACAO = "dh_avaliacao", "DH - Avaliação (itens do formulário)"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     protocolo = models.CharField(
@@ -82,7 +86,9 @@ class ComprovanteVenda(models.Model):
         db_index=True,
         help_text="O código da venda gerado no cliente (SSS-YYMMDDPRRRRR).",
     )
-    fluxo = models.CharField("fluxo", max_length=10, choices=Fluxo.choices)
+    # 20, e não os 10 de antes: `dh_avaliacao` tem 12 letras. O mesmo teto do
+    # `Produto.fluxo`, de onde o nome vem.
+    fluxo = models.CharField("fluxo", max_length=20, choices=Fluxo.choices)
     negociado = models.BooleanField(
         "valores negociados",
         default=False,

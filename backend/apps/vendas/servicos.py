@@ -13,6 +13,8 @@ from django.utils import timezone
 
 from apps.catalogo.models import Categoria, Produto, arredonda
 from apps.contas.models import papel_de
+from apps.dh_avaliacao.models import DA_MODALIDADE, QUANTIDADE_MAX, VALOR_UNITARIO_MAX
+from apps.dh_avaliacao.servicos import em_vigor as valores_da_avaliacao
 
 from .models import VALIDADE_MINUTOS, ComprovanteVenda, hash_dos_valores
 
@@ -37,18 +39,62 @@ def _bate(a: Decimal, b: Decimal) -> bool:
     return abs(a - b) <= TOLERANCIA
 
 
+def _reais(valor: Decimal) -> str:
+    return "R$ " + f"{valor:.2f}".replace(".", ",")
+
+
+def _inteiro(valor, campo: str) -> int:
+    """Quantidade é contagem: 3, e não 2,5. `True` não é 1 aqui."""
+    if isinstance(valor, bool):
+        raise VendaRecusada(f"Valor inválido em {campo}.")
+    try:
+        numero = Decimal(str(valor if valor is not None else 0))
+    except (InvalidOperation, ValueError, TypeError):
+        raise VendaRecusada(f"Valor inválido em {campo}.")
+    if not numero.is_finite() or numero != numero.to_integral_value():
+        raise VendaRecusada(f"Valor inválido em {campo}.")
+    return int(numero)
+
+
+def _itens_normalizados(brutos) -> list[dict]:
+    """Os itens do DH - Avaliação, na forma em que são assinados.
+
+    Entram no hash porque SÃO o dinheiro desta venda: o total sozinho deixaria
+    trocar a Devolutiva fixada por um Relatório mais caro, na mesma soma.
+    """
+    if not isinstance(brutos, list):
+        raise VendaRecusada("Itens inválidos.")
+    itens = []
+    for bruto in brutos:
+        if not isinstance(bruto, dict):
+            raise VendaRecusada("Itens inválidos.")
+        unitario = _decimal(bruto.get("valor_unitario"), "valor unitário")
+        if not unitario.is_finite():
+            raise VendaRecusada("Valor inválido em valor unitário.")
+        itens.append({
+            "modalidade": str(bruto.get("modalidade") or ""),
+            "quantidade": _inteiro(bruto.get("quantidade"), "quantidade"),
+            "valor_unitario": str(unitario),
+        })
+    return itens
+
+
 def _valores_normalizados(dados: dict) -> dict:
     """O subconjunto do payload que é assinado.
 
     Só o que representa dinheiro e identifica o produto. Nome do cliente, CNPJ e
     datas não entram: mudá-los não cria desconto, e incluí-los faria a validação
     falhar por qualquer correção de cadastro feita entre a emissão e o envio.
+
+    `itens` existe só no DH - Avaliação. Nos outros fluxos a chave nem aparece:
+    acrescentá-la a todos mudaria o hash das vendas de sempre, e um comprovante
+    emitido antes do deploy seria recusado como adulterado depois dele.
     """
     cronograma = dados.get("cronograma") or []
     if not isinstance(cronograma, list):
         raise VendaRecusada("Cronograma inválido.")
 
-    return {
+    valores = {
         "fluxo": str(dados.get("fluxo") or ""),
         "categoria_id": str(dados.get("categoria_id") or ""),
         "produto_id": str(dados.get("produto_id") or ""),
@@ -63,6 +109,9 @@ def _valores_normalizados(dados: dict) -> dict:
         "cronograma": [str(_decimal(v, "parcela")) for v in cronograma],
         "protocolo": str(dados.get("protocolo") or ""),
     }
+    if valores["fluxo"] == ComprovanteVenda.Fluxo.DH_AVALIACAO:
+        valores["itens"] = _itens_normalizados(dados.get("itens"))
+    return valores
 
 
 def _confere_soma(valores: dict):
@@ -107,6 +156,75 @@ def _confere_contra_a_tabela(valores: dict):
                 f'A mensalidade de "{produto.nome}" não confere com a tabela. '
                 "Para alterar o valor é preciso a autorização de um gerente."
             )
+
+
+def _confere_avaliacao(valores: dict):
+    """DH - Avaliação: valor livre, menos o que a diretoria fixou.
+
+    É o caminho do valor livre da APN e do DH — o servidor não tem tabela contra
+    a qual conferir o que o consultor digitou —, com uma trava a mais: a
+    modalidade de valor FIXO (`apps.dh_avaliacao`) só passa com o valor fixo.
+    Sem isto, a trava do lobby seria cosmética: bastaria montar o payload à mão.
+    Nem a autorização de um gerente abre exceção. Fixar é decisão da diretoria
+    para todas as vendas; o formulário não tem negociação.
+    """
+    if not Produto.objects.filter(
+        categoria__slug=valores["categoria_id"],
+        slug=valores["produto_id"],
+        fluxo=ComprovanteVenda.Fluxo.DH_AVALIACAO,
+    ).exists():
+        raise VendaRecusada(
+            "Produto de formulário não encontrado no catálogo. Recarregue a "
+            "página e tente de novo."
+        )
+    if valores["negociado"]:
+        raise VendaRecusada(
+            "O DH - Avaliação não tem negociação: o valor livre já é digitado pelo "
+            "consultor, e o fixo é da diretoria."
+        )
+
+    itens = valores["itens"]
+    if not itens:
+        raise VendaRecusada("Informe a quantidade de pelo menos uma modalidade.")
+
+    vigentes = valores_da_avaliacao()
+    vistas = set()
+    soma = Decimal(0)
+    for item in itens:
+        modalidade = item["modalidade"]
+        if modalidade not in vigentes:
+            raise VendaRecusada(
+                f'Modalidade "{modalidade}" desconhecida. Recarregue a página e tente de novo.'
+            )
+        rotulo = DA_MODALIDADE[modalidade]
+        if modalidade in vistas:
+            raise VendaRecusada(f"Há dois itens {rotulo}: junte as quantidades num só.")
+        vistas.add(modalidade)
+
+        if item["quantidade"] <= 0:
+            # Quantidade zero é modalidade não vendida, e ela não vai em `itens`.
+            raise VendaRecusada(f"A quantidade {rotulo} tem de ser maior que zero.")
+        if item["quantidade"] > QUANTIDADE_MAX:
+            raise VendaRecusada(f"A quantidade {rotulo} está fora da faixa permitida.")
+        unitario = Decimal(item["valor_unitario"])
+        if not (Decimal(0) < unitario <= VALOR_UNITARIO_MAX):
+            raise VendaRecusada(f"O valor unitário {rotulo} está fora da faixa permitida.")
+        fixo = vigentes[modalidade]
+        if fixo["fixo"] and not _bate(unitario, fixo["valor"]):
+            raise VendaRecusada(
+                f"O valor {rotulo} é fixado pela diretoria em {_reais(fixo['valor'])}. "
+                "Recarregue a página e tente de novo."
+            )
+        soma += unitario * item["quantidade"]
+
+    total = Decimal(valores["valor_total"])
+    if not _bate(total, arredonda(soma)):
+        raise VendaRecusada(
+            f"A soma dos itens ({arredonda(soma)}) não fecha com o valor total ({total})."
+        )
+    # Mesma forma da APN: o total inteiro na entrada, sem cronograma. O que
+    # parcela no cartão é a operadora, não o Lobby.
+    _confere_soma(valores)
 
 
 def emitir(dados: dict, *, usuario=None, ip=None) -> ComprovanteVenda:
@@ -161,6 +279,8 @@ def emitir(dados: dict, *, usuario=None, ip=None) -> ComprovanteVenda:
                 "página e tente de novo."
             )
         _confere_soma(valores)
+    elif valores["fluxo"] == ComprovanteVenda.Fluxo.DH_AVALIACAO:
+        _confere_avaliacao(valores)
     else:
         # APN: valor livre por decisão de produto (docs/08_ANDAMENTO.md) — não há
         # tabela contra a qual conferir. O comprovante aqui atesta origem, não
