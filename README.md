@@ -6,7 +6,8 @@ categorias, o consultor abre um fluxo de cadastro e contratação do cliente
 reais da página de pré-contrato.
 
 > Ativas hoje: **Elite** (6 planos), **APN** (fluxo próprio, valor negociado) e
-> **Produtos** (Recrutamento e Seleção, com o Formulário DH).
+> **Produtos** (Recrutamento e Seleção, com o Formulário DH, e DH - Avaliação,
+> com formulário próprio — este ainda sem webhook de envio, ver abaixo).
 > Treinamentos aparece como **"Em implementação"** (travada) até ser liberada — e
 > liberar é desmarcar no `/django-admin/`, não deploy.
 
@@ -189,6 +190,38 @@ fixa (`ConfiguracaoCategoriaFinanceira`, uma linha por gravação). O que muda:
 - Para sincronizar na hora:
   `docker exec lobby-backend python manage.py sincronizar_categorias_financeiras`.
 
+### DH - Avaliação: valores de Relatório e Devolutiva
+
+Desde a TSK-1056 (14/10/2026) o antigo **Avaliações** (slug `avaliacoes`, que
+vendia pelo fluxo de tabela a R$ 1.500 à vista, sigla AVL) é o **DH - Avaliação**:
+sigla **LBA**, `fluxo='dh_avaliacao'` e formulário próprio — Produto → Contratante
+(PJ ou PF) → Itens → Pagamento → Resumo. A troca de nome, sigla e fluxo é a
+migration `catalogo/0012`; vendas antigas com protocolo AVL não mudam.
+
+O consultor vende **itens**: quantos Relatórios e quantas Devolutivas, e o valor
+unitário de cada um, que ele digita. A diretoria decide, na aba **DH - Avaliação**
+do `/admin`, com que valor cada modalidade abre e se ele fica **fixo**:
+
+```text
+admin.html ──PUT /api/dh-avaliacao/valores/configuracao (diretoria)──► ConfiguracaoValores
+                                                                          │ (uma linha por gravação)
+index.html ◄── GET /api/dh-avaliacao/valores (anônimo) ───────────────────┘
+```
+
+- É o desenho do departamento fixo: cada gravação é uma linha nova, com autor e
+  data, e vale a mais recente. Sem linha nenhuma valem os iniciais do pedido —
+  **Relatório R$ 150 e Devolutiva R$ 450, livres**.
+- **Quem aplica a trava é o backend.** A rota pública devolve `fixo: true` e o
+  lobby mostra o campo travado; e o comprovante (`/api/venda/comprovante`)
+  **recusa** valor diferente do fixo, mesmo com autorização de gerente — o
+  formulário não tem negociação.
+- A tela aberta reconsulta os valores como reconsulta os departamentos (a cada
+  5 minutos, ao voltar para a aba e antes de enviar). Se a diretoria fixar o
+  valor de uma modalidade vendida com a venda aberta, o campo trava no valor
+  novo e aparece um aviso na etapa Itens; no envio, a venda volta para lá.
+- Backend fora do ar: os campos abrem com os valores iniciais, livres, e a venda
+  segue — pelo motivo do `CATS` embutido.
+
 ### Expurgo do histórico de publicações
 
 O KV apagava sozinho, com TTL de 90 dias e sem avisar. Aqui é um comando, que
@@ -241,6 +274,14 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 - **Venda APN** — `POST https://n8n.sejaap.com.br/webhook/lobby-apn` → payload próprio (sem cronograma nem destino), com o mesmo bloco `departamento` e, desde a TSK-877, a `categoria_financeira`.
   - `departamento` — `{ codigo, descricao, estrutura }` como está no Omie, ou `null` quando a lista não pôde ser carregada. O `codigo` é o que o Omie entende. **Os fluxos do n8n ainda não o leem:** até alguém mapear o campo do lado de lá, ele viaja e é ignorado.
   - `categoria_financeira` — só na APN: `{ codigo, descricao }` como o Omie os tem (o `codigo` do plano de contas, ex.: `1.10.99`), ou `null` quando o campo não apareceu (nenhuma sincronização ainda) ou a lista não pôde ser carregada. Não confundir com `categoria`, que é o card do catálogo (`{ id: "apn", nome: "APN" }`). **Também não é lida pelo n8n** até alguém mapear o campo.
+- **Venda DH - Avaliação** — **sem endereço ainda** (`DH_AVALIACAO_SEND_WEBHOOK_URL = ''`, TSK-1056). Enquanto a constante estiver vazia, o fluxo abre e preenche, mas *Finalizar* fica desabilitado no Resumo com o aviso "Envio do DH - Avaliação ainda não configurado", como a APN e o DH fariam. **Antes, o Avaliações vendia pelo webhook do Elite: publicar este front sem a URL para as vendas dele.** O payload é o JSON combinado com o n8n — não renomeie nem tire chave:
+  - `id_venda` (o protocolo, `LBA-YYMMDDPRRRRR`), `produto` (sempre `"PROFILER"`);
+  - `contratante`: `tipo_pessoa` (`PJ`/`PF`), `nome` (razão social ou nome), `documento` (CNPJ ou CPF), `email`, `endereco` (`logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `cep`);
+  - `representante`: `nome`, `cpf`, `email` — na PF, os dados do próprio contratante;
+  - `itens`: um por modalidade com quantidade > 0 — `modalidade` (`relatorio`/`devolutiva`), `quantidade` (inteiro), `valor_unitario` (número), `observacoes`;
+  - `pagamento`: `forma` (`pix`, `cartao` ou `boleto`), `parcelas` (inteiro; > 1 só no cartão, até 12), `data` (`AAAA-MM-DD`, vencimento da 1ª parcela).
+  - Documento, CPF e CEP vão **mascarados** (`11.222.333/0001-81`, `529.982.247-25`, `88010-000`), como o lobby já manda nos outros fluxos.
+  - A mais, só as três chaves do comprovante, como no DH: `comprovante`, `comprovante_valores` (com os `itens` assinados) e `comprovante_erro`.
 - **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `adiantamento_calculado`, `adiantamento_negociado`, `data_pagamento`, `tipo_pagamento`), mais `totais` (com `percentual_adiantamento`), `autorizado_por` e o `comprovante`. O adiantamento é **50% do salário de referência**, calculado pelo formulário e travado — só a autorização de um gerente/diretoria (Conecta ID) libera a edição, e ela vale só para aquela venda.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
 - **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:
@@ -278,13 +319,14 @@ Fecha três coisas: **forjar** (precisa da chave), **reusar** (nonce de uso úni
 ## Personalização rápida
 
 O **`/admin`** é a tela de configuração da diretoria (login do Conecta ID), com
-seis abas — e tudo o que se faz por lá fica registrado com autor e período:
+sete abas — e tudo o que se faz por lá fica registrado com autor e período:
 
 | Aba | O que configura |
 |---|---|
 | **Valores** | Mensalidade / valor à vista de cada produto. |
 | **Departamentos** | Se o consultor escolhe o departamento da venda (Elite e APN) na lista do Omie ou se toda venda sai com um departamento fixo. |
 | **Categorias** | A mesma escolha para a categoria financeira da venda da APN: lista completa ou categoria fixa. |
+| **DH - Avaliação** | O valor com que Relatório e Devolutiva abrem na venda do DH - Avaliação, e se cada um fica livre ou fixo (travado no lobby e recusado pelo comprovante se vier diferente). |
 | **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — geral e por produto. |
 | **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
 | **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |
@@ -298,12 +340,13 @@ seis abas — e tudo o que se faz por lá fica registrado com autor e período:
   para o wizard curto.
 - **Fluxo próprio de PRODUTO:** o `Produto.fluxo` é outra coisa, e mais nova
   (25/08/2026). Ele não tira a categoria da tabela de preços — tira só aquele
-  produto. Hoje existe um: o **Recrutamento e Seleção** (`fluxo='dh'`), na
-  categoria Produtos, que abre o **Formulário DH** em vez do cronograma de
-  parcelas. Produto assim não tem preço, é somente leitura no `/admin`, e **só
-  nasce no `/django-admin/` junto com o deploy do front**: cada fluxo é um
-  formulário escrito no `index.html`, e a linha sem o formulário do outro lado é
-  um produto que não abre.
+  produto. Hoje existem dois, na categoria Produtos: o **Recrutamento e Seleção**
+  (`fluxo='dh'`), que abre o **Formulário DH** em vez do cronograma de parcelas,
+  e o **DH - Avaliação** (`fluxo='dh_avaliacao'`, desde 14/10/2026), com os itens
+  de Relatório e Devolutiva. Produto assim não tem preço, é somente leitura no
+  `/admin`, e **só nasce no `/django-admin/` (ou numa migration) junto com o
+  deploy do front**: cada fluxo é um formulário escrito no `index.html`, e a
+  linha sem o formulário do outro lado é um produto que não abre.
 - **Produtos:** pelo `/admin` → aba Produtos. O `/django-admin/` também cria, mas
   **por fora do histórico** — use-o só para conserto.
   A `sigla` de 3 letras é **única no catálogo inteiro** (é o `SSS` do protocolo da

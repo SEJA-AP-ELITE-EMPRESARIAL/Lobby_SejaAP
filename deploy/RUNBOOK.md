@@ -223,6 +223,10 @@ o schema. Migration com `desfazer` (as deste repo têm) se reverte à mão:
 `sudo docker compose run --rm --no-deps backend python manage.py migrate <app> <número anterior>`.
 Confira o `desfazer` antes: algumas se recusam a reverter de propósito — a
 `catalogo/0007` não recria o produto que apagou, e a `0010` para se achar venda.
+A `vendas/0003` (TSK-1056) alarga a coluna `fluxo` do comprovante para caber
+`dh_avaliacao`; o desfazer a estreita de volta e o Postgres recusa enquanto
+houver comprovante do DH - Avaliação — de propósito, não apague comprovante para
+reverter.
 
 **Migration que confere dado antes de mexer no schema** é comum aqui, e é
 deliberado: ela para com a mensagem em português em vez de deixar o Postgres
@@ -231,9 +235,42 @@ reclamar de um índice sem dizer qual linha é o problema. Nada fica pela metade
 
 - `catalogo/0003` procura sigla de produto repetida antes de criar o índice único;
 - `catalogo/0010` procura venda emitida na categoria `palestras` antes de
-  renomear o slug dela para `produtos`.
+  renomear o slug dela para `produtos`;
+- `catalogo/0012` (TSK-1056) converte o Avaliações (`avaliacoes`) em DH - Avaliação
+  e para se a sigla LBA já estiver em uso, se houver dois produtos `avaliacoes`,
+  ou se ele não for o avulso esperado (com outro fluxo, ou recorrente). Banco sem
+  o produto: não faz nada.
 
 Nesses casos: corrija o dado (pelo `/django-admin/`) e rode o `migrate` de novo.
+
+### DH - Avaliação (TSK-1056): o deploy bloqueia a venda dele até o webhook
+
+O Avaliações vendia pelo fluxo de tabela, com o webhook do Elite. Depois deste
+deploy ele é o DH - Avaliação, com webhook próprio — e a constante
+`DH_AVALIACAO_SEND_WEBHOOK_URL` do `index.html` nasce **vazia**, porque o fluxo do
+n8n ainda não existe. Enquanto ela estiver vazia, o consultor abre e preenche,
+mas não consegue finalizar a venda. **Combine a data com o dono antes de
+publicar.**
+
+1. Roteiro [Com migration](#com-migration-a-ordem-importa): ele aplica
+   `catalogo/0012`, `dh_avaliacao/0001` e `vendas/0003` antes de trocar os
+   containers. Front e backend sobem juntos: um front antigo não sabe abrir um
+   produto `dh_avaliacao`.
+2. Confira a conversão:
+
+   ```bash
+   sudo docker compose exec backend python manage.py shell -c \
+     "from apps.catalogo.models import Produto as P; p=P.objects.get(slug='avaliacoes'); print(p.nome, p.sigla, p.fluxo, p.valor)"
+   # DH - Avaliação LBA dh_avaliacao None
+   ```
+
+3. O `CATS` embutido no `index.html` traz o DH - Avaliação com descrição, duração
+   e ícone escritos na TSK-1056, sem acesso ao banco de produção. Gere o bloco de
+   verdade com `manage.py exportar_cats_do_front` e, se diferir, cole-o no
+   `index.html` num deploy só de front.
+4. Quando o n8n tiver o fluxo: preencha `DH_AVALIACAO_SEND_WEBHOOK_URL` e publique
+   [Só o front](#só-o-front). Os valores de Relatório e Devolutiva (R$ 150 e
+   R$ 450, livres, até alguém salvar) ficam na aba **DH - Avaliação** do `/admin`.
 
 ## Verificações
 
