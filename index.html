@@ -1351,6 +1351,9 @@ function App() {
     avalTipoPessoa: 'PJ', avalNome: '', avalCpf: '', avalEmail: '',
     avalItens: aplicaValoresAvaliacao(novosItensAvaliacao(), VALORES_AVALIACAO_PADRAO), avalAviso: '',
     avalForma: 'pix', avalParcelas: 1, avalData: '',
+    // Retrato do que saiu no envio, para a tela de sucesso: a reconsulta segue
+    // rodando depois da venda e poderia mudar os itens que ela mostraria.
+    avalEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
     // Negociação: `autorizacao` é { token, nome, email, papel } de quem liberou,
@@ -2335,7 +2338,16 @@ function App() {
       payload.comprovante_erro = atestado.erro;
 
       const response = await sendVendaDhAvaliacao(payload);
-      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
+      patch({
+        screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null,
+        avalEnviado: {
+          nome: payload.contratante.nome,
+          itens: avalVendidos.map((m) => ({ nome: m.nome, plural: m.plural, quantidade: avalQtd(m.id) })),
+          total: avalTotal,
+          forma: forma ? forma.label : '',
+          parcelas: avalParcelas,
+        },
+      });
     } catch (e) {
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
       // Recusa do servidor (um valor fixo que a reconsulta não pegou, por
@@ -2397,7 +2409,7 @@ function App() {
     dhVagas: [novaVagaDh()], dhAdiantamentoEdit: false,
     avalTipoPessoa: 'PJ', avalNome: '', avalCpf: '', avalEmail: '',
     avalItens: aplicaValoresAvaliacao(novosItensAvaliacao(), valsAval.valores), avalAviso: '',
-    avalForma: 'pix', avalParcelas: 1, avalData: '',
+    avalForma: 'pix', avalParcelas: 1, avalData: '', avalEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
@@ -4243,10 +4255,13 @@ function App() {
                   Venda de {fmt(apnValorOk ? apnValor : 0)} registrada em {paymentLabel(s.apnForma).toLowerCase()}{apnParcelas > 1 ? ` em ${apnParcelas}×` : ''}.
                 </>
               ) : isDhAval ? (
-                <>
-                  {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{avalNomeContratante}</strong>.<br />
-                  {avalVendidos.map((m) => `${avalQtd(m.id)} ${avalQtd(m.id) === 1 ? m.nome.toLowerCase() : m.plural.toLowerCase()}`).join(' e ')} · total de {fmt(avalTotal)} em {((formaAvaliacao(s.avalForma) || {}).label || '').toLowerCase()}{avalParcelas > 1 ? ` em ${avalParcelas}×` : ''}.
-                </>
+                // O que foi ENVIADO, e não o estado atual dos itens.
+                s.avalEnviado && (
+                  <>
+                    {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{s.avalEnviado.nome}</strong>.<br />
+                    {s.avalEnviado.itens.map((i) => `${i.quantidade} ${i.quantidade === 1 ? i.nome.toLowerCase() : i.plural.toLowerCase()}`).join(' e ')} · total de {fmt(s.avalEnviado.total)} em {s.avalEnviado.forma.toLowerCase()}{s.avalEnviado.parcelas > 1 ? ` em ${s.avalEnviado.parcelas}×` : ''}.
+                  </>
+                )
               ) : isDh ? (
                 <>
                   {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
