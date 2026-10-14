@@ -53,7 +53,7 @@ class CategoriaAdmin(admin.ModelAdmin):
     inlines = [ProdutoInline]
     fieldsets = (
         (None, {"fields": ("slug", "nome", "descricao", "ordem")}),
-        ("Aparência no lobby", {"fields": ("icone", "cor", "travada")}),
+        ("Aparência no lobby", {"fields": ("icone", "cor", "travada", "produto_primeiro")}),
         (
             "Fluxo próprio",
             {

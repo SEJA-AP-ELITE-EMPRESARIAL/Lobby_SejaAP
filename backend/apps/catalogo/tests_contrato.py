@@ -107,6 +107,9 @@ CATALOGO_EM_PRODUCAO = [
         "icon": "inventory_2",
         "color": "green",
         "desc": "Produtos e serviços avulsos — cada um com o seu formulário de contratação.",
+        # Desde 14/10/2026 a venda aqui começa pela lista de produtos: cada
+        # produto pede dados de contratante próprios.
+        "produtoPrimeiro": True,
         "products": [
             {
                 # Sem `price`, e é o contrato: os valores desta venda (salário de
@@ -276,6 +279,17 @@ class ContratoDoCatalogoTest(TestCase):
         produtos = next(c for c in cats if c["id"] == "produtos")
         self.assertNotIn("flow", produtos)
         self.assertNotIn("locked", produtos)
+
+    def test_so_produtos_comeca_pela_escolha_do_produto(self):
+        """`produtoPrimeiro` é o que põe a lista de produtos antes da empresa.
+
+        Sai só onde vale, como o `locked`: na Elite a ordem continua Empresa →
+        Produto, e na APN não há produto a escolher.
+        """
+        cats = {c["id"]: c for c in self.client.get("/api/catalogo").json()["cats"]}
+        self.assertIs(cats["produtos"]["produtoPrimeiro"], True)
+        for slug in ("elite", "treinamentos", "apn"):
+            self.assertNotIn("produtoPrimeiro", cats[slug], slug)
 
     def test_apn_carrega_flow_e_sigla(self):
         """Sem `flow`, o front manda o consultor para o wizard errado.

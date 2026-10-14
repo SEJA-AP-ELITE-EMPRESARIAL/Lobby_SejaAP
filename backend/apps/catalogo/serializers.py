@@ -119,6 +119,9 @@ def serializa_categoria(categoria, produtos=None) -> dict:
         dados["flow"] = categoria.fluxo
     if categoria.sigla:
         dados["sigla"] = categoria.sigla
+    # Como o `locked`: só sai quando vale, e o front testa `!!c.produtoPrimeiro`.
+    if categoria.produto_primeiro:
+        dados["produtoPrimeiro"] = True
     # Só sai quando existe: categoria sem referência mantém o contrato de hoje,
     # e o front distingue "não configurado" de "configurado como zero".
     if categoria.valor_referencia is not None:

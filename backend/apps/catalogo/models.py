@@ -51,6 +51,11 @@ Duas decisões de modelagem que valem explicação, porque não são óbvias:
    receber itens sem relação entre si — o próximo pode ser um produto de tabela,
    e um fluxo na categoria trancaria todos no mesmo formulário.
 
+   Pelo mesmo motivo, a ORDEM das etapas é da categoria (`produto_primeiro`,
+   14/10/2026): numa categoria em que cada produto pede dados de contratante
+   diferentes, a empresa não pode vir antes da escolha. Vale para o produto de
+   tabela também: um produto novo em "Produtos" já nasce começando pela lista.
+
 5. A REGRA DE DATA do cronograma é dado, não código.
    Até 17/08/2026 o dia do vencimento (15) e o mês da primeira parcela viviam em
    constantes do `index.html`: mudar o dia de cobrança era deploy do front. Como
@@ -168,6 +173,14 @@ class Categoria(models.Model):
         help_text="Vazio = fluxo padrão (escolher produto da tabela). "
         "'apn' = o consultor informa o valor da venda, sem tabela de preços. "
         "Categoria com fluxo próprio é somente leitura: não se edita pelo /admin.",
+    )
+    produto_primeiro = models.BooleanField(
+        "começa pela escolha do produto",
+        default=False,
+        help_text="A venda abre na lista de produtos, e só depois pede os dados "
+        "de quem contrata. Para categoria cujos produtos têm formulários de "
+        "contratante diferentes (hoje, Produtos): é o produto que decide qual "
+        "formulário vem. Vai ao JSON como `produtoPrimeiro`.",
     )
     sigla = models.CharField(
         "sigla",
