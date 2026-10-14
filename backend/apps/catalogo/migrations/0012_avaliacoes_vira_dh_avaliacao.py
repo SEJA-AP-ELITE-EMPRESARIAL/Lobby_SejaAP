@@ -84,9 +84,20 @@ def _sigla_em_uso(apps, sigla, produto):
     return None
 
 
+def _fecha_precos_abertos(apps, quando):
+    """Fecha, não apaga, a vigência de preço que ainda diz que ele custa algo.
+
+    Valor vazio fica: é o que a tela grava ao editar um produto de formulário, e
+    diz justamente que não há preço.
+    """
+    Vigencia = apps.get_model("catalogo", "Vigencia")
+    Vigencia.objects.filter(
+        chave=SLUG, campo__in=CAMPOS_DE_PRECO, vigente_ate__isnull=True
+    ).exclude(valor="").update(vigente_ate=quando)
+
+
 def aplicar(apps, schema_editor):
     Produto = apps.get_model("catalogo", "Produto")
-    Vigencia = apps.get_model("catalogo", "Vigencia")
 
     produtos = list(Produto.objects.filter(slug=SLUG))
     if not produtos:
@@ -100,7 +111,10 @@ def aplicar(apps, schema_editor):
     produto = produtos[0]
 
     if produto.fluxo == FLUXO:
-        # Já convertido (à mão, ou por uma rodada anterior desta migration).
+        # Já convertido (à mão, ou por uma rodada anterior desta migration). O
+        # produto fica como está; só o preço que tenha sobrado aberto na linha do
+        # tempo é fechado — conversão à mão não passa por aqui.
+        _fecha_precos_abertos(apps, timezone.now())
         return
     if produto.fluxo:
         raise RuntimeError(
@@ -131,9 +145,7 @@ def aplicar(apps, schema_editor):
     produto.save()
 
     # Fecha, não apaga: ver o cabeçalho.
-    Vigencia.objects.filter(
-        chave=SLUG, campo__in=CAMPOS_DE_PRECO, vigente_ate__isnull=True
-    ).update(vigente_ate=agora)
+    _fecha_precos_abertos(apps, agora)
 
 
 def desfazer(apps, schema_editor):

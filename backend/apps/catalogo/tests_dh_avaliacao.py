@@ -178,6 +178,20 @@ class MigracaoDoAvaliacoesTest(TransactionTestCase):
             list(depois.get_model("catalogo", "Produto").objects.order_by("id").values()), antes
         )
 
+    def test_convertido_a_mao_antes_fecha_o_preco_que_sobrou_aberto(self):
+        """Conversão pelo shell não fecha a vigência; a migration fecha, sem mexer
+        no produto."""
+        self.cria_avaliacoes(
+            nome="DH - Avaliação", sigla="LBA", fluxo="dh_avaliacao", valor=None,
+        )
+        depois = self.migra(DEPOIS)
+
+        produto = self.produto(depois)
+        self.assertEqual((produto.nome, produto.sigla, produto.fluxo), ("DH - Avaliação", "LBA", "dh_avaliacao"))
+        [vigencia] = self.vigencias(depois)
+        self.assertEqual(vigencia.valor, "1500.00")
+        self.assertIsNotNone(vigencia.vigente_ate)
+
     def test_sigla_lba_em_uso_para_a_migration(self):
         """Sigla repetida gera protocolos que ninguém desempata. Para, em português."""
         self.cria_avaliacoes()
