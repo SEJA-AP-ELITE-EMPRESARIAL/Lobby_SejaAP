@@ -180,7 +180,8 @@ class Categoria(models.Model):
         help_text="A venda abre na lista de produtos, e só depois pede os dados "
         "de quem contrata. Para categoria cujos produtos têm formulários de "
         "contratante diferentes (hoje, Produtos): é o produto que decide qual "
-        "formulário vem. Vai ao JSON como `produtoPrimeiro`.",
+        "formulário vem. Só muda a ordem do fluxo de tabela: a APN e o "
+        "formulário DH têm etapas próprias. Vai ao JSON como `produtoPrimeiro`.",
     )
     sigla = models.CharField(
         "sigla",

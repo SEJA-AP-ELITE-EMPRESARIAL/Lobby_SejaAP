@@ -31,7 +31,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='categoria',
             name='produto_primeiro',
-            field=models.BooleanField(default=False, help_text='A venda abre na lista de produtos, e só depois pede os dados de quem contrata. Para categoria cujos produtos têm formulários de contratante diferentes (hoje, Produtos): é o produto que decide qual formulário vem. Vai ao JSON como `produtoPrimeiro`.', verbose_name='começa pela escolha do produto'),
+            field=models.BooleanField(default=False, help_text='A venda abre na lista de produtos, e só depois pede os dados de quem contrata. Para categoria cujos produtos têm formulários de contratante diferentes (hoje, Produtos): é o produto que decide qual formulário vem. Só muda a ordem do fluxo de tabela: a APN e o formulário DH têm etapas próprias. Vai ao JSON como `produtoPrimeiro`.', verbose_name='começa pela escolha do produto'),
         ),
         # Na volta, a coluna some com o RemoveField: não há o que desfazer aqui.
         migrations.RunPython(aplicar, migrations.RunPython.noop),
