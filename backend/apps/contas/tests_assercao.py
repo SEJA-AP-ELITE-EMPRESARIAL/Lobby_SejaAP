@@ -739,6 +739,25 @@ class JtiEntreProcessosTest(BaseAssercao):
         self.assertEqual(self.outro_processo(token), "GRAVOU")
         self.assertRecusa(self.chama("get", QUEM_SOU, token), 401, "JTI_REPETIDO")
 
+    def test_no_redis_jti_e_marco_sao_uma_operacao_so(self):
+        """Em produção o caminho é o script atômico, com o relógio do Redis — e
+        nunca os passos separados, em que um worker parado encurtaria a janela."""
+        cache_do_jti = autenticacao_conecta._cache_do_jti()
+        passos = mock.patch.object(
+            autenticacao_conecta.AutenticacaoConecta, "_grava_em_passos", side_effect=AssertionError("em passos")
+        )
+        with passos:
+            cache_do_jti.clear()
+            token = self.par.assina()
+            self.assertRecusa(self.chama("get", QUEM_SOU, token), 503, "INTEGRACAO_DESLIGADA")
+            marco = cache_do_jti.get(autenticacao_conecta.MARCO_DO_CACHE)
+            self.assertIsInstance(marco, int)
+            self.assertLessEqual(abs(marco - time.time()), 5)
+            # O 503 não queimou o token; com a janela vencida, ele passa uma vez.
+            cache_contando_ha_tempo()
+            self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+            self.assertRecusa(self.chama("get", QUEM_SOU, token), 401, "JTI_REPETIDO")
+
     def test_este_worker_usou_primeiro(self):
         token = self.par.assina()
         self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)

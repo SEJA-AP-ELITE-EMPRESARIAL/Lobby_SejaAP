@@ -49,6 +49,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
+from django.core.cache.backends.redis import RedisCache
 from rest_framework import exceptions
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.throttling import SimpleRateThrottle
@@ -128,11 +129,30 @@ CACHE_LOCAL = "django.core.cache.backends.locmem.LocMemCache"
 # tolerância é a do teto (`CONECTA_ASSERCAO_TOLERANCIA_TETO`), não a
 # configurada, para não depender dela. Fecha enquanto `agora - marco <= janela`.
 MARCO_DO_CACHE = "assercao:jti:contando-desde"
-# O marco é gravado com o relógio lido NA HORA, mais esta folga: entre ler o
-# relógio e o Redis gravar cabem a conexão e a resposta (1 s cada, no settings)
-# e o arredondamento para inteiro. Marco adiantado só alonga a janela, e é o
-# lado seguro; atrasado, de um worker que leu o relógio antes do esvaziamento,
-# a encurtaria.
+# No Redis (produção), gravar o `jti`, criar o marco e conferir a janela é UMA
+# operação: um script Lua, atômico, com o relógio do PRÓPRIO Redis. Feito em
+# passos pelo app, um worker parado entre ler o relógio e gravar o marco (com um
+# esvaziamento no meio) gravaria um marco de antes do esvaziamento e encurtaria
+# a janela — e nenhuma folga fixa limita essa pausa.
+#
+# KEYS: o `jti`, o marco. ARGV: o prazo do `jti`, a janela.
+# Devolve {gravou o jti, está na janela}. Na janela o `jti` recém-gravado é
+# apagado: a asserção leva 503 sem ter sido atendida, e não fica queimada para o
+# Conecta tentar de novo depois.
+_SCRIPT_DO_JTI = """
+local gravou = redis.call('SET', KEYS[1], 1, 'NX', 'EX', ARGV[1])
+local agora = tonumber(redis.call('TIME')[1])
+redis.call('SET', KEYS[2], agora, 'NX')
+local desde = tonumber(redis.call('GET', KEYS[2]))
+local na_janela = (desde == nil) or (agora - desde <= tonumber(ARGV[2]))
+if gravou and na_janela then
+    redis.call('DEL', KEYS[1])
+end
+return {gravou and 1 or 0, na_janela and 1 or 0}
+"""
+# Fora do Redis (os outros backends compartilhados, e o `LocMemCache` dos
+# testes e do dev), os mesmos passos em sequência, com o relógio do app lido na
+# hora da gravação mais esta folga: marco adiantado só alonga a janela.
 FOLGA_DO_MARCO = 3
 
 
@@ -619,22 +639,10 @@ class AutenticacaoConecta(BaseAuthentication):
         cache = _cache_do_jti()
         chave = f"assercao:jti:{AUDIENCIA}:{assercao.jti}"
         try:
-            gravou = cache.add(chave, 1, timeout=prazo)
-            # Ver MARCO_DO_CACHE. `add` sem prazo: só o primeiro depois do
-            # cache vazio grava; os outros leem o que ele gravou.
-            #
-            # A ORDEM IMPORTA: o marco é lido DEPOIS de gravar o `jti`. Um
-            # esvaziamento que deixe o `jti` repetido ser gravado de novo levou
-            # o marco junto, e o marco lido aqui é posterior a ele — cai na
-            # janela. Lido antes, um FLUSHDB entre a leitura e a gravação
-            # deixaria a repetição passar com o marco velho.
-            cache.add(MARCO_DO_CACHE, int(time.time()) + FOLGA_DO_MARCO, timeout=None)
-            desde = cache.get(MARCO_DO_CACHE)
-            na_janela = not isinstance(desde, int) or agora - desde <= janela
-            if gravou and na_janela:
-                # A asserção leva 503 sem ter sido atendida: não fica queimada
-                # para o Conecta tentar de novo depois da janela.
-                cache.delete(chave)
+            if type(cache) is RedisCache:
+                gravou, na_janela = self._grava_no_redis(cache, chave, prazo, janela)
+            else:
+                gravou, na_janela = self._grava_em_passos(cache, chave, prazo, janela)
         except Exception:
             # Cache fora: sem como saber se é repetição. Falha fechada.
             logger.exception("cache indisponível ao gravar o jti da asserção")
@@ -648,6 +656,34 @@ class AutenticacaoConecta(BaseAuthentication):
                 janela,
             )
             raise IntegracaoDesligada()
+
+    @staticmethod
+    def _grava_no_redis(cache, chave, prazo, janela):
+        # `_cache` e `get_client` são do `RedisCache` do Django: o script precisa
+        # do cliente cru. As chaves passam pelo `make_key`, com o mesmo prefixo e
+        # versão do `cache.add` — o marco gravado aqui é lido por `cache.get`
+        # (inteiro não é serializado pelo Django: `RedisSerializer`).
+        cliente = cache._cache.get_client(write=True)
+        gravou, na_janela = cliente.eval(
+            _SCRIPT_DO_JTI, 2, cache.make_key(chave), cache.make_key(MARCO_DO_CACHE), prazo, janela
+        )
+        return bool(gravou), bool(na_janela)
+
+    @staticmethod
+    def _grava_em_passos(cache, chave, prazo, janela):
+        gravou = cache.add(chave, 1, timeout=prazo)
+        # Ver MARCO_DO_CACHE. `add` sem prazo: só o primeiro depois do cache
+        # vazio grava; os outros leem o que ele gravou.
+        #
+        # A ORDEM IMPORTA: o marco é lido DEPOIS de gravar o `jti`. Um
+        # esvaziamento que deixe o `jti` repetido ser gravado de novo levou o
+        # marco junto, e o marco lido aqui é posterior a ele — cai na janela.
+        cache.add(MARCO_DO_CACHE, int(time.time()) + FOLGA_DO_MARCO, timeout=None)
+        desde = cache.get(MARCO_DO_CACHE)
+        na_janela = not isinstance(desde, int) or int(time.time()) - desde <= janela
+        if gravou and na_janela:
+            cache.delete(chave)
+        return gravou, na_janela
 
     def _resolve_pessoa(self, email):
         """`User.email__iexact = sub`. NUNCA cria conta (§13.2).
