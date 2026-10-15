@@ -24,6 +24,7 @@ urlpatterns = [
     path("api/", include("apps.departamentos.urls")),
     path("api/", include("apps.categorias_financeiras.urls")),
     path("api/", include("apps.dh_avaliacao.urls")),
+    path("api/", include("apps.integracao.urls")),
 ]
 
 admin.site.site_header = "Lobby Seja AP"

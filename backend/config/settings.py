@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     "apps.departamentos",
     "apps.categorias_financeiras",
     "apps.dh_avaliacao",
+    "apps.integracao",
 ]
 
 MIDDLEWARE = [
@@ -177,6 +178,28 @@ IDENTIDADE_APP_KEY = os.environ.get("IDENTIDADE_APP_KEY", "")
 IDENTIDADE_TIMEOUT = int(os.environ.get("IDENTIDADE_TIMEOUT", "5"))
 IDENTIDADE_RESOLVER_USUARIO = "apps.contas.identidade.resolver_usuario"
 
+# === Asserção do Conecta (TSK-1059, ADR-002 §13) ===
+# O Conecta administra o Lobby chamando estas rotas em nome de uma pessoa, com um
+# JWT curto assinado em Ed25519 no cabeçalho `X-Conecta-Assercao`. Aqui só mora a
+# CHAVE PÚBLICA: a privada nunca sai do servidor do Conecta.
+#
+# `CONECTA_ASSERCAO_CHAVES` é um conjunto JWK (`{"keys": [...]}`), por `kid`. É
+# conjunto, e não uma chave só, para a troca de chave não ter janela (§8.2).
+# Vazio = integração DESLIGADA: as rotas dela respondem 503 INTEGRACAO_DESLIGADA
+# e o resto do Lobby (o /admin, o login) segue igual. Ver
+# `apps/contas/autenticacao_conecta.py`.
+#
+# A audiência NÃO é configurável, de propósito: é sempre `lobby`. Uma variável
+# aqui só serviria para alguém, por engano, fazer o Lobby aceitar a asserção que
+# o Conecta assinou para o Kanban ou para o Formulário.
+CONECTA_ASSERCAO_CHAVES = os.environ.get("CONECTA_ASSERCAO_CHAVES", "").strip()
+CONECTA_ASSERCAO_EMISSOR = os.environ.get("CONECTA_ASSERCAO_EMISSOR", "conecta").strip()
+# 10 s nas duas pontas (§4.5). Teto de 30 no código: recusa por relógio se
+# resolve no NTP, e não alargando a janela em que uma asserção capturada serve.
+CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS = max(
+    0, min(30, int(os.environ.get("CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS", "10")))
+)
+
 # === n8n ===
 # Segredo compartilhado com o fluxo do n8n, que o usa para chamar
 # /api/venda/validar. Sem ele o endpoint responde 503 e o n8n cai no ramo de
@@ -264,6 +287,14 @@ REST_FRAMEWORK = {
         # Valores das modalidades do DH - Avaliação (TSK-1056): o lobby os
         # reconsulta no ritmo dos departamentos.
         "dh_avaliacao_publico": os.environ.get("LOBBY_RATE_DH_AVALIACAO", "600/hour"),
+        # Integração com o Conecta (TSK-1059, ADR-002 §10.4). Toda chamada sai do
+        # MESMO IP, o do servidor do Conecta: teto por IP limitaria o portal
+        # inteiro de uma vez. Depois da asserção a chamada tem pessoa, e o teto é
+        # por pessoa. As recusas de asserção (antes de haver pessoa) contam por
+        # IP — e vindo do IP do Conecta são defeito, não tráfego.
+        "integracao_leitura": os.environ.get("LOBBY_RATE_INTEGRACAO_LEITURA", "120/min"),
+        "integracao_escrita": os.environ.get("LOBBY_RATE_INTEGRACAO_ESCRITA", "30/min"),
+        "integracao_falhas": os.environ.get("LOBBY_RATE_INTEGRACAO_FALHAS", "60/min"),
     },
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }
@@ -326,6 +357,9 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_TRUSTED_ORIGINS = _env_lista("DJANGO_CSRF_TRUSTED_ORIGINS")
 X_FRAME_OPTIONS = "DENY"
+# Censura o cabeçalho da asserção do Conecta no relatório de erro (ADR-002
+# §10.2): o filtro padrão do Django não o reconhece como segredo.
+DEFAULT_EXCEPTION_REPORTER_FILTER = "config.erros.FiltroDeRelatorio"
 
 # HSTS desligado por padrão, e isso é decisão, não esquecimento: quem termina o
 # TLS é a Cloudflare, que já tem HSTS próprio no painel — ligar nos dois lados
