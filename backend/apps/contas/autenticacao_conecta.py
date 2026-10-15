@@ -125,9 +125,13 @@ CACHE_LOCAL = "django.core.cache.backends.locmem.LocMemCache"
 # contar há mais tempo que a vida máxima de uma asserção, a integração fica
 # fechada (503). A conta: aceita até `exp + tolerância`, com `exp` até
 # VALIDADE_MAXIMA depois do `iat`, e o `iat` até `tolerância` no futuro — e a
-# tolerância é a do teto (30 s), não a configurada, para não depender dela.
+# tolerância é a do teto (`CONECTA_ASSERCAO_TOLERANCIA_TETO`), não a
+# configurada, para não depender dela. Fecha enquanto `agora - marco <= janela`.
 MARCO_DO_CACHE = "assercao:jti:contando-desde"
-JANELA_DEPOIS_DE_CACHE_VAZIO = VALIDADE_MAXIMA + 2 * 30
+
+
+def janela_depois_de_cache_vazio() -> int:
+    return VALIDADE_MAXIMA + 2 * settings.CONECTA_ASSERCAO_TOLERANCIA_TETO
 
 
 # ----- recusas ---------------------------------------------------------------
@@ -601,27 +605,35 @@ class AutenticacaoConecta(BaseAuthentication):
         as duas (§4.6). Guardado só até o `exp` mais a tolerância."""
         tolerancia = settings.CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS
         agora = int(time.time())
-        prazo = max(1, assercao.exp - agora + tolerancia)
+        # +1: a asserção é aceita enquanto o SEGUNDO inteiro de agora não passa
+        # de `exp + tolerância`, ou seja, até o fim desse segundo; o prazo conta
+        # do instante fracionário de agora e sumiria antes.
+        prazo = max(1, assercao.exp - agora + tolerancia + 1)
+        janela = janela_depois_de_cache_vazio()
         cache = _cache_do_jti()
         try:
-            gravou = cache.add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
             # Ver MARCO_DO_CACHE. `add` sem prazo: só o primeiro depois do
-            # cache vazio grava; os outros leem o que ele gravou.
+            # cache vazio grava; os outros leem o que ele gravou. Conferido
+            # ANTES de gravar o `jti`: na janela nada passa, e a asserção que
+            # levou 503 não fica queimada para uma nova tentativa.
             cache.add(MARCO_DO_CACHE, agora, timeout=None)
             desde = cache.get(MARCO_DO_CACHE)
+            if not isinstance(desde, int) or agora - desde <= janela:
+                logger.warning(
+                    "cache do jti recém-esvaziado (Redis reiniciado?); a integração "
+                    "fica fechada até %ss depois do primeiro uso",
+                    janela,
+                )
+                raise IntegracaoDesligada()
+            gravou = cache.add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
+        except IntegracaoDesligada:
+            raise
         except Exception:
             # Cache fora: sem como saber se é repetição. Falha fechada.
             logger.exception("cache indisponível ao gravar o jti da asserção")
             raise IntegracaoDesligada()
         if not gravou:
             raise AssercaoRecusada("JTI_REPETIDO")
-        if not isinstance(desde, int) or agora - desde < JANELA_DEPOIS_DE_CACHE_VAZIO:
-            logger.warning(
-                "cache do jti recém-esvaziado (Redis reiniciado?); a integração "
-                "fica fechada até %ss depois do primeiro uso",
-                JANELA_DEPOIS_DE_CACHE_VAZIO,
-            )
-            raise IntegracaoDesligada()
 
     def _resolve_pessoa(self, email):
         """`User.email__iexact = sub`. NUNCA cria conta (§13.2).

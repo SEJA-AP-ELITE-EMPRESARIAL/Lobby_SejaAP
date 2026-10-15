@@ -303,9 +303,11 @@ Como ele está configurado, e por quê (os detalhes estão no `docker-compose.ym
 - **Sem persistência** (`save ""`, sem AOF). Reiniciar o Redis zera os tetos e
   os `jti`. Uma asserção já usada e ainda no prazo passaria de novo, então o
   backend guarda no Redis quando ele começou a contar e, com o Redis recém-vazio,
-  **fecha a integração por 130 s** (503 e `cache do jti recém-esvaziado` no log;
-  `MARCO_DO_CACHE` em `autenticacao_conecta.py`): é a vida máxima de uma
-  asserção, 70 s, mais duas vezes o teto da tolerância de relógio.
+  **fecha a integração por 130 s contados da primeira chamada do Conecta depois
+  que ele volta** (503 e `cache do jti recém-esvaziado` no log; `MARCO_DO_CACHE`
+  em `autenticacao_conecta.py`): é a vida máxima de uma asserção, 70 s, mais duas
+  vezes o teto da tolerância de relógio. O 503 não queima a asserção: o Conecta
+  pode repeti-la depois.
 - **64 MB e `noeviction`.** Nem `volatile-ttl` nem `allkeys-lru`: os dois
   descartariam primeiro justamente o `jti` (o de prazo mais curto, ~70 s, e o
   que nunca é lido depois de gravado), e `jti` descartado antes do `exp` é
@@ -634,8 +636,8 @@ container `categorias`.
 **Redis do Lobby fora do ar** (`lobby-redis` parado ou `unhealthy`) → o lobby
 segue vendendo: os tetos de chamada falham abertos, com um aviso por minuto no log
 (`Redis indisponível no cache default`). A integração com o Conecta responde 503
-`INTEGRACAO_DESLIGADA` até ele voltar — e por mais 130 s depois, porque ele volta
-vazio (ver *Sem persistência* em [Redis do Lobby](#redis-do-lobby-tsk-1068)).
+`INTEGRACAO_DESLIGADA` até ele voltar — e por mais 130 s a partir da primeira
+chamada do Conecta depois disso, porque ele volta vazio (ver *Sem persistência* em [Redis do Lobby](#redis-do-lobby-tsk-1068)).
 `sudo docker compose up -d redis` o traz de volta, e o backend reconecta sozinho,
 sem reiniciar. Só a SUBIDA do
 backend depende dele: com o Redis fora, um `up` que recrie o backend falha com
