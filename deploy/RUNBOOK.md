@@ -243,7 +243,11 @@ reclamar de um índice sem dizer qual linha é o problema. Nada fica pela metade
 
 Nesses casos: corrija o dado (pelo `/django-admin/`) e rode o `migrate` de novo.
 
-### DH - Avaliação (TSK-1056): o deploy bloqueia a venda dele até o webhook
+### DH - Avaliação (TSK-1056)
+
+> **No ar desde 14/10/2026.** O webhook foi preenchido no mesmo dia, e o
+> `CATS` embutido foi alinhado com o `exportar_cats_do_front` de produção. Os
+> passos abaixo ficam como registro de como foi.
 
 O Avaliações vendia pelo fluxo de tabela, com o webhook do Elite. Depois deste
 deploy ele é o DH - Avaliação, com webhook próprio — e a constante
