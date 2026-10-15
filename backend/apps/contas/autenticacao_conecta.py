@@ -49,6 +49,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
+from django.core.cache.backends.redis import RedisCache
 from rest_framework import exceptions
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.throttling import SimpleRateThrottle
@@ -117,6 +118,46 @@ CACHES_COMPARTILHADOS = frozenset(
     }
 )
 CACHE_LOCAL = "django.core.cache.backends.locmem.LocMemCache"
+
+# Cache que voltou VAZIO (Redis reiniciado, FLUSHDB) não sabe quais `jti` já
+# foram usados — o Redis do Lobby não persiste, de propósito (TSK-1068). Uma
+# asserção consumida antes do reinício ainda pode estar no prazo, e passaria de
+# novo. Por isso o cache guarda, sem prazo, QUANDO começou a contar; até ele
+# contar há mais tempo que a vida máxima de uma asserção, a integração fica
+# fechada (503). A conta: aceita até `exp + tolerância`, com `exp` até
+# VALIDADE_MAXIMA depois do `iat`, e o `iat` até `tolerância` no futuro — e a
+# tolerância é a do teto (`CONECTA_ASSERCAO_TOLERANCIA_TETO`), não a
+# configurada, para não depender dela. Fecha enquanto `agora - marco <= janela`.
+MARCO_DO_CACHE = "assercao:jti:contando-desde"
+# No Redis (produção), gravar o `jti`, criar o marco e conferir a janela é UMA
+# operação: um script Lua, atômico, com o relógio do PRÓPRIO Redis. Feito em
+# passos pelo app, um worker parado entre ler o relógio e gravar o marco (com um
+# esvaziamento no meio) gravaria um marco de antes do esvaziamento e encurtaria
+# a janela — e nenhuma folga fixa limita essa pausa.
+#
+# KEYS: o `jti`, o marco. ARGV: o prazo do `jti`, a janela.
+# Devolve {gravou o jti, está na janela}. Na janela o `jti` recém-gravado é
+# apagado: a asserção leva 503 sem ter sido atendida, e não fica queimada para o
+# Conecta tentar de novo depois.
+_SCRIPT_DO_JTI = """
+local gravou = redis.call('SET', KEYS[1], 1, 'NX', 'EX', ARGV[1])
+local agora = tonumber(redis.call('TIME')[1])
+redis.call('SET', KEYS[2], agora, 'NX')
+local desde = tonumber(redis.call('GET', KEYS[2]))
+local na_janela = (desde == nil) or (agora - desde <= tonumber(ARGV[2]))
+if gravou and na_janela then
+    redis.call('DEL', KEYS[1])
+end
+return {gravou and 1 or 0, na_janela and 1 or 0}
+"""
+# Fora do Redis (os outros backends compartilhados, e o `LocMemCache` dos
+# testes e do dev), os mesmos passos em sequência, com o relógio do app lido na
+# hora da gravação mais esta folga: marco adiantado só alonga a janela.
+FOLGA_DO_MARCO = 3
+
+
+def janela_depois_de_cache_vazio() -> int:
+    return VALIDADE_MAXIMA + 2 * settings.CONECTA_ASSERCAO_TOLERANCIA_TETO
 
 
 # ----- recusas ---------------------------------------------------------------
@@ -589,15 +630,60 @@ class AutenticacaoConecta(BaseAuthentication):
         """`SET NX EX` no Redis: duas chamadas com o mesmo `jti` não passam
         as duas (§4.6). Guardado só até o `exp` mais a tolerância."""
         tolerancia = settings.CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS
-        prazo = max(1, assercao.exp - int(time.time()) + tolerancia)
+        agora = int(time.time())
+        # +1: a asserção é aceita enquanto o SEGUNDO inteiro de agora não passa
+        # de `exp + tolerância`, ou seja, até o fim desse segundo; o prazo conta
+        # do instante fracionário de agora e sumiria antes.
+        prazo = max(1, assercao.exp - agora + tolerancia + 1)
+        janela = janela_depois_de_cache_vazio()
+        cache = _cache_do_jti()
+        chave = f"assercao:jti:{AUDIENCIA}:{assercao.jti}"
         try:
-            gravou = _cache_do_jti().add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
+            if type(cache) is RedisCache:
+                gravou, na_janela = self._grava_no_redis(cache, chave, prazo, janela)
+            else:
+                gravou, na_janela = self._grava_em_passos(cache, chave, prazo, janela)
         except Exception:
             # Cache fora: sem como saber se é repetição. Falha fechada.
             logger.exception("cache indisponível ao gravar o jti da asserção")
             raise IntegracaoDesligada()
         if not gravou:
             raise AssercaoRecusada("JTI_REPETIDO")
+        if na_janela:
+            logger.warning(
+                "cache do jti recém-esvaziado (Redis reiniciado?); a integração "
+                "fica fechada até %ss depois do primeiro uso",
+                janela,
+            )
+            raise IntegracaoDesligada()
+
+    @staticmethod
+    def _grava_no_redis(cache, chave, prazo, janela):
+        # `_cache` e `get_client` são do `RedisCache` do Django: o script precisa
+        # do cliente cru. As chaves passam pelo `make_key`, com o mesmo prefixo e
+        # versão do `cache.add` — o marco gravado aqui é lido por `cache.get`
+        # (inteiro não é serializado pelo Django: `RedisSerializer`).
+        cliente = cache._cache.get_client(write=True)
+        gravou, na_janela = cliente.eval(
+            _SCRIPT_DO_JTI, 2, cache.make_key(chave), cache.make_key(MARCO_DO_CACHE), prazo, janela
+        )
+        return bool(gravou), bool(na_janela)
+
+    @staticmethod
+    def _grava_em_passos(cache, chave, prazo, janela):
+        gravou = cache.add(chave, 1, timeout=prazo)
+        # Ver MARCO_DO_CACHE. `add` sem prazo: só o primeiro depois do cache
+        # vazio grava; os outros leem o que ele gravou.
+        #
+        # A ORDEM IMPORTA: o marco é lido DEPOIS de gravar o `jti`. Um
+        # esvaziamento que deixe o `jti` repetido ser gravado de novo levou o
+        # marco junto, e o marco lido aqui é posterior a ele — cai na janela.
+        cache.add(MARCO_DO_CACHE, int(time.time()) + FOLGA_DO_MARCO, timeout=None)
+        desde = cache.get(MARCO_DO_CACHE)
+        na_janela = not isinstance(desde, int) or int(time.time()) - desde <= janela
+        if gravou and na_janela:
+            cache.delete(chave)
+        return gravou, na_janela
 
     def _resolve_pessoa(self, email):
         """`User.email__iexact = sub`. NUNCA cria conta (§13.2).

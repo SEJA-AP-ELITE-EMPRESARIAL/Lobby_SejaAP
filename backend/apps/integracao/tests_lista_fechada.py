@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.catalogo.models import PoliticaCobranca, Vigencia
-from apps.contas.tests_assercao import BaseAssercao, ParDeTeste, conjunto
+from apps.contas.tests_assercao import BaseAssercao, ParDeTeste, cache_contando_ha_tempo, conjunto
 
 COBRANCA_GERAL = {"dia_vencimento": 10, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 1}
 
@@ -139,6 +139,7 @@ class DesligadaNaoAtrapalhaTest(TestCase):
 
     def test_ligar_depois_nao_exige_reinicio_nos_testes(self):
         par = ParDeTeste()
+        cache_contando_ha_tempo()
         with override_settings(CONECTA_ASSERCAO_CHAVES=conjunto(par)):
             resposta = APIClient().get("/api/catalogo", HTTP_X_CONECTA_ASSERCAO=par.assina())
         self.assertEqual(resposta.status_code, 200)

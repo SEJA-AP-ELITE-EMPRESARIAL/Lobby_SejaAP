@@ -38,6 +38,10 @@ jobs:
       DATABASE_URL: ""
       CRM_DB_ENGINE: ""
       DJANGO_SECRET_KEY: ci-nao-e-segredo-de-producao
+      # O Redis do passo "Redis de teste", com a mesma configuração do de
+      # produção (TSK-1068). A suíte o ESVAZIA (`cache.clear()` é FLUSHDB):
+      # nunca aponte isto para um Redis que guarde alguma coisa.
+      LOBBY_REDIS_URL: redis://:ci-nao-e-segredo-de-producao@127.0.0.1:6379/0
 
     steps:
       - uses: actions/checkout@v5
@@ -54,6 +58,29 @@ jobs:
 
       - name: Instalar dependências
         run: pip install -r requirements.txt
+
+      - name: Redis de teste
+        # Com ele a suíte roda contra um Redis de verdade, com senha — é o único
+        # jeito de provar que o `jti` repetido é recusado ENTRE PROCESSOS
+        # (`JtiEntreProcessosTest`), e não só dentro do mesmo worker. Sem ele
+        # aquele teste é pulado, e pulado reprova no passo "Testes".
+        #
+        # `docker run`, e não um `services:`: serviço do Actions não aceita
+        # comando, e sem comando não há `requirepass`. Os parâmetros são os do
+        # serviço `redis` do docker-compose.yml.
+        run: |
+          docker run -d --name redis -p 127.0.0.1:6379:6379 redis:7-alpine \
+            redis-server --requirepass ci-nao-e-segredo-de-producao \
+            --save '' --appendonly no --maxmemory 64mb --maxmemory-policy noeviction
+          for _ in $(seq 1 30); do
+            if docker exec -e REDISCLI_AUTH=ci-nao-e-segredo-de-producao redis redis-cli ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::O Redis de teste não respondeu em 30 s."
+          docker logs redis
+          exit 1
 
       - name: Provar que o banco do CI é descartável
         # Contraprova do bloco `env` acima: se um dia alguém apagar uma daquelas

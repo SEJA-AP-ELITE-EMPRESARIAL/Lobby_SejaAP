@@ -19,14 +19,19 @@ produção.
 import base64
 import json
 import logging
+import os
+import subprocess
+import sys
+import textwrap
 import time
 import uuid
 import warnings
-from unittest import mock
+from unittest import mock, skipUnless
 
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -80,6 +85,18 @@ class ParDeTeste:
         return jwt.encode(corpo, self.privada, algorithm="EdDSA", headers=cab)
 
 
+def cache_contando_ha_tempo():
+    """O cache do `jti` como o de um Redis no ar há tempo — e não o de um
+    recém-reiniciado, que fecha a integração por uns minutos (`MARCO_DO_CACHE`)."""
+    cache_contando_ha_tempo_em(autenticacao_conecta._cache_do_jti(), int(time.time()))
+
+
+def cache_contando_ha_tempo_em(cache_do_jti, agora):
+    cache_do_jti.set(
+        autenticacao_conecta.MARCO_DO_CACHE, agora - autenticacao_conecta.janela_depois_de_cache_vazio() - 1, None
+    )
+
+
 def conjunto(*pares) -> str:
     return json.dumps({"keys": [p.jwk() for p in pares]})
 
@@ -97,6 +114,11 @@ class BaseAssercao(TestCase):
         # O cache guarda `jti`, o contador de recusas por IP e os tetos por
         # pessoa: sem limpar, um teste herdaria o balde do anterior.
         cache.clear()
+        # O cache de cada teste nasce vazio, como um Redis recém-reiniciado — e
+        # cache vazio fecha a integração por uns minutos (`MARCO_DO_CACHE`). Aqui
+        # ele começa como um cache que já conta há tempo; `CacheVazioTest` cobre
+        # o recém-esvaziado.
+        cache_contando_ha_tempo()
         self.par = ParDeTeste()
         self.liga(self.par)
         self.diretoria = cria_pessoa("diretoria@sejaap.com.br", Papel.DIRETORIA)
@@ -430,6 +452,120 @@ class DesligadaTest(TestCase):
         self.assertFalse(autenticacao_conecta.cache_compartilhado())
 
 
+class CacheVazioTest(BaseAssercao):
+    """Redis reiniciado volta vazio (não persiste, TSK-1068): a asserção que já
+    foi usada, e ainda está no prazo, não pode passar de novo."""
+
+    def esvazia(self):
+        autenticacao_conecta._cache_do_jti().clear()
+
+    def test_repeticao_depois_do_reinicio_nao_passa(self):
+        token = self.par.assina()
+        self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+        self.esvazia()
+        with self.assertLogs("lobby.integracao", level=logging.WARNING) as logs:
+            resposta = self.chama("get", QUEM_SOU, token)
+        self.assertRecusa(resposta, 503, "INTEGRACAO_DESLIGADA")
+        self.assertIn("recém-esvaziado", "\n".join(logs.output))
+
+    def test_fecha_so_ate_a_vida_maxima_de_uma_assercao(self):
+        self.esvazia()
+        self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        # O marco que a chamada acima gravou, envelhecido até o fim da janela:
+        cache_do_jti = autenticacao_conecta._cache_do_jti()
+        marco = cache_do_jti.get(autenticacao_conecta.MARCO_DO_CACHE)
+        janela = autenticacao_conecta.janela_depois_de_cache_vazio()
+        # Folga de 30 s para dentro: não depende de quanto o teste demora.
+        cache_do_jti.set(autenticacao_conecta.MARCO_DO_CACHE, marco - janela + 30, None)
+        self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        cache_do_jti.set(autenticacao_conecta.MARCO_DO_CACHE, int(time.time()) - janela - 1, None)
+        self.assertEqual(self.get().status_code, 200)
+
+    def test_o_503_da_janela_nao_queima_a_assercao(self):
+        """O Conecta pode tentar de novo com o mesmo token depois da janela."""
+        token = self.par.assina()
+        self.esvazia()
+        self.assertRecusa(self.chama("get", QUEM_SOU, token), 503, "INTEGRACAO_DESLIGADA")
+        cache_contando_ha_tempo()
+        self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+
+    def repete_com_esvaziamento(self, quando):
+        """Usa um token, e o repete com o cache esvaziado no meio da conferência:
+        logo antes (`antes`) ou logo depois (`depois`) de gravar o `jti`."""
+        token = self.par.assina()
+        self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+        real = autenticacao_conecta._cache_do_jti()
+        proxy = mock.Mock(wraps=real)
+
+        def add(chave, *args, **kwargs):
+            eh_jti = chave.startswith("assercao:jti:lobby:")
+            if eh_jti and quando == "antes":
+                real.clear()
+            feito = real.add(chave, *args, **kwargs)
+            if eh_jti and quando == "depois":
+                real.clear()
+            return feito
+
+        proxy.add.side_effect = add
+        with mock.patch.object(autenticacao_conecta, "_cache_do_jti", return_value=proxy):
+            return self.chama("get", QUEM_SOU, token)
+
+    def test_esvaziar_logo_antes_de_gravar_o_jti_nao_deixa_repetir(self):
+        self.assertRecusa(self.repete_com_esvaziamento("antes"), 503, "INTEGRACAO_DESLIGADA")
+
+    def test_esvaziar_logo_depois_de_gravar_o_jti_nao_deixa_repetir(self):
+        self.assertRecusa(self.repete_com_esvaziamento("depois"), 401, "JTI_REPETIDO")
+
+    def test_marco_usa_o_relogio_da_gravacao_e_nao_o_do_inicio(self):
+        """Worker que leu o relógio, ficou parado e só gravou o marco depois de
+        um esvaziamento não pode gravar um marco de antes dele."""
+        relogio = {"agora": float(int(time.time()))}
+        real = autenticacao_conecta._cache_do_jti()
+        proxy = mock.Mock(wraps=real)
+
+        def add(chave, *args, **kwargs):
+            if chave.startswith("assercao:jti:lobby:"):
+                relogio["agora"] += 20  # parado entre ler o relógio e gravar
+            return real.add(chave, *args, **kwargs)
+
+        proxy.add.side_effect = add
+        self.esvazia()
+        with mock.patch.object(autenticacao_conecta, "_cache_do_jti", return_value=proxy), \
+                mock.patch.object(autenticacao_conecta.time, "time", side_effect=lambda: relogio["agora"]):
+            self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        self.assertGreaterEqual(real.get(autenticacao_conecta.MARCO_DO_CACHE), int(relogio["agora"]))
+
+    def test_a_janela_cobre_a_vida_maxima_com_a_tolerancia_do_teto(self):
+        """Aceita até exp+tol, exp até 70 s depois do iat, iat até tol no futuro
+        — com o teto da tolerância, seja ele qual for."""
+        from django.conf import settings as configuracao
+
+        self.assertEqual(
+            autenticacao_conecta.janela_depois_de_cache_vazio(),
+            autenticacao_conecta.VALIDADE_MAXIMA + 2 * configuracao.CONECTA_ASSERCAO_TOLERANCIA_TETO,
+        )
+        self.assertLessEqual(configuracao.CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS, configuracao.CONECTA_ASSERCAO_TOLERANCIA_TETO)
+        with override_settings(CONECTA_ASSERCAO_TOLERANCIA_TETO=60):
+            self.assertEqual(
+                autenticacao_conecta.janela_depois_de_cache_vazio(), autenticacao_conecta.VALIDADE_MAXIMA + 120
+            )
+
+    def test_o_jti_vive_ate_o_fim_do_ultimo_segundo_aceito(self):
+        """Aceita enquanto int(agora) <= exp+tol: até exp+tol+1 de verdade."""
+        cache_do_jti = mock.Mock(wraps=autenticacao_conecta._cache_do_jti())
+        with mock.patch.object(autenticacao_conecta, "_cache_do_jti", return_value=cache_do_jti), \
+                mock.patch.object(autenticacao_conecta.time, "time", return_value=1_000_000.5):
+            exp = 1_000_000 + 60
+            assercao = autenticacao_conecta.AssercaoConecta(
+                kid="k", jti="j-borda", sub="s@x", aud="lobby", exp=exp, impersonacao=False
+            )
+            cache_contando_ha_tempo_em(cache_do_jti, 1_000_000)
+            autenticacao_conecta.AutenticacaoConecta()._grava_jti(assercao)
+        tolerancia = settings.CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS
+        chamada = [c for c in cache_do_jti.add.call_args_list if "j-borda" in c.args[0]][0]
+        self.assertEqual(chamada.kwargs["timeout"], exp + tolerancia + 1 - 1_000_000)
+
+
 class LogTest(BaseAssercao):
     def test_a_assercao_nunca_vai_para_o_log(self):
         boa = self.par.assina()
@@ -535,3 +671,94 @@ class AchadosDaRevisaoTest(BaseAssercao):
         with self.assertLogs("lobby.integracao", level=logging.ERROR):
             resposta = self.get()
         self.assertRecusa(resposta, 503, "INTEGRACAO_DESLIGADA")
+
+
+# O outro worker do gunicorn, num processo de verdade: grava o `jti` do token
+# pelo mesmo caminho da autenticação e diz o que aconteceu.
+_GRAVA_EM_OUTRO_PROCESSO = textwrap.dedent(
+    """
+    import sys
+
+    import django
+
+    django.setup()
+
+    import jwt
+
+    from apps.contas.autenticacao_conecta import AssercaoConecta, AssercaoRecusada, AutenticacaoConecta
+
+    claims = jwt.decode(sys.argv[1], options={"verify_signature": False})
+    assercao = AssercaoConecta(
+        kid="outro-processo", jti=claims["jti"], sub=claims["sub"], aud=claims["aud"],
+        exp=claims["exp"], impersonacao=False,
+    )
+    try:
+        AutenticacaoConecta()._grava_jti(assercao)
+    except AssercaoRecusada as recusa:
+        print(recusa.codigo)
+    else:
+        print("GRAVOU")
+    """
+)
+
+
+@skipUnless(
+    os.environ.get("LOBBY_REDIS_URL"),
+    "precisa de LOBBY_REDIS_URL apontando para um Redis DESCARTÁVEL (a suíte o "
+    "esvazia); o CI sobe um — ver .github/workflows/ci.yml",
+)
+class JtiEntreProcessosTest(BaseAssercao):
+    """A razão de o Lobby ter um Redis (TSK-1068): o mesmo `jti` em dois workers.
+
+    O `test_jti_repetido` repete no MESMO processo, e passaria com o
+    `LocMemCache`. Aqui o outro worker é outro processo Python, com o settings
+    de verdade e o `LOBBY_REDIS_URL` do ambiente — se o cache não fosse
+    compartilhado, ele gravaria o `jti` de novo sem saber da primeira chamada.
+
+    Pulado sem Redis, e o CI reprova teste pulado: lá ele sempre roda.
+    """
+
+    def outro_processo(self, token):
+        ambiente = {**os.environ, "DJANGO_SETTINGS_MODULE": "config.settings"}
+        feito = subprocess.run(
+            [sys.executable, "-c", _GRAVA_EM_OUTRO_PROCESSO, token],
+            cwd=settings.BASE_DIR, env=ambiente, capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(feito.returncode, 0, feito.stderr)
+        linhas = feito.stdout.strip().splitlines()
+        self.assertTrue(linhas, f"o outro processo não respondeu nada: {feito.stderr}")
+        return linhas[-1]
+
+    def test_o_settings_usa_o_redis(self):
+        """Sem isto, os dois abaixo poderiam passar por outro motivo."""
+        self.assertEqual(settings.CACHES["assercao"]["BACKEND"], "django.core.cache.backends.redis.RedisCache")
+        self.assertTrue(autenticacao_conecta.cache_compartilhado())
+
+    def test_outro_worker_usou_primeiro(self):
+        token = self.par.assina()
+        self.assertEqual(self.outro_processo(token), "GRAVOU")
+        self.assertRecusa(self.chama("get", QUEM_SOU, token), 401, "JTI_REPETIDO")
+
+    def test_no_redis_jti_e_marco_sao_uma_operacao_so(self):
+        """Em produção o caminho é o script atômico, com o relógio do Redis — e
+        nunca os passos separados, em que um worker parado encurtaria a janela."""
+        cache_do_jti = autenticacao_conecta._cache_do_jti()
+        passos = mock.patch.object(
+            autenticacao_conecta.AutenticacaoConecta, "_grava_em_passos", side_effect=AssertionError("em passos")
+        )
+        with passos:
+            cache_do_jti.clear()
+            token = self.par.assina()
+            self.assertRecusa(self.chama("get", QUEM_SOU, token), 503, "INTEGRACAO_DESLIGADA")
+            marco = cache_do_jti.get(autenticacao_conecta.MARCO_DO_CACHE)
+            self.assertIsInstance(marco, int)
+            self.assertLessEqual(abs(marco - time.time()), 5)
+            # O 503 não queimou o token; com a janela vencida, ele passa uma vez.
+            cache_contando_ha_tempo()
+            self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+            self.assertRecusa(self.chama("get", QUEM_SOU, token), 401, "JTI_REPETIDO")
+
+    def test_este_worker_usou_primeiro(self):
+        token = self.par.assina()
+        self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+        self.assertEqual(self.outro_processo(token), "JTI_REPETIDO")

@@ -34,7 +34,13 @@ services:
     env_file: .env
     restart: unless-stopped
     depends_on:
-      - db-tunnel
+      db-tunnel:
+        condition: service_started
+      # Sem o Redis de pé o backend nem sobe: é nele que mora o `jti` da
+      # asserção do Conecta. Só vale para a SUBIDA — se o Redis cair depois, o
+      # backend segue servindo (ver o bloco `redis` abaixo).
+      redis:
+        condition: service_healthy
     expose:
       - "8000"
     ports:
@@ -75,6 +81,74 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  redis:
+    # Cache compartilhado do backend (TSK-1068), em LOBBY_REDIS_URL. Serve a dois
+    # aliases do `CACHES` (backend/config/settings.py):
+    #   assercao  o `jti` da asserção do Conecta (ADR-002 §4.6). Falha FECHADA:
+    #             sem este Redis a integração responde 503.
+    #   default   os tetos de chamada (LOBBY_RATE_*). Falha ABERTA: sem este
+    #             Redis o lobby do consultor segue vendendo, só sem contar.
+    #
+    # Próprio do Lobby, e não o `identidade-redis` do Conecta ID: aquele está na
+    # rede fechada `identidade_interna` e não tem senha — abri-lo à
+    # `identidade-net` o exporia a todo app da rede (decisão de 15/10/2026).
+    #
+    # SÓ na rede `default` deste compose: sem `ports` e fora da `identidade-net`.
+    # Quem fala com ele é o backend, e mais ninguém.
+    image: redis:7-alpine
+    container_name: lobby-redis
+    restart: unless-stopped
+    # Não roda como root: o `sh` abaixo não passa pelo entrypoint que troca de
+    # usuário (ele só faz isso quando o comando é `redis-server`).
+    user: redis
+    networks:
+      - default
+    environment:
+      # A senha, lida do .env deste diretório (o link para o lobby.env). O
+      # `redis-cli` do healthcheck a usa sozinho por esta variável. Sem ela o
+      # compose para ANTES de subir qualquer coisa — um Redis sem senha não sobe.
+      REDISCLI_AUTH: ${LOBBY_REDIS_SENHA:?defina LOBBY_REDIS_SENHA no .env - ver deploy/RUNBOOK.md}
+    # A senha vai por arquivo, e não por `--requirepass` na linha de comando: o
+    # argv de processo de container aparece no `ps` de qualquer usuário do host.
+    #
+    # Sem persistência (`save ""`, sem AOF): é cache. Reiniciar o Redis zera os
+    # tetos e os `jti`; para uma asserção já usada não passar de novo, o backend
+    # fecha a integração por 130 s depois de achar o Redis vazio (ver
+    # MARCO_DO_CACHE em backend/apps/contas/autenticacao_conecta.py).
+    #
+    # `noeviction`, e não `volatile-ttl` nem `allkeys-lru`: as duas descartariam
+    # justamente o `jti`. O `volatile-ttl` tira primeiro a chave mais perto de
+    # vencer, e o `jti` (~70 s) vence antes de qualquer teto (até 1 h); o
+    # `allkeys-lru` tira a menos lida, e o `jti` é gravado uma vez e nunca lido.
+    # `jti` descartado antes do `exp` é asserção que pode ser repetida. Com
+    # `noeviction`, memória cheia vira erro de escrita: o `jti` falha FECHADO
+    # (503) e os tetos falham ABERTOS — o mesmo de Redis fora. Toda chave daqui
+    # tem prazo (o `jti` até o `exp`, os tetos até a janela deles; a exceção é o
+    # marco de uma linha acima), então a memória se limpa sozinha; 64 MB é folga
+    # larga para isso.
+    command:
+      - sh
+      - -c
+      - >-
+        umask 077 &&
+        printf 'requirepass %s\n' "$$REDISCLI_AUTH" > /tmp/senha.conf &&
+        exec redis-server /tmp/senha.conf
+        --save ''
+        --appendonly no
+        --maxmemory 64mb
+        --maxmemory-policy noeviction
+    healthcheck:
+      # Autentica pelo REDISCLI_AUTH: com a senha errada a resposta é NOAUTH ou
+      # WRONGPASS, nunca PONG.
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

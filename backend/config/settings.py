@@ -154,8 +154,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Desde a TSK-1059 o cache compartilhado deixou de ser opcional para uma coisa:
 # a asserção do Conecta guarda nele o `jti` contra repetição (ADR-002 §4.6), e
 # sem Redis a integração fica DESLIGADA em produção (503 INTEGRACAO_DESLIGADA).
-# Em produção `LOBBY_REDIS_URL` aponta para o Redis do Conecta ID, num índice
-# próprio — ver o .env.example e o deploy/RUNBOOK.md.
+# Em produção `LOBBY_REDIS_URL` aponta para o Redis PRÓPRIO do Lobby (TSK-1068),
+# o serviço `redis` do docker-compose.yml, com senha e só na rede interna do
+# compose — ver o .env.example e o deploy/RUNBOOK.md.
 #
 # DOIS ALIASES PARA O MESMO REDIS, de propósito:
 #   default   os throttles. Falha ABERTA (`config/cache.py`): Redis fora não
@@ -228,8 +229,13 @@ CONECTA_ASSERCAO_CHAVES = os.environ.get("CONECTA_ASSERCAO_CHAVES", "").strip()
 CONECTA_ASSERCAO_EMISSOR = os.environ.get("CONECTA_ASSERCAO_EMISSOR", "conecta").strip()
 # 10 s nas duas pontas (§4.5). Teto de 30 no código: recusa por relógio se
 # resolve no NTP, e não alargando a janela em que uma asserção capturada serve.
+# O teto mora numa constante só porque a janela de cache vazio da asserção
+# (`JANELA_DEPOIS_DE_CACHE_VAZIO`, em apps/contas/autenticacao_conecta.py) é
+# calculada a partir dele: subir um sem o outro abriria a repetição.
+CONECTA_ASSERCAO_TOLERANCIA_TETO = 30
 CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS = max(
-    0, min(30, int(os.environ.get("CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS", "10")))
+    0,
+    min(CONECTA_ASSERCAO_TOLERANCIA_TETO, int(os.environ.get("CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS", "10"))),
 )
 
 # === n8n ===

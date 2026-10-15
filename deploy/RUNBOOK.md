@@ -19,6 +19,7 @@ Operação do Lobby na **prod.solucoes (187.77.48.164)**.
 | Identidade | Conecta ID, por `identidade-api:8000` na rede `identidade-net` |
 | Departamentos | `lobby-departamentos` — traz a lista do Omie para o dropdown do Elite e da APN, de hora em hora; sem porta |
 | Categorias | `lobby-categorias` — traz as categorias financeiras para o campo Categoria da APN, de hora em hora, pelo `ListarCategorias` do Omie com a mesma chave dos departamentos; sem porta |
+| Redis (TSK-1068) | `lobby-redis` — `redis:7-alpine` próprio do Lobby, com senha, só na rede interna do compose (sem porta no host, fora da `identidade-net`). Guarda o `jti` da asserção do Conecta e os tetos de chamada. É cache: não persiste. Ver [Redis do Lobby](#redis-do-lobby-tsk-1068) |
 | Conecta (TSK-1059) | O Admin Lobby do Conecta chama `/api/integracao/*` e algumas rotas de administração com a asserção `X-Conecta-Assercao` (ADR-002 §13). Precisa de `CONECTA_ASSERCAO_CHAVES` e de `LOBBY_REDIS_URL`; sem eles, 503 `INTEGRACAO_DESLIGADA` e nada mais muda |
 
 Portas vizinhas já tomadas nesta VPS — confira antes de mexer:
@@ -86,8 +87,10 @@ cp .env.example /opt/conecta/env/lobby.env   # chmod 600
 ln -s /opt/conecta/env/lobby.env /opt/conecta/app/Lobby_SejaAP/.env
 ```
 
-Preencha `DJANGO_SECRET_KEY`, `DATABASE_URL`, `IDENTIDADE_APP_KEY` e, para os
-departamentos, `OMIE_APP_KEY` e `OMIE_APP_SECRET`.
+Preencha `DJANGO_SECRET_KEY`, `DATABASE_URL`, `IDENTIDADE_APP_KEY`, a senha do
+Redis (`LOBBY_REDIS_SENHA` e `LOBBY_REDIS_URL`, gerados como em
+[Redis do Lobby](#redis-do-lobby-tsk-1068) — sem a senha o compose não sobe nada)
+e, para os departamentos, `OMIE_APP_KEY` e `OMIE_APP_SECRET`.
 
 ### 5. Subir
 
@@ -277,6 +280,197 @@ publicar.**
    [Só o front](#só-o-front). Os valores de Relatório e Devolutiva (R$ 150 e
    R$ 450, livres, até alguém salvar) ficam na aba **DH - Avaliação** do `/admin`.
 
+### Redis do Lobby (TSK-1068)
+
+O compose tem um serviço `redis` (container `lobby-redis`): `redis:7-alpine`, com
+senha, **só na rede `default` deste compose** — sem porta no host e fora da
+`identidade-net`. O backend o usa por `LOBBY_REDIS_URL`, para duas coisas:
+
+| Alias do cache | Para quê | Redis fora do ar |
+|---|---|---|
+| `assercao` | o `jti` da asserção do Conecta, contra repetição | falha **fechado**: a integração responde 503 |
+| `default` | os tetos de chamada (`LOBBY_RATE_*`) | falha **aberto**: o lobby vende, só sem contar |
+
+Por que um Redis próprio, e não o `identidade-redis` do Conecta ID: aquele vive na
+rede fechada `identidade_interna` e não tem senha; pô-lo na `identidade-net`
+o abriria a todo app dela (decisão do Mathias, 15/10/2026).
+
+Como ele está configurado, e por quê (os detalhes estão no `docker-compose.yml`):
+
+- **Senha** (`requirepass`) lida de `LOBBY_REDIS_SENHA`, entregue ao Redis por um
+  arquivo dentro do container, nunca na linha de comando (o argv de container
+  aparece no `ps` do host). O `LOBBY_REDIS_URL` leva a mesma senha.
+- **Sem persistência** (`save ""`, sem AOF). Reiniciar o Redis zera os tetos e
+  os `jti`. Uma asserção já usada e ainda no prazo passaria de novo, então o
+  backend guarda no Redis quando ele começou a contar e, com o Redis recém-vazio,
+  **fecha a integração por 130 s contados da primeira chamada do Conecta depois
+  que ele volta** (503 e `cache do jti recém-esvaziado` no log; `MARCO_DO_CACHE`
+  em `autenticacao_conecta.py`): é a vida máxima de uma asserção, 70 s, mais duas
+  vezes o teto da tolerância de relógio. O 503 não queima a asserção: o Conecta
+  pode repeti-la depois.
+- **64 MB e `noeviction`.** Nem `volatile-ttl` nem `allkeys-lru`: os dois
+  descartariam primeiro justamente o `jti` (o de prazo mais curto, ~70 s, e o
+  que nunca é lido depois de gravado), e `jti` descartado antes do `exp` é
+  asserção que pode ser repetida. Com `noeviction`, memória cheia vira erro de
+  escrita — o mesmo que Redis fora: integração em 503, tetos abertos. Toda chave
+  dali tem prazo (menos o marco de uma linha do item acima), então a memória se
+  limpa sozinha.
+- **`healthcheck`** (`redis-cli ping` autenticado), e o backend só sobe com ele
+  `healthy`. Se o Redis cair **depois**, o backend continua servindo.
+
+**`sudo docker compose config` imprime a senha.** Não cole a saída dele em
+chamado, PR nem chat.
+
+**Nunca rode a suíte (`manage.py test`) dentro de um container de produção.** Ela
+esvazia o Redis apontado em `LOBBY_REDIS_URL` (`cache.clear()` é FLUSHDB): os
+`jti` somem, o que abre uma janela de repetição de ~1 min, e os tetos zeram.
+
+#### Primeiro deploy com o Redis
+
+Uma vez só. Sem migration: é o roteiro [Front + backend](#front--backend), com a
+senha e os tetos gravados ANTES — o compose novo **recusa subir qualquer serviço**
+sem `LOBBY_REDIS_SENHA`, inclusive o `--no-deps frontend`.
+
+```bash
+ssh prod.solucoes.sejaap
+cd /opt/conecta/app/Lobby_SejaAP
+
+# 1. Cópia do lobby.env de hoje: é o caminho de volta.
+sudo cp -p /opt/conecta/env/lobby.env /opt/conecta/env/lobby.env.antes-tsk1068
+
+# 2. Senha nova, gerada e gravada dentro de um `sh -c` do root: o valor nunca
+#    aparece na tela, no histórico do shell (o que fica lá é este texto, sem a
+#    senha) nem no argv de processo (`printf` é builtin do sh). Hexadecimal: nada
+#    a escapar na URL. Recusa rodar se a senha ou a URL já tiverem valor; as
+#    linhas VAZIAS (as do .env.example) ele apaga e escreve de novo.
+sudo sh -c '
+  f=/opt/conecta/env/lobby.env
+  if grep -Eq "^LOBBY_REDIS_(SENHA|URL)=." "$f"; then echo "LOBBY_REDIS_* já preenchido em $f: confira à mão"; exit 1; fi
+  sed -i -E "/^LOBBY_REDIS_(SENHA|URL)=$/d" "$f"
+  umask 077
+  s=$(openssl rand -hex 32)
+  printf "\nLOBBY_REDIS_SENHA=%s\nLOBBY_REDIS_URL=redis://:%s@redis:6379/0\n" "$s" "$s" >> "$f"
+  echo "gravado"
+'
+sudo grep -c '^LOBBY_REDIS_' /opt/conecta/env/lobby.env     # 2 (conta as linhas, não mostra)
+sudo stat -c '%U %a' /opt/conecta/env/lobby.env              # root 600
+
+# 3. Tetos. Primeiro, o que está lá hoje (não é segredo):
+sudo grep '^LOBBY_RATE_' /opt/conecta/env/lobby.env
+```
+
+O alvo é **3× o que estiver lá hoje** (veja *Os tetos* abaixo). Se o `grep`
+mostrou os valores padrão do `.env.example` antigo (ou nenhum), este comando os
+grava. Se algum estiver diferente do padrão antigo, **não rode o bloco**: ele
+sobrescreve sem perguntar. Edite o arquivo à mão, com o triplo de cada valor.
+
+```bash
+sudo sh -c '
+  f=/opt/conecta/env/lobby.env
+  for par in CATALOGO=720/hour LOGIN=360/hour COMPROVANTE=360/hour DEFINIR_SENHA=60/hour \
+             DEPARTAMENTOS=1800/hour CATEGORIAS_FINANCEIRAS=1800/hour DH_AVALIACAO=1800/hour; do
+    nome=LOBBY_RATE_${par%%=*}
+    if grep -q "^$nome=" "$f"; then sed -i "s|^$nome=.*|$nome=${par#*=}|" "$f"
+    else printf "%s\n" "$nome=${par#*=}" >> "$f"; fi
+  done
+'
+sudo grep '^LOBBY_RATE_' /opt/conecta/env/lobby.env
+sudo stat -c '%U %a' /opt/conecta/env/lobby.env              # root 600, de novo
+
+# 4. Código novo, com as imagens de hoje tagueadas para o caminho de volta.
+git log --oneline -1                                         # anote: é o ANTES
+git pull --ff-only origin main
+for s in backend frontend departamentos categorias; do
+  sudo docker tag lobby-sejaap-$s:latest lobby-sejaap-$s:$(git rev-parse --short HEAD@{1})
+done
+sudo docker compose pull redis
+sudo docker compose build
+
+# 5. O Redis primeiro, e só com ele healthy o resto.
+sudo docker compose up -d redis
+sudo docker compose ps redis                                 # (healthy) em ~10 s
+sudo docker compose up -d                                    # recria backend, departamentos, categorias
+```
+
+Conferir:
+
+```bash
+sudo docker compose ps                                       # backend, frontend, redis healthy
+sudo docker port lobby-redis                                 # vazio: nenhuma porta no host
+sudo docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' lobby-redis
+#   lobby-sejaap_default        (só ela: nada de identidade-net)
+sudo docker compose exec redis redis-cli ping                # PONG (autentica pelo REDISCLI_AUTH)
+sudo docker compose exec redis env -u REDISCLI_AUTH redis-cli ping     # NOAUTH: sem senha, não entra
+sudo docker compose exec backend python manage.py shell -c \
+  "from django.core.cache import caches; c=caches['assercao']; c.set('tsk1068', 1, 10); print(type(c).__name__, c.get('tsk1068'))"
+#   RedisCache 1
+sudo docker compose logs backend | grep "integração com o Conecta"
+#   integração com o Conecta DESLIGADA: ...   ← certo: as CONECTA_ASSERCAO_* seguem vazias
+curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/api/catalogo   # 200
+```
+
+**Guarde a cópia `lobby.env.antes-tsk1068` até decidir que não vai mais voltar**
+(uma semana de Redis no ar sem incidente, por exemplo): o "Voltar tudo" abaixo
+depende dela. Ela é `root:600` como o original e tem os mesmos segredos (menos a
+senha do Redis). Só então: `sudo rm /opt/conecta/env/lobby.env.antes-tsk1068`.
+
+#### Os tetos
+
+Até aqui cada um dos 3 workers do gunicorn contava sozinho (`LocMemCache`), e o
+teto real era ~3× o escrito. Com o Redis ele passa a valer o número exato e
+sobrevive a deploy. Os valores que **mantêm o comportamento de hoje** são o
+triplo — e são os do `.env.example`:
+
+| Variável | Antes (escrito) | No `lobby.env` agora |
+|---|---|---|
+| `LOBBY_RATE_CATALOGO` | 240/hour | **720/hour** |
+| `LOBBY_RATE_LOGIN` | 120/hour | **360/hour** |
+| `LOBBY_RATE_COMPROVANTE` | 120/hour | **360/hour** |
+| `LOBBY_RATE_DEFINIR_SENHA` | 20/hour (padrão do código) | **60/hour** |
+| `LOBBY_RATE_DEPARTAMENTOS` | 600/hour | **1800/hour** |
+| `LOBBY_RATE_CATEGORIAS_FINANCEIRAS` | 600/hour | **1800/hour** |
+| `LOBBY_RATE_DH_AVALIACAO` | 600/hour | **1800/hour** |
+| `LOBBY_RATE_INTEGRACAO_*` | 120/min, 30/min, 60/min | **iguais**: nasceram para o Redis |
+
+Esquecer este passo não quebra nada na hora, mas aperta 3× de uma vez: num evento
+com vários consultores atrás do mesmo IP, o catálogo responde 429 e o `index.html`
+cai no catálogo EMBUTIDO — vende com preço possivelmente velho, sem erro na tela.
+O padrão do código (`settings.py`) segue o antigo; quem manda é o `lobby.env`.
+O de definir senha é baixo de propósito: se quiser o teto exato de 20/hora, deixe
+`LOBBY_RATE_DEFINIR_SENHA=20/hour`.
+
+#### Caminho de volta
+
+**Só desligar o Redis do backend** (o código fica): comente a linha
+`LOBBY_REDIS_URL` no `lobby.env` e `sudo docker compose up -d --no-deps backend`.
+O `--no-deps` é o que deixa o backend subir mesmo com o Redis `unhealthy` (o
+`depends_on` exigiria ele saudável); o túnel já está de pé. O backend
+volta ao `LocMemCache` — a integração fica em 503, como antes. Os tetos então
+voltam a ser por worker: volte também os `LOBBY_RATE_*` à tabela "Antes", senão o
+teto real vira 9× o antigo. **Não apague `LOBBY_REDIS_SENHA`**: sem ela o compose
+novo não sobe nada.
+
+**Voltar tudo** (código, `.env` e containers):
+
+```bash
+cd /opt/conecta/app/Lobby_SejaAP
+sudo cp -p /opt/conecta/env/lobby.env.antes-tsk1068 /opt/conecta/env/lobby.env
+# Sem a cópia (já apagada): apague à mão as linhas LOBBY_REDIS_SENHA e
+# LOBBY_REDIS_URL do lobby.env e volte os LOBBY_RATE_* à coluna "Antes" da
+# tabela de Os tetos. Nenhum outro valor mudou neste deploy.
+git checkout --detach <o SHA do ANTES>
+# --build é obrigatório: sem ele o compose reaproveita o :latest, que é a imagem
+# NOVA do passo 4, e o código "voltado" seguiria no ar.
+sudo docker compose up -d --build --remove-orphans   # o compose velho não conhece o redis: ele sai
+sudo docker compose ps                                # sem lobby-redis
+```
+
+Se o build do código velho falhar, use as imagens tagueadas no passo 4 em vez de
+construir: para cada serviço (`backend`, `frontend`, `departamentos`,
+`categorias`), `sudo docker tag lobby-sejaap-<serviço>:<SHA> lobby-sejaap-<serviço>:latest`,
+e então `sudo docker compose up -d --no-build --remove-orphans`. Depois,
+`git checkout main` antes do próximo `git pull`.
+
 ### Integração com o Conecta (TSK-1059): deploy, e só depois ligar
 
 São dois momentos, e o primeiro não liga nada:
@@ -312,31 +506,12 @@ mudou uma), a aba avisa e salvar unifica.
 **2. Ligar a integração** — quando o Conecta tiver a chave (o par nasce no
 servidor do Conecta, nunca aqui) e a TSK-1060 estiver pronta para chamar:
 
-1. **Redis.** A decisão de 15/10/2026 (ADR-002 §13.2) é usar o Redis do Conecta
-   ID, índice 3: `LOBBY_REDIS_URL=redis://identidade-redis:6379/3`. **Hoje o
-   `identidade-redis` só está na rede `identidade_interna`**, que a stack do
-   Conecta ID fecha de propósito ("os apps NÃO entram"), e o backend do Lobby só
-   está na `identidade-net`. Antes de preencher, alguém decide:
-   - pôr o serviço `redis` do Conecta ID também na `identidade-net` (mudança no
-     compose do conecta-id; abre aquele Redis, que não tem senha, a todo app da
-     `identidade-net`); ou
-   - dar ao Lobby um Redis próprio no compose dele (um serviço `redis:7-alpine`
-     sem porta publicada, só na rede `default`), e apontar
-     `LOBBY_REDIS_URL=redis://<serviço>:6379/0`.
-   O código não muda em nenhum dos dois. Sem Redis alcançável, a integração fica
-   em 503 e o resto do Lobby segue igual (os tetos de chamada falham abertos).
-
-   **Antes de preencher, reveja os `LOBBY_RATE_*`.** Com o `LocMemCache` de hoje
-   cada um dos 3 workers conta sozinho e o teto real é ~3× o configurado; com
-   Redis ele passa a valer o número exato e sobrevive a deploy. Num evento com
-   vários consultores atrás do mesmo IP, `LOBBY_RATE_CATALOGO=240/hour` vira 240
-   de verdade (hoje são ~720) — e o `index.html` cai no catálogo EMBUTIDO quando
-   recebe 429, ou seja, vende com preço possivelmente velho sem erro na tela.
-   Para manter o comportamento de hoje, triplique os valores no mesmo deploy
-   (por exemplo `LOBBY_RATE_CATALOGO=720/hour`, `LOBBY_RATE_COMPROVANTE=360/hour`,
-   `LOBBY_RATE_LOGIN=360/hour`, `LOBBY_RATE_DEFINIR_SENHA=60/hour`, e os de
-   600/hour para 1800/hour). O de definir senha é baixo de propósito: se quiser o
-   teto exato de 20/hora, deixe como está.
+1. **Redis.** Já resolvido pela TSK-1068: o Lobby tem o próprio, e o
+   `LOBBY_REDIS_URL` já está no `lobby.env` — ver
+   [Redis do Lobby](#redis-do-lobby-tsk-1068), que também traz os `LOBBY_RATE_*`
+   revistos. Confira que o backend o enxerga antes de ligar (o `shell -c` da
+   conferência de lá deve imprimir `RedisCache 1`): sem ele a integração fica
+   em 503 mesmo com a chave.
 2. **Chave pública.** `CONECTA_ASSERCAO_CHAVES` no `.env` (formato no
    `.env.example`: conjunto JWK, um `kid` por chave). Nunca a privada: o Lobby
    recusa um JWK com `d`.
@@ -364,7 +539,7 @@ tolerância.
 ## Verificações
 
 ```bash
-sudo docker compose ps                                                           # 3 healthy + departamentos e categorias running
+sudo docker compose ps                                                           # backend, frontend e redis healthy + db-tunnel, departamentos e categorias running
 sudo docker compose logs --tail 3 departamentos                                  # "Departamentos sincronizados: N ativos…"
 curl -s https://lobby.sejaap.com.br/api/departamentos | head -c 200              # JSON público, só os ativos
 sudo docker compose logs --tail 3 categorias                                     # "Categorias financeiras sincronizadas: N ativas…"
@@ -463,6 +638,17 @@ categorias do Omie está sob 1.10" quer dizer que o grupo APN foi renumerado no
 Omie: ajuste `CATEGORIAS_FINANCEIRAS_PREFIXOS` no `lobby.env` e recrie o
 container `categorias`.
 
+**Redis do Lobby fora do ar** (`lobby-redis` parado ou `unhealthy`) → o lobby
+segue vendendo: os tetos de chamada falham abertos, com um aviso por minuto no log
+(`Redis indisponível no cache default`). A integração com o Conecta responde 503
+`INTEGRACAO_DESLIGADA` até ele voltar — e por mais 130 s a partir da primeira
+chamada do Conecta depois disso, porque ele volta vazio (ver *Sem persistência* em [Redis do Lobby](#redis-do-lobby-tsk-1068)).
+`sudo docker compose up -d redis` o traz de volta, e o backend reconecta sozinho,
+sem reiniciar. Só a SUBIDA do
+backend depende dele: com o Redis fora, um `up` que recrie o backend falha com
+`dependency failed to start` — e o backend que já estava no ar continua de pé.
+`NOAUTH`/`WRONGPASS` no log é a senha das duas linhas do `lobby.env` divergindo.
+
 **`AUTH_CENTRAL_ATIVO=false` não é rollback, é tranca.** Não há senha local neste app;
 desligar tira todo mundo, inclusive a diretoria.
 
@@ -477,13 +663,16 @@ janela de indisponibilidade:
 
 ## Pendências conhecidas
 
-- **Sem cache compartilhado (até ligar a integração do Conecta).** O throttle das
-  rotas anônimas usa `LocMemCache`, que é por processo do gunicorn (3 workers) e zera
-  a cada deploy. Os tetos são contenção de rajada, não limite exato. Preencher
-  `LOBBY_REDIS_URL` resolve, e desde a TSK-1059 o pacote `redis` está no
-  `requirements.txt` — a armadilha de "sobe e morre no primeiro throttle" acabou. Com
-  o Redis fora do ar, os tetos falham abertos (`config/cache.py`) em vez de virar 500
-  no lobby. Falta a rede: ver [Integração com o Conecta](#integração-com-o-conecta-tsk-1059-deploy-e-só-depois-ligar).
+- **Tetos de chamada exatos desde a TSK-1068.** Com o Redis do Lobby os
+  `LOBBY_RATE_*` passaram a valer o número escrito para os 3 workers juntos; os
+  do `lobby.env` foram triplicados para manter o comportamento de antes (ver
+  [Os tetos](#os-tetos)). Se o tráfego mostrar que dá para apertar, aperte
+  olhando o log de 429, não de cabeça.
+- **Os 64 MB do Redis do Lobby podem encher de propósito.** Uma enxurrada de IPs distintos (ver o item abaixo: a origem
+  aceita `CF-Connecting-IP` de quem contorna a Cloudflare) pode encher os 64 MB
+  de baldes de teto; aí os tetos falham abertos e a integração fica em 503 até as
+  chaves vencerem (no máximo 1 h). É de propósito (`noeviction`, ver
+  [Redis do Lobby](#redis-do-lobby-tsk-1068)) e some com o fecho da 443.
 - **A origem aceita conexão de fora da Cloudflare** (medido em 21/09/2026, TSK-195).
   O IP do visitante vem do `CF-Connecting-IP` (`backend/config/real_ip.py`), e ele só é
   confiável quando a requisição passou pela Cloudflare. Mas a 443 da .164 responde a
