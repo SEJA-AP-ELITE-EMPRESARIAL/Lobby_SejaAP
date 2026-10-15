@@ -38,6 +38,7 @@ from .models import (
     arredonda,
     normaliza_sigla,
 )
+from .registro import alvo_de_produto, descreve, diferencas, fotografia, grava_publicacao
 from .vigencias import registrar_produto
 
 
@@ -55,6 +56,8 @@ def _decimal(bruto, campo, teto):
     try:
         valor = arredonda(Decimal(str(bruto).replace(",", ".").strip()))
     except (InvalidOperation, ValueError, TypeError, AttributeError):
+        raise ProdutoInvalido(f"{campo} inválido.")
+    if not valor.is_finite():  # "NaN" passa pelo quantize e estourava abaixo
         raise ProdutoInvalido(f"{campo} inválido.")
     if not (Decimal(0) < valor <= teto):
         raise ProdutoInvalido(f"{campo} fora da faixa permitida.")
@@ -182,6 +185,19 @@ def cria(dados: dict, *, autor=None) -> Produto:
     _valida(produto)
     produto.save()
     registrar_produto(produto, autor=autor, quando=timezone.now())
+    # Produto novo muda o que todo consultor vê: entra na trilha de publicações
+    # com autor, como qualquer mudança de preço (TSK-1059).
+    if produto.de_formulario:
+        preco = "valores no formulário"
+    elif produto.recorrente:
+        preco = f"{descreve('mensalidade', produto.mensalidade)} × {produto.vigencia_meses} meses"
+    else:
+        preco = descreve("valor", produto.valor)
+    grava_publicacao(
+        autor=autor,
+        linhas=[f"Novo produto em {categoria.nome}: {produto.nome} ({produto.sigla}), {preco}"],
+        alvos=[alvo_de_produto(produto)],
+    )
     return produto
 
 
@@ -199,6 +215,7 @@ def edita(categoria_slug: str, slug: str, dados: dict, *, autor=None) -> Produto
             f'Produto "{slug}" não existe em "{categoria_slug}". Recarregue a página.'
         )
 
+    antes = fotografia(produto)
     _aplica_comuns(produto, dados)
     if "recorrente" in dados:
         _aplica_valores(produto, dados)
@@ -206,4 +223,13 @@ def edita(categoria_slug: str, slug: str, dados: dict, *, autor=None) -> Produto
     _valida(produto)
     produto.save()
     registrar_produto(produto, autor=autor, quando=timezone.now())
+    # Até a TSK-1059 este PATCH mudava preço e nome sem publicação nenhuma: o
+    # preço deixava `Vigencia`, o texto não deixava nada. Agora é uma publicação
+    # por gravação, como o PUT do catálogo — inclusive a que não mudou nada,
+    # porque foi uma pessoa que apertou "salvar".
+    grava_publicacao(
+        autor=autor,
+        linhas=diferencas(antes["nome"], antes, fotografia(produto)),
+        alvos=[alvo_de_produto(produto)],
+    )
     return produto

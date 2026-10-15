@@ -514,9 +514,18 @@ class PrimeiroVencimento(models.TextChoices):
 class PoliticaCobranca(models.Model):
     """Como o cronograma de uma venda nasce — o que era constante no `index.html`.
 
-    Uma linha vale para o Lobby inteiro (`geral=True`); cada produto pode ter a
-    sua, e o que não for preenchido lá herda a geral. Foi a forma escolhida com o
-    usuário: o caso comum é uma regra só, e a exceção não pode exigir deploy.
+    TRÊS NÍVEIS, desde a TSK-1059 (15/10/2026):
+
+    - a da CATEGORIA (`categoria`): é a que vale para os produtos dela. Cada
+      categoria (Elite, APN, Produtos...) tem a sua;
+    - a do PRODUTO (`produto`): a exceção. Vence a da categoria;
+    - a GERAL (`geral=True`): a regra com que toda categoria COMEÇA. Categoria
+      sem linha própria — uma categoria nova, criada no /django-admin/ — segue a
+      geral até alguém gravar a regra dela.
+
+    Até a TSK-1059 havia só a geral e as exceções. A migration 0015 copiou a
+    geral para cada categoria que existia, então no dia do deploy nenhuma venda
+    mudou de data.
 
     Não confundir com NEGOCIAÇÃO. Isto é o padrão com que o cronograma abre, e
     vale para todas as vendas seguintes — por isso é da diretoria, mesmo alcance
@@ -538,6 +547,16 @@ class PoliticaCobranca(models.Model):
         blank=True,
         verbose_name="produto",
         help_text="Vazio na política geral. Preenchido, é a exceção deste produto.",
+    )
+    categoria = models.OneToOneField(
+        Categoria,
+        on_delete=models.CASCADE,
+        related_name="politica_cobranca",
+        null=True,
+        blank=True,
+        verbose_name="categoria",
+        help_text="Preenchido, é a regra desta categoria: vale para os produtos "
+        "dela que não têm exceção própria.",
     )
 
     dia_vencimento = models.PositiveSmallIntegerField(
@@ -571,7 +590,7 @@ class PoliticaCobranca(models.Model):
     class Meta:
         verbose_name = "política de cobrança"
         verbose_name_plural = "políticas de cobrança"
-        ordering = ("-geral", "produto__categoria", "produto__ordem", "id")
+        ordering = ("-geral", "categoria__ordem", "produto__categoria", "produto__ordem", "id")
         constraints = [
             # Uma única política geral. `fields=["geral"]` com a condição faz um
             # índice PARCIAL: só as linhas com geral=True disputam a unicidade,
@@ -581,18 +600,25 @@ class PoliticaCobranca(models.Model):
                 condition=models.Q(geral=True),
                 name="uma_unica_politica_geral",
             ),
-            # As duas metades: geral não tem produto, exceção tem. Sem isto, uma
-            # linha com os dois (ou nenhum) passaria despercebida e o front leria
-            # uma política que não é de ninguém.
+            # Os três casos, um de cada vez: geral (nem produto nem categoria),
+            # exceção de produto, regra de categoria. Sem isto, uma linha com
+            # dois alvos (ou nenhum) passaria despercebida e o front leria uma
+            # política que não é de ninguém.
             models.CheckConstraint(
-                name="politica_geral_ou_de_produto",
-                condition=models.Q(geral=True, produto__isnull=True)
-                | models.Q(geral=False, produto__isnull=False),
+                name="politica_geral_de_categoria_ou_de_produto",
+                condition=models.Q(geral=True, produto__isnull=True, categoria__isnull=True)
+                | models.Q(geral=False, produto__isnull=False, categoria__isnull=True)
+                | models.Q(geral=False, produto__isnull=True, categoria__isnull=False),
             ),
         ]
 
     def __str__(self) -> str:
-        alvo = self.produto.nome if self.produto else "todos os produtos"
+        if self.produto_id:
+            alvo = self.produto.nome
+        elif self.categoria_id:
+            alvo = f"categoria {self.categoria.nome}"
+        else:
+            alvo = "regra geral (início de toda categoria)"
         return f"dia {self.dia_vencimento} · {alvo}"
 
     @classmethod
@@ -653,6 +679,14 @@ class PublicacaoCatalogo(models.Model):
         default="",
         help_text="O que mudou em relação à publicação anterior, em texto.",
     )
+    alvos = models.TextField(
+        "alvos",
+        blank=True,
+        default="",
+        help_text="Os produtos (`categoria/slug`) e categorias que a publicação "
+        "tocou, entre barras: `|elite/pro|apn|`. É o que o histórico unificado "
+        "filtra por produto (TSK-1059). Vazio nas publicações de antes dele.",
+    )
 
     class Meta:
         verbose_name = "publicação do catálogo"
@@ -694,15 +728,24 @@ class Vigencia(models.Model):
         DIA_VENCIMENTO = "dia_vencimento", "Dia do vencimento"
         PRIMEIRO_VENCIMENTO = "primeiro_vencimento", "Primeira parcela"
         ENTRADA_PRAZO_DIAS = "entrada_prazo_dias", "Prazo da entrada (dias)"
+        # Categoria fora do lobby ("em implementação"), por `Categoria.travada`.
+        # Até a TSK-1059 só mudava pelo /django-admin/, sem rastro.
+        TRAVADA = "travada", "Fora do Lobby (em implementação)"
 
     # 'geral' para a política do Lobby; o slug do produto para o resto.
     CHAVE_GERAL = "geral"
+    # O que é da CATEGORIA (a regra de cobrança dela, se está fora do lobby) leva
+    # este prefixo. Sem ele, a cobrança da categoria "elite" e a exceção de um
+    # produto de slug "elite" disputariam a mesma chave e o mesmo campo — e a
+    # restrição de um valor aberto por campo derrubaria a gravação.
+    PREFIXO_CATEGORIA = "categoria:"
 
     chave = models.CharField(
         "chave",
-        max_length=40,
+        max_length=60,
         db_index=True,
-        help_text="O slug do produto, ou 'geral' para a política de cobrança.",
+        help_text="O slug do produto, 'geral' para a política de cobrança, ou "
+        "'categoria:<slug>' para o que é da categoria.",
     )
     rotulo = models.CharField(
         "rótulo",
@@ -740,6 +783,24 @@ class Vigencia(models.Model):
         default="",
         help_text="Cópia no momento do registro — a conta pode ser desativada "
         "depois, e o histórico não pode perder quem assinou.",
+    )
+    # Quem FECHOU o período. Na troca de valor é a mesma pessoa que abriu o
+    # seguinte; o que este campo acrescenta é a remoção de uma exceção de
+    # cobrança, que fecha sem abrir nada — e até a TSK-1059 não guardava quem.
+    encerrado_por = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="vigencias_encerradas",
+        verbose_name="encerrado por",
+    )
+    encerrado_por_email = models.EmailField(
+        "e-mail de quem encerrou",
+        blank=True,
+        default="",
+        help_text="Cópia no momento do encerramento, pelo mesmo motivo do "
+        "e-mail do autor.",
     )
 
     class Meta:

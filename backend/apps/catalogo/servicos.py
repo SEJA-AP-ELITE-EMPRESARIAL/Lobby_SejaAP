@@ -35,10 +35,9 @@ from .models import (
     VIGENCIA_MIN,
     Categoria,
     Produto,
-    PublicacaoCatalogo,
     arredonda,
 )
-from .serializers import serializa_catalogo
+from .registro import alvo_de_produto, grava_publicacao
 from .vigencias import registrar_categoria, registrar_produto
 
 
@@ -64,12 +63,23 @@ def _numero(valor):
     O KV precisava disso porque o admin mandava o que o `MoneyInput` produzisse.
     Mantido para não recusar uma publicação que hoje passa.
     """
-    if isinstance(valor, (int, float, Decimal)):
-        return Decimal(str(valor))
     try:
-        return Decimal(str(valor if valor is not None else "").replace(",", "."))
+        if isinstance(valor, (int, float, Decimal)):
+            numero = Decimal(str(valor))
+        else:
+            numero = Decimal(str(valor if valor is not None else "").replace(",", "."))
     except (InvalidOperation, ValueError):
         raise CatalogoInvalido("Valor numérico inválido no catálogo.")
+    # "NaN" e "Infinity" passam pelo Decimal e estouravam adiante, numa
+    # comparação, como 500 (achado na revisão da TSK-1059).
+    if not numero.is_finite():
+        raise CatalogoInvalido("Valor numérico inválido no catálogo.")
+    # Número gigante (1e26, ou 27 dígitos colados no campo) passava daqui e
+    # estourava no `arredonda`, fora de qualquer try; "1e1000000" ainda prendia o
+    # worker segundos no `int()`. Nenhum valor do catálogo passa de 10^9.
+    if numero.adjusted() > 15:
+        raise CatalogoInvalido("Valor numérico inválido no catálogo.")
+    return numero
 
 
 def _valor_publicado(bruto: dict, produto: Produto) -> Decimal:
@@ -113,7 +123,7 @@ def _valor_publicado(bruto: dict, produto: Produto) -> Decimal:
     return total
 
 
-def _publica_valor_referencia(bruta: dict, alteracoes: list, *, autor, quando):
+def _publica_valor_referencia(bruta: dict, alteracoes: list, alvos: set, *, autor, quando):
     """Aplica o valor de referência de uma categoria de fluxo próprio (a APN).
 
     O campo é OPCIONAL nos dois sentidos: ausente no corpo significa "não mexi
@@ -141,6 +151,7 @@ def _publica_valor_referencia(bruta: dict, alteracoes: list, *, autor, quando):
     if novo == categoria.valor_referencia:
         return
 
+    alvos.add(categoria.slug)
     alteracoes.append(
         Alteracao(
             produto=f"{categoria.nome} (valor de referência)",
@@ -185,6 +196,7 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
         raise CatalogoInvalido("O catálogo precisa ser uma lista com ao menos uma categoria.")
 
     alteracoes: list[Alteracao] = []
+    alvos: set[str] = set()
     agora = timezone.now()
 
     with transaction.atomic():
@@ -241,6 +253,7 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
                 atual = produto.mensalidade if produto.recorrente else produto.valor
 
                 if novo != atual:
+                    alvos.add(alvo_de_produto(produto))
                     alteracoes.append(Alteracao(produto=produto.nome, de=atual, para=novo))
                     if produto.recorrente:
                         produto.mensalidade = novo
@@ -255,17 +268,8 @@ def publica_catalogo(cats_recebidas, *, autor=None) -> tuple[list[dict], list[Al
                     registrar_produto(produto, autor=autor, quando=agora)
 
         for bruta in de_fluxo_proprio:
-            _publica_valor_referencia(bruta, alteracoes, autor=autor, quando=agora)
+            _publica_valor_referencia(bruta, alteracoes, alvos, autor=autor, quando=agora)
 
-        catalogo = serializa_catalogo(
-            Categoria.objects.prefetch_related("produtos__politica_cobranca").all()
-        )
+        publicacao = grava_publicacao(autor=autor, linhas=alteracoes, alvos=alvos)
 
-        PublicacaoCatalogo.objects.create(
-            autor=autor if autor and autor.is_authenticated else None,
-            autor_email=getattr(autor, "email", "") or "",
-            catalogo=catalogo,
-            resumo="\n".join(str(a) for a in alteracoes),
-        )
-
-    return catalogo, alteracoes
+    return publicacao.catalogo, alteracoes

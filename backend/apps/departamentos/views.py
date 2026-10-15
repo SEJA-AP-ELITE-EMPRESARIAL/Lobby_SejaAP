@@ -24,11 +24,11 @@ Mesmo corte do `/api/cobranca`: configurar o departamento vale para todas as
 próximas vendas, alcance de tabela, e não de uma venda. Gerente recebe 403; 401
 fica só para "não autenticado", porque é o que derruba a sessão do `/admin`.
 """
-from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.contas.autenticacao_conecta import AceitaAssercao, recusa
 from apps.contas.permissions import PodePublicarTabela
 
 from .servicos import (
@@ -55,7 +55,7 @@ class DepartamentosView(APIView):
         return _sem_cache(Response(estado_publico()))
 
 
-class ConfiguracaoView(APIView):
+class ConfiguracaoView(AceitaAssercao, APIView):
     """Lista completa ou departamento fixo. Só diretoria, sem teto por IP."""
 
     permission_classes = [IsAuthenticated, PodePublicarTabela]
@@ -67,5 +67,5 @@ class ConfiguracaoView(APIView):
         try:
             salvar_configuracao(request.data, autor=request.user)
         except ConfiguracaoInvalida as erro:
-            return _sem_cache(Response({"erro": str(erro)}, status=status.HTTP_400_BAD_REQUEST))
+            return _sem_cache(recusa(request, str(erro)))
         return _sem_cache(Response({"ok": True, **estado_configuracao()}))

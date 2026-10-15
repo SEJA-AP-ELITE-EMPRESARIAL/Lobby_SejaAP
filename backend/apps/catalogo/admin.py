@@ -12,7 +12,9 @@ Divisão de trabalho, e ela mudou em 17/08/2026:
   menor esforço era justamente o que não deixava rastro.
 
 O aviso que segue valendo: alteração feita por aqui **não** entra no histórico de
-publicações nem abre vigência. Para o valor de um produto, use o `/admin`.
+publicações nem abre vigência. Para o valor de um produto, use o `/admin`. A
+exceção é a trava da categoria (`travada`): desde a TSK-1059 mudá-la por aqui
+abre vigência com autor (`CategoriaAdmin.save_model`).
 """
 from django.contrib import admin
 
@@ -23,6 +25,8 @@ from .models import (
     PublicacaoCatalogo,
     Vigencia,
 )
+from .travas import NAO, SIM
+from .vigencias import registrar
 
 
 class ProdutoInline(admin.TabularInline):
@@ -72,6 +76,24 @@ class CategoriaAdmin(admin.ModelAdmin):
     def qtd_produtos(self, obj):
         return obj.produtos.count()
 
+    def save_model(self, request, obj, form, change):
+        """Liberar ou tirar a categoria daqui também entra na linha do tempo.
+
+        Desde a TSK-1059 a trava tem histórico com autor (`Vigencia`, campo
+        `travada`). Se ela mudasse por aqui em silêncio, a linha do tempo ficaria
+        dizendo o estado antigo — e a próxima mudança feita pelo Conecta, para
+        esse mesmo estado antigo, não seria registrada (o valor "não mudou").
+        """
+        super().save_model(request, obj, form, change)
+        if "travada" in form.changed_data:
+            registrar(
+                Vigencia.PREFIXO_CATEGORIA + obj.slug,
+                obj.nome,
+                Vigencia.Campo.TRAVADA,
+                SIM if obj.travada else NAO,
+                autor=request.user,
+            )
+
 
 @admin.register(Produto)
 class ProdutoAdmin(admin.ModelAdmin):
@@ -109,12 +131,13 @@ class ProdutoAdmin(admin.ModelAdmin):
 class PoliticaCobrancaAdmin(admin.ModelAdmin):
     """A regra de data do cronograma. O caminho normal é o `/admin`."""
 
-    list_display = ("__str__", "geral", "produto", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
+    list_display = ("__str__", "geral", "categoria", "produto", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
     list_filter = ("geral", "primeiro_vencimento")
 
     def has_delete_permission(self, request, obj=None):
         # A política geral não pode sumir: sem ela o front não monta cronograma.
-        # Exceção de produto se remove no /admin, que fecha a vigência junto.
+        # Exceção de produto se remove no /admin, que fecha a vigência junto. A
+        # regra de categoria também não se apaga: muda-se, pela tela, com autor.
         return False
 
 
@@ -149,7 +172,7 @@ class PublicacaoCatalogoAdmin(admin.ModelAdmin):
     list_display = ("publicado_em", "autor_email", "resumo_curto")
     ordering = ("-publicado_em",)
     search_fields = ("autor_email", "resumo")
-    readonly_fields = ("publicado_em", "autor", "autor_email", "catalogo", "resumo")
+    readonly_fields = ("publicado_em", "autor", "autor_email", "catalogo", "resumo", "alvos")
 
     def has_add_permission(self, request):
         return False

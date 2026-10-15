@@ -606,7 +606,11 @@ function AbaDepartamentos({ api }) {
 
   const lista = dados.departamentos;
   const salvoCodigo = dados.fixo?.codigo || '';
-  const sujo = escolha.modo !== dados.modo || (escolha.modo === 'fixo' && escolha.codigo !== salvoCodigo);
+  // TSK-1059: com escolhas diferentes por categoria (feitas no Admin Lobby do
+  // Conecta), esta aba não tem UMA escolha para mostrar. Salvar aqui unifica, e
+  // por isso fica disponível mesmo sem mexer no rádio.
+  const divergem = !!dados.categorias_divergem;
+  const sujo = divergem || escolha.modo !== dados.modo || (escolha.modo === 'fixo' && escolha.codigo !== salvoCodigo);
   const escolhido = lista.find((d) => d.codigo === escolha.codigo) || null;
   const podeSalvar = escolha.modo === 'lista' || !!escolhido;
   const fixoInativo = dados.modo === 'fixo' && dados.modo_em_vigor === 'lista';
@@ -618,7 +622,8 @@ function AbaDepartamentos({ api }) {
     if (!sujo || !podeSalvar) return;
     // Só o fixo pede confirmação: um departamento errado aqui manda TODA venda
     // seguinte para o lugar errado no Omie, sem ninguém na tela perceber.
-    if (escolha.modo === 'fixo' && !confirm(`Fixar o departamento em "${escolhido.descricao}"?\n\nToda venda do Elite e da APN passa a sair com ele, e o consultor não consegue trocar.`)) return;
+    if (escolha.modo === 'fixo' && !confirm(`Fixar o departamento em "${escolhido.descricao}"?\n\nToda venda, de todas as categorias, passa a sair com ele, e o consultor não consegue trocar.`)) return;
+    if (escolha.modo === 'lista' && divergem && !confirm('Voltar TODAS as categorias para a lista completa?')) return;
     setEstado('salvando'); setMsg('');
     try {
       const corpo = escolha.modo === 'fixo' ? { modo: 'fixo', codigo: escolha.codigo } : { modo: 'lista' };
@@ -646,6 +651,13 @@ function AbaDepartamentos({ api }) {
 
       {msg === 'ok' && <Aviso tipo="ok">Salvo. As próximas vendas já saem assim, e os lobbies que estão abertos se atualizam em até 5 minutos, sem perder a venda em andamento.</Aviso>}
       {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+      {divergem && (
+        <Aviso tipo="atencao">
+          As categorias estão com escolhas <strong>diferentes</strong>, feitas no Admin Lobby do Conecta:{' '}
+          {Object.values(dados.categorias || {}).map((c) => `${c.nome}: ${c.modo === 'fixo' && c.fixo ? 'fixo em ' + c.fixo.descricao : 'lista completa'}`).join(' · ')}.
+          {' '}Esta aba mostra uma escolha só — <strong>salvar aqui aplica a mesma a todas as categorias</strong>.
+        </Aviso>
+      )}
       {fixoInativo && (
         <Aviso tipo="atencao">
           <strong>{dados.fixo.descricao}</strong>, o departamento fixo, está inativo no Omie. Enquanto isso, o
@@ -664,7 +676,7 @@ function AbaDepartamentos({ api }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>apartment</span>
           <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>Campo Departamento da venda</h2>
-          <span className="chip neutro">Elite e APN</span>
+          <span className="chip neutro">todas as categorias</span>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
@@ -1099,7 +1111,9 @@ function AbaCobranca({ api, catalogo, aoPublicar }) {
   if (estado === 'erro') return <Falhou msg={msg} aoTentar={carregar} />;
 
   const opcoes = dados.opcoes;
-  const sujo = JSON.stringify({ geral: dados.geral, excecoes: dados.excecoes }) !== JSON.stringify({ geral: original.geral, excecoes: original.excecoes });
+  // TSK-1059: com regras diferentes por categoria (feitas no Conecta), publicar a
+  // geral daqui unifica todas — por isso fica disponível mesmo sem mudança.
+  const sujo = !!original.categorias_divergem || JSON.stringify({ geral: dados.geral, excecoes: dados.excecoes }) !== JSON.stringify({ geral: original.geral, excecoes: original.excecoes });
 
   // Produtos que ainda não têm exceção — só eles podem ser acrescentados.
   const semExcecao = [];
@@ -1165,6 +1179,13 @@ function AbaCobranca({ api, catalogo, aoPublicar }) {
 
       {msg === 'ok' && <Aviso tipo="ok">Datas publicadas. O próximo consultor a abrir o lobby já monta o cronograma com elas.</Aviso>}
       {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+      {dados.categorias_divergem && (
+        <Aviso tipo="atencao">
+          As categorias estão com regras <strong>diferentes</strong>, feitas no Admin Lobby do Conecta:{' '}
+          {Object.values(dados.categorias || {}).map((c) => `${c.nome}: dia ${c.dia_vencimento}, ${c.primeiro_vencimento === 'proximo' ? 'próximo vencimento' : 'mês seguinte'}, entrada ${c.entrada_prazo_dias ? 'em ' + c.entrada_prazo_dias + ' dia(s)' : 'no dia da venda'}`).join(' · ')}.
+          {' '}A regra abaixo é a geral — <strong>publicar aqui aplica a mesma regra a todas as categorias</strong>.
+        </Aviso>
+      )}
 
       <div className="card" style={{ marginBottom: 18 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>

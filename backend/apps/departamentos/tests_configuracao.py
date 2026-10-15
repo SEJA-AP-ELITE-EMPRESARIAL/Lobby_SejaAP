@@ -98,7 +98,12 @@ class FixoTest(Base):
         self.assertTrue(corpo["fixo"]["ativo"])
         self.assertEqual(corpo["alterado_por"], "diretoria@sejaap.com.br")
         self.assertIsNotNone(corpo["alterado_em"])
-        self.assertEqual(ConfiguracaoDepartamento.objects.get().autor, self.diretoria)
+        # O corpo do /admin de hoje vale para todas as categorias (TSK-1059):
+        # uma linha por categoria, todas com o autor.
+        self.assertEqual(ConfiguracaoDepartamento.objects.get(categoria__slug="elite").autor, self.diretoria)
+        self.assertEqual(
+            set(ConfiguracaoDepartamento.objects.values_list("autor", flat=True)), {self.diretoria.pk}
+        )
 
     def test_cada_gravacao_e_uma_linha_e_vale_a_ultima(self):
         self.salva({"modo": "fixo", "codigo": "1"})
@@ -106,15 +111,16 @@ class FixoTest(Base):
         self.assertEqual([d["codigo"] for d in self.publico()["departamentos"]], ["2"])
 
         self.salva({"modo": "lista"})
-        self.assertEqual(ConfiguracaoDepartamento.objects.count(), 3)
+        self.assertEqual(ConfiguracaoDepartamento.objects.filter(categoria__slug="elite").count(), 3)
         corpo = self.publico()
         self.assertEqual(corpo["modo"], "lista")
         self.assertEqual([d["codigo"] for d in corpo["departamentos"]], ["1", "2"])
 
     def test_lista_ignora_codigo_que_venha_junto(self):
         """A tela guarda o último fixo escolhido mesmo depois de voltar para a lista."""
+        self.salva({"modo": "fixo", "codigo": "2"})
         self.assertEqual(self.salva({"modo": "lista", "codigo": "1"}).status_code, 200)
-        self.assertIsNone(ConfiguracaoDepartamento.objects.get().departamento)
+        self.assertIsNone(ConfiguracaoDepartamento.objects.filter(categoria__slug="elite").first().departamento)
 
     def test_versao_muda_ao_fixar_e_volta_ao_soltar(self):
         lista = self.publico()["versao"]

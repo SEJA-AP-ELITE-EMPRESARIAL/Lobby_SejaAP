@@ -1,0 +1,5 @@
+{
+  "erro": "Em \"Entrar como usuário\" o Lobby é só leitura.",
+  "detail": "Em \"Entrar como usuário\" o Lobby é só leitura.",
+  "codigo": "IMPERSONACAO_RECUSADA"
+}

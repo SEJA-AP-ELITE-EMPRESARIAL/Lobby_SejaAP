@@ -26,3 +26,17 @@ djangorestframework==3.18.0
 djangorestframework-simplejwt==5.3.1
 python-dotenv==1.0.1
 whitenoise==6.7.0
+
+# Asserção do Conecta (TSK-1059, ADR-002 §13). O PyJWT já vinha pelo simplejwt;
+# fica pinado aqui porque agora é chamado DIRETO, com `algorithms=["EdDSA"]`, e
+# uma troca de versão dele passa a mexer na conferência da assinatura. Ed25519
+# no PyJWT exige o `cryptography` — sem ele a decodificação falha com
+# "Algorithm not supported", e a integração ficaria recusando tudo.
+PyJWT==2.15.1
+cryptography==50.0.2
+
+# Cliente do Redis para o `RedisCache` do Django. O `LOBBY_REDIS_URL` já existia
+# no settings, mas sem este pacote ligá-lo derrubava o app no primeiro acesso ao
+# cache. Com a asserção, o cache compartilhado deixou de ser opcional: é nele que
+# o `jti` fica guardado contra repetição (ADR-002 §4.6).
+redis==8.1.0

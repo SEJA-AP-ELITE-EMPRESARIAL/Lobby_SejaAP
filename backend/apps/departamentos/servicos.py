@@ -23,6 +23,16 @@ oferecendo a lista inteira.
 
 A versão também muda quando o modo muda, e é por ela que a tela aberta percebe
 que a diretoria fixou ou soltou o campo.
+
+POR CATEGORIA (TSK-1059)
+
+Desde 15/10/2026 a escolha é de cada categoria. A rota pública manda, além do
+que mandava, `categorias: {slug: {modo, departamentos}}`, e o `index.html` lê a
+da categoria da venda. As chaves de sempre (`modo`, `departamentos`) seguem para
+um lobby com o HTML de antes: quando todas as categorias estão iguais — o caso
+do dia do deploy — elas são exatamente as de antes, com a mesma versão; quando
+divergem, viram a lista completa, que nunca trava venda nem manda ao Omie o
+departamento de outra categoria.
 """
 import hashlib
 import json
@@ -164,59 +174,114 @@ def _publico(d: Departamento) -> dict:
     return {"codigo": d.codigo, "descricao": d.descricao, "estrutura": d.estrutura}
 
 
-def configuracao_atual() -> ConfiguracaoDepartamento | None:
-    """A última gravação da aba, ou None se a diretoria nunca a salvou."""
-    return ConfiguracaoDepartamento.objects.select_related("departamento").first()
+def _categorias():
+    from apps.catalogo.models import Categoria
+
+    return list(Categoria.objects.order_by("ordem", "id"))
 
 
-def fixo_em_vigor(configuracao=None) -> Departamento | None:
+def configuracoes_atuais() -> dict:
+    """A última gravação de cada categoria, por slug. Categoria sem gravação
+    fica de fora — e vale a lista completa para ela."""
+    atuais = {}
+    for configuracao in ConfiguracaoDepartamento.objects.filter(
+        categoria__isnull=False
+    ).select_related("departamento", "categoria"):
+        # A ordenação do modelo é da mais recente para a mais antiga: a primeira
+        # de cada categoria é a que vale.
+        atuais.setdefault(configuracao.categoria.slug, configuracao)
+    return atuais
+
+
+def configuracao_atual(categoria_slug) -> ConfiguracaoDepartamento | None:
+    """A última gravação de uma categoria, ou None se ninguém a salvou."""
+    return (
+        ConfiguracaoDepartamento.objects.filter(categoria__slug=categoria_slug)
+        .select_related("departamento")
+        .first()
+    )
+
+
+def fixo_em_vigor(configuracao) -> Departamento | None:
     """O departamento que o consultor vê travado, ou None quando vale a lista.
 
-    Fixo inativo no Omie conta como lista: ver `ConfiguracaoDepartamento`.
+    Fixo inativo no Omie conta como lista: ver `ConfiguracaoDepartamento`. A
+    regra vale para cada categoria separadamente.
     """
-    configuracao = configuracao if configuracao is not None else configuracao_atual()
     if configuracao is None or configuracao.modo != ConfiguracaoDepartamento.Modo.FIXO:
         return None
     departamento = configuracao.departamento
     return departamento if departamento is not None and departamento.ativo else None
 
 
+def _efetiva(configuracao) -> tuple:
+    """(modo, departamento) gravados, com "sem gravação" valendo a lista."""
+    if configuracao is None:
+        return (ConfiguracaoDepartamento.Modo.LISTA.value, None)
+    return (configuracao.modo, configuracao.departamento_id)
+
+
 def estado_publico() -> dict:
-    fixo = fixo_em_vigor()
-    if fixo is not None:
-        modo, lista = ConfiguracaoDepartamento.Modo.FIXO, [fixo]
+    lista_completa = list(ativos())
+    atuais = configuracoes_atuais()
+
+    por_categoria = {}
+    for categoria in _categorias():
+        fixo = fixo_em_vigor(atuais.get(categoria.slug))
+        if fixo is not None:
+            por_categoria[categoria.slug] = (ConfiguracaoDepartamento.Modo.FIXO, [fixo])
+        else:
+            por_categoria[categoria.slug] = (ConfiguracaoDepartamento.Modo.LISTA, lista_completa)
+
+    vistas = {(modo, tuple(d.codigo for d in lista)) for modo, lista in por_categoria.values()}
+    if len(vistas) <= 1:
+        # Todas iguais: as chaves de sempre são exatamente as de antes, e a
+        # versão também — o deploy não faz tela aberta nenhuma achar que mudou.
+        modo, lista = next(iter(por_categoria.values()), (ConfiguracaoDepartamento.Modo.LISTA, lista_completa))
+        chave_da_versao = versao(lista, modo)
     else:
-        modo, lista = ConfiguracaoDepartamento.Modo.LISTA, list(ativos())
+        modo, lista = ConfiguracaoDepartamento.Modo.LISTA, lista_completa
+        chave_da_versao = hashlib.sha256(
+            json.dumps(
+                [
+                    "categorias",
+                    # Código, nome e posição, como em `versao`: renomear um
+                    # departamento no Omie tem de mudar a versão, senão a tela
+                    # aberta descarta a resposta e segue com o nome velho.
+                    sorted(
+                        (slug, str(m), [[d.codigo, d.descricao, d.estrutura] for d in l])
+                        for slug, (m, l) in por_categoria.items()
+                    ),
+                ],
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+
     ultima = ultima_sincronizacao()
     return {
-        "versao": versao(lista, modo),
+        "versao": chave_da_versao,
         "sincronizado_em": ultima.isoformat() if ultima else None,
         # Com "fixo", `departamentos` tem um item só, e é ele que vai na venda.
         "modo": str(modo),
         "departamentos": [_publico(d) for d in lista],
+        "categorias": {
+            slug: {"modo": str(m), "departamentos": [_publico(d) for d in l]}
+            for slug, (m, l) in por_categoria.items()
+        },
     }
 
 
-def estado_configuracao() -> dict:
-    """O que a aba Departamentos do `/admin` precisa para abrir.
-
-    `modo` é o que a diretoria salvou; `modo_em_vigor` é o que o consultor vê
-    agora. Os dois só divergem quando o fixo foi inativado no Omie, e a aba
-    avisa.
-    """
-    configuracao = configuracao_atual()
+def _estado_da_categoria(categoria, configuracao) -> dict:
     fixo = configuracao.departamento if configuracao is not None else None
-    ultima = ultima_sincronizacao()
     return {
-        "modo": configuracao.modo if configuracao is not None else ConfiguracaoDepartamento.Modo.LISTA.value,
+        "nome": categoria.nome,
+        "modo": _efetiva(configuracao)[0],
         "modo_em_vigor": (
             ConfiguracaoDepartamento.Modo.FIXO.value
             if fixo_em_vigor(configuracao) is not None
             else ConfiguracaoDepartamento.Modo.LISTA.value
         ),
         "fixo": {**_publico(fixo), "ativo": fixo.ativo} if fixo is not None else None,
-        "departamentos": [_publico(d) for d in ativos()],
-        "sincronizado_em": ultima.isoformat() if ultima else None,
         "alterado_em": configuracao.criado_em.isoformat() if configuracao is not None else None,
         # Sem autor numa gravação que existe só se a conta foi apagada; a cópia
         # do e-mail fica. None aqui é "ninguém salvou ainda".
@@ -224,20 +289,67 @@ def estado_configuracao() -> dict:
     }
 
 
-def salvar_configuracao(dados, *, autor) -> ConfiguracaoDepartamento:
-    """Grava a escolha da aba como uma linha nova. Nada é editado."""
+def estado_configuracao() -> dict:
+    """O que a tela da diretoria precisa para abrir: a escolha de cada categoria.
+
+    `modo` é o que a diretoria salvou; `modo_em_vigor` é o que o consultor vê
+    agora. Os dois só divergem quando o fixo foi inativado no Omie, e a tela
+    avisa.
+
+    As chaves de fora de `categorias` são do /admin de hoje, que conhece uma
+    escolha só: com todas as categorias iguais, são essa escolha; com escolhas
+    diferentes, `categorias_divergem` é verdadeiro e elas mostram a lista
+    completa — salvar lá aplica a mesma escolha a todas.
+    """
+    atuais = configuracoes_atuais()
+    categorias = _categorias()
+    por_categoria = {c.slug: _estado_da_categoria(c, atuais.get(c.slug)) for c in categorias}
+
+    escolhas = {_efetiva(atuais.get(c.slug)) for c in categorias}
+    divergem = len(escolhas) > 1
+    mais_recente = max(atuais.values(), key=lambda c: (c.criado_em, c.id), default=None)
+    if divergem or mais_recente is None:
+        legado = {
+            "modo": ConfiguracaoDepartamento.Modo.LISTA.value,
+            "modo_em_vigor": ConfiguracaoDepartamento.Modo.LISTA.value,
+            "fixo": None,
+        }
+        if mais_recente is not None:
+            legado.update(
+                alterado_em=mais_recente.criado_em.isoformat(),
+                alterado_por=mais_recente.autor_email or None,
+            )
+        else:
+            legado.update(alterado_em=None, alterado_por=None)
+    else:
+        legado = _estado_da_categoria(mais_recente.categoria, mais_recente)
+        legado.pop("nome")
+
+    ultima = ultima_sincronizacao()
+    return {
+        "categorias": por_categoria,
+        "departamentos": [_publico(d) for d in ativos()],
+        "sincronizado_em": ultima.isoformat() if ultima else None,
+        **legado,
+        "categorias_divergem": divergem,
+    }
+
+
+def _escolha_validada(dados, rotulo="") -> tuple:
+    """(modo, departamento) conferidos. Nada é gravado aqui."""
+    em = f" em {rotulo}" if rotulo else ""
     if not isinstance(dados, dict):
-        raise ConfiguracaoInvalida("Configuração inválida.")
+        raise ConfiguracaoInvalida(f"Configuração inválida{em}.")
 
     modo = str(dados.get("modo") or "").strip()
     if modo not in ConfiguracaoDepartamento.Modo.values:
-        raise ConfiguracaoInvalida("Escolha entre a lista completa e um departamento fixo.")
+        raise ConfiguracaoInvalida(f"Escolha entre a lista completa e um departamento fixo{em}.")
 
     departamento = None
     if modo == ConfiguracaoDepartamento.Modo.FIXO:
         codigo = str(dados.get("codigo") or "").strip()
         if not codigo:
-            raise ConfiguracaoInvalida("Escolha qual departamento fica fixo.")
+            raise ConfiguracaoInvalida(f"Escolha qual departamento fica fixo{em}.")
         departamento = Departamento.objects.filter(codigo=codigo).first()
         if departamento is None:
             raise ConfiguracaoInvalida(
@@ -249,10 +361,62 @@ def salvar_configuracao(dados, *, autor) -> ConfiguracaoDepartamento:
                 f"{departamento.descricao} está inativo no Omie e não pode ficar fixo. "
                 "Recarregue a página."
             )
+    return modo, departamento
 
-    return ConfiguracaoDepartamento.objects.create(
-        modo=modo,
-        departamento=departamento,
-        autor=autor if getattr(autor, "is_authenticated", False) else None,
-        autor_email=getattr(autor, "email", "") or "",
-    )
+
+@transaction.atomic
+def salvar_configuracao(dados, *, autor) -> list[ConfiguracaoDepartamento]:
+    """Grava a escolha de cada categoria mandada, como linhas novas.
+
+    Dois corpos:
+
+        {"categorias": {"elite": {"modo": "fixo", "codigo": "..."}, "apn": {"modo": "lista"}}}
+            O do Admin Lobby do Conecta (ADR-002 §13.5). Categoria ausente no
+            corpo não muda.
+
+        {"modo": "fixo", "codigo": "..."}
+            O do /admin de hoje, que fala de uma escolha para o Lobby inteiro: vale
+            para TODAS as categorias.
+
+    Só ganha linha nova a categoria cuja escolha mudou: mandar o formulário
+    inteiro de volta não picota o histórico. A validação inteira acontece antes
+    da primeira escrita.
+    """
+    if not isinstance(dados, dict):
+        raise ConfiguracaoInvalida("Configuração inválida.")
+    if "categorias" in dados and "modo" in dados:
+        raise ConfiguracaoInvalida(
+            "Mande `categorias` (a escolha de cada categoria) ou `modo` (uma para "
+            "todas), não os dois."
+        )
+
+    categorias = {c.slug: c for c in _categorias()}
+    if "categorias" in dados:
+        brutas = dados.get("categorias")
+        if not isinstance(brutas, dict):
+            raise ConfiguracaoInvalida("`categorias` precisa ser um objeto: {\"elite\": {...}, ...}.")
+        escolhas = []
+        for slug, bruta in brutas.items():
+            categoria = categorias.get(str(slug))
+            if categoria is None:
+                raise ConfiguracaoInvalida(f'Categoria "{slug}" não existe. Recarregue a página.')
+            escolhas.append((categoria, _escolha_validada(bruta, categoria.nome)))
+    else:
+        escolha = _escolha_validada(dados)
+        escolhas = [(categoria, escolha) for categoria in categorias.values()]
+
+    atuais = configuracoes_atuais()
+    gravadas = []
+    for categoria, (modo, departamento) in escolhas:
+        if _efetiva(atuais.get(categoria.slug)) == (modo, getattr(departamento, "pk", None)):
+            continue
+        gravadas.append(
+            ConfiguracaoDepartamento.objects.create(
+                categoria=categoria,
+                modo=modo,
+                departamento=departamento,
+                autor=autor if getattr(autor, "is_authenticated", False) else None,
+                autor_email=getattr(autor, "email", "") or "",
+            )
+        )
+    return gravadas

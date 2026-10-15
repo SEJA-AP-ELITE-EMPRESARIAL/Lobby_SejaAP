@@ -35,8 +35,8 @@ class ConfiguracaoDepartamentoAdmin(admin.ModelAdmin):
     ativo — e editar uma linha antiga reescreveria o registro de quem decidiu.
     """
 
-    list_display = ("criado_em", "modo", "departamento", "autor_email")
-    list_filter = ("modo",)
+    list_display = ("criado_em", "categoria", "modo", "departamento", "autor_email", "copiada_de")
+    list_filter = ("categoria", "modo")
     readonly_fields = tuple(f.name for f in ConfiguracaoDepartamento._meta.fields)
 
     def has_add_permission(self, request):
