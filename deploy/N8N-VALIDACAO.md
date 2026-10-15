@@ -189,12 +189,12 @@ webhook nas expressões.
 
 ---
 
-## À parte: o DH - Avaliação ainda não tem fluxo (TSK-1056)
+## À parte: o fluxo do DH - Avaliação (TSK-1056)
 
 O DH - Avaliação (o antigo Avaliações, sigla LBA) manda a venda para um webhook
-próprio, que ainda não existe: a constante `DH_AVALIACAO_SEND_WEBHOOK_URL` do
-`index.html` está vazia, e sem ela o Lobby não envia. Quando o fluxo for
-construído, ele valida como descrito acima, com **uma conferência a mais**.
+próprio, `https://n8n.sejaap.com.br/webhook/2a894c98-b3f1-465f-8719-45706cad8f30`, desde 14/10/2026
+(`DH_AVALIACAO_SEND_WEBHOOK_URL` no `index.html`). O fluxo dele valida como
+descrito acima, com **uma conferência a mais**.
 
 O payload traz os itens em dois lugares:
 

@@ -198,12 +198,10 @@ const DH_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/lobby-dh';
 // do DH: o payload é outro, e segue o JSON combinado com o n8n (ver
 // `buildDhAvaliacaoPayload`). Mesma exigência de CORS dos demais.
 //
-// VAZIA DE PROPÓSITO (14/10/2026): o endereço do fluxo no n8n ainda não foi
-// definido. Sem ele, o DH - Avaliação abre e preenche, mas "Finalizar" trava no
-// resumo com aviso — a mesma regra da APN e do DH. Antes desta tarefa o
-// Avaliações vendia pelo webhook do Elite; publicar o front sem esta URL para
-// as vendas dele.
-const DH_AVALIACAO_SEND_WEBHOOK_URL = '';
+// Endereço passado pelo dono em 14/10/2026. O preflight foi conferido no mesmo
+// dia: 204, com POST e a origem do lobby liberados. Vazia, o "Finalizar" trava
+// no resumo com aviso, a mesma regra da APN e do DH.
+const DH_AVALIACAO_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/2a894c98-b3f1-465f-8719-45706cad8f30';
 // Parcelamento do DH - Avaliação: só no cartão, até 12×. Pix e boleto à vista.
 const DH_AVALIACAO_MAX_PARCELAS_CARTAO = 12;
 // Cobrança Pix da entrada (EasyFlow), em 2 endpoints:
@@ -855,7 +853,7 @@ let CATS = [
     desc: 'Produtos e serviços avulsos — cada um com o seu formulário de contratação.',
     products: [
       { id: 'recrutamento-selecao', name: 'Recrutamento e Seleção', sigla: 'RES', desc: 'Processo seletivo conduzido pela Seja AP, vaga a vaga', duration: 'por vaga', flow: 'dh', icon: 'person_search' },
-      { id: 'avaliacoes', name: 'DH - Avaliação', sigla: 'LBA', desc: 'Avaliação comportamental PROFILER — relatório e devolutiva', duration: 'por avaliação', flow: 'dh_avaliacao', icon: 'psychology' },
+      { id: 'avaliacoes', name: 'DH - Avaliação', sigla: 'LBA', desc: 'Avaliação de perfil e chaves para recrutamento', duration: '1', flow: 'dh_avaliacao', icon: 'workspace_premium' },
     ] },
 ];
 const COLORS = {
