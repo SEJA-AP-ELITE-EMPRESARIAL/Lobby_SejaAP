@@ -24,6 +24,10 @@ Desde 17/09/2026 (TSK-585) a diretoria escolhe, no `/admin`, se o consultor vê 
 lista inteira ou um departamento fixo. Isso é `ConfiguracaoDepartamento`, e não
 um campo em `Departamento`: a lista é espelho do Omie e o sincronizador reescreve
 as linhas dela; a escolha da diretoria não pode depender de ele não mexer.
+
+Desde 15/10/2026 (TSK-1059) a escolha é POR CATEGORIA — Elite, APN, Produtos —,
+cada uma com o seu modo e o seu fixo, e a regra do fixo inativo vale para cada
+uma separadamente.
 """
 from django.db import models
 from django.db.models import Q
@@ -71,7 +75,16 @@ class Departamento(models.Model):
 
 
 class ConfiguracaoDepartamento(models.Model):
-    """Como o campo Departamento aparece para o consultor no Elite e na APN.
+    """Como o campo Departamento aparece para o consultor, por categoria.
+
+    POR CATEGORIA (TSK-1059)
+
+    Cada linha é de uma categoria (`categoria`), e vale a mais recente DAQUELA
+    categoria. As linhas sem categoria são as de antes da TSK-1059, quando a
+    escolha era uma só para o Elite e a APN: ficam como histórico e não valem
+    mais para nada. A migration 0004 copiou a última delas para cada categoria
+    (`copiada_de` aponta a original), com o mesmo autor e a mesma data — foi
+    aquela pessoa, naquele dia, quem decidiu.
 
     UMA LINHA POR GRAVAÇÃO, E VALE A MAIS RECENTE
 
@@ -97,6 +110,26 @@ class ConfiguracaoDepartamento(models.Model):
         FIXO = "fixo", "departamento fixo"
 
     modo = models.CharField("modo", max_length=10, choices=Modo.choices)
+    categoria = models.ForeignKey(
+        "catalogo.Categoria",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="configuracoes_departamento",
+        verbose_name="categoria",
+        help_text="A categoria a que esta escolha vale. Vazio só nas gravações de "
+        "antes da TSK-1059, que valiam para o Elite e a APN juntos.",
+    )
+    copiada_de = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="copias",
+        verbose_name="copiada de",
+        help_text="Preenchido nas linhas que a migration da TSK-1059 copiou da "
+        "escolha única de antes. O histórico mostra a original, não as cópias.",
+    )
     departamento = models.ForeignKey(
         Departamento,
         on_delete=models.PROTECT,
@@ -140,6 +173,7 @@ class ConfiguracaoDepartamento(models.Model):
         ]
 
     def __str__(self) -> str:
+        alvo = self.categoria.nome if self.categoria_id else "Elite e APN (antes da TSK-1059)"
         if self.modo == self.Modo.FIXO and self.departamento_id:
-            return f"fixo: {self.departamento.descricao}"
-        return self.get_modo_display()
+            return f"{alvo} · fixo: {self.departamento.descricao}"
+        return f"{alvo} · {self.get_modo_display()}"
