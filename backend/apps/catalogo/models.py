@@ -653,6 +653,14 @@ class PublicacaoCatalogo(models.Model):
         default="",
         help_text="O que mudou em relação à publicação anterior, em texto.",
     )
+    alvos = models.TextField(
+        "alvos",
+        blank=True,
+        default="",
+        help_text="Os produtos (`categoria/slug`) e categorias que a publicação "
+        "tocou, entre barras: `|elite/pro|apn|`. É o que o histórico unificado "
+        "filtra por produto (TSK-1059). Vazio nas publicações de antes dele.",
+    )
 
     class Meta:
         verbose_name = "publicação do catálogo"
@@ -694,15 +702,24 @@ class Vigencia(models.Model):
         DIA_VENCIMENTO = "dia_vencimento", "Dia do vencimento"
         PRIMEIRO_VENCIMENTO = "primeiro_vencimento", "Primeira parcela"
         ENTRADA_PRAZO_DIAS = "entrada_prazo_dias", "Prazo da entrada (dias)"
+        # Categoria fora do lobby ("em implementação"), por `Categoria.travada`.
+        # Até a TSK-1059 só mudava pelo /django-admin/, sem rastro.
+        TRAVADA = "travada", "Fora do Lobby (em implementação)"
 
     # 'geral' para a política do Lobby; o slug do produto para o resto.
     CHAVE_GERAL = "geral"
+    # O que é da CATEGORIA (a regra de cobrança dela, se está fora do lobby) leva
+    # este prefixo. Sem ele, a cobrança da categoria "elite" e a exceção de um
+    # produto de slug "elite" disputariam a mesma chave e o mesmo campo — e a
+    # restrição de um valor aberto por campo derrubaria a gravação.
+    PREFIXO_CATEGORIA = "categoria:"
 
     chave = models.CharField(
         "chave",
-        max_length=40,
+        max_length=60,
         db_index=True,
-        help_text="O slug do produto, ou 'geral' para a política de cobrança.",
+        help_text="O slug do produto, 'geral' para a política de cobrança, ou "
+        "'categoria:<slug>' para o que é da categoria.",
     )
     rotulo = models.CharField(
         "rótulo",
@@ -740,6 +757,24 @@ class Vigencia(models.Model):
         default="",
         help_text="Cópia no momento do registro — a conta pode ser desativada "
         "depois, e o histórico não pode perder quem assinou.",
+    )
+    # Quem FECHOU o período. Na troca de valor é a mesma pessoa que abriu o
+    # seguinte; o que este campo acrescenta é a remoção de uma exceção de
+    # cobrança, que fecha sem abrir nada — e até a TSK-1059 não guardava quem.
+    encerrado_por = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="vigencias_encerradas",
+        verbose_name="encerrado por",
+    )
+    encerrado_por_email = models.EmailField(
+        "e-mail de quem encerrou",
+        blank=True,
+        default="",
+        help_text="Cópia no momento do encerramento, pelo mesmo motivo do "
+        "e-mail do autor.",
     )
 
     class Meta:

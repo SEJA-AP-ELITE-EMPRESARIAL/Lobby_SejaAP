@@ -30,6 +30,20 @@ from django.utils import timezone
 from .models import PoliticaCobranca, Produto, Vigencia
 
 
+# Os campos de uma regra de cobrança — o que uma exceção removida fecha.
+CAMPOS_DE_COBRANCA = (
+    Vigencia.Campo.DIA_VENCIMENTO,
+    Vigencia.Campo.PRIMEIRO_VENCIMENTO,
+    Vigencia.Campo.ENTRADA_PRAZO_DIAS,
+)
+
+
+def _pessoa(autor):
+    """(usuário ou None, e-mail) de quem fez a mudança. Nunca levanta."""
+    usuario = autor if (autor is not None and getattr(autor, "is_authenticated", False)) else None
+    return usuario, getattr(autor, "email", "") or ""
+
+
 def texto(valor) -> str:
     """Forma canônica do valor guardado.
 
@@ -55,11 +69,14 @@ def registrar(chave, rotulo, campo, valor, *, autor=None, quando=None) -> Vigenc
         .filter(chave=chave, campo=campo, vigente_ate__isnull=True)
         .first()
     )
+    usuario, email = _pessoa(autor)
     if aberta is not None:
         if aberta.valor == valor:
             return None
         aberta.vigente_ate = quando
-        aberta.save(update_fields=["vigente_ate"])
+        aberta.encerrado_por = usuario
+        aberta.encerrado_por_email = email
+        aberta.save(update_fields=["vigente_ate", "encerrado_por", "encerrado_por_email"])
 
     return Vigencia.objects.create(
         chave=chave,
@@ -67,8 +84,8 @@ def registrar(chave, rotulo, campo, valor, *, autor=None, quando=None) -> Vigenc
         campo=campo,
         valor=valor,
         vigente_de=quando,
-        autor=autor if (autor is not None and autor.is_authenticated) else None,
-        autor_email=getattr(autor, "email", "") or "",
+        autor=usuario,
+        autor_email=email,
     )
 
 
@@ -138,18 +155,22 @@ def registrar_politica(
     return [r for r in registros if r is not None]
 
 
-def encerrar(chave, *, autor=None, quando=None) -> int:
-    """Fecha tudo que estiver aberto numa chave. Usado quando uma exceção de
-    produto é removida: a regra dele volta a ser a geral, e a linha do tempo
-    precisa dizer até quando a exceção valeu."""
+def encerrar(chave, *, autor=None, quando=None, campos=CAMPOS_DE_COBRANCA) -> int:
+    """Fecha o que estiver aberto numa chave, nos campos dados, e grava QUEM.
+
+    Usado quando uma exceção de cobrança de produto é removida: a regra dele
+    volta a ser a da categoria, e a linha do tempo precisa dizer até quando a
+    exceção valeu e por decisão de quem. Até a TSK-1059 o `autor` era recebido
+    e ignorado — a remoção era o único ato da tela sem dono no histórico.
+
+    Os campos são os da cobrança por padrão, ditos um a um: o preço do produto
+    mora na mesma chave e não tem nada a ver com a exceção.
+    """
     quando = quando or timezone.now()
-    return Vigencia.objects.filter(chave=chave, vigente_ate__isnull=True).exclude(
-        campo__in=[
-            Vigencia.Campo.MENSALIDADE,
-            Vigencia.Campo.VALOR,
-            Vigencia.Campo.VIGENCIA_MESES,
-        ]
-    ).update(vigente_ate=quando)
+    usuario, email = _pessoa(autor)
+    return Vigencia.objects.filter(
+        chave=chave, vigente_ate__isnull=True, campo__in=list(campos)
+    ).update(vigente_ate=quando, encerrado_por=usuario, encerrado_por_email=email)
 
 
 def linha_do_tempo(chave=None, campo=None, limite=200) -> list[Vigencia]:
