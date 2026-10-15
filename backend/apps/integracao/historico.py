@@ -295,7 +295,7 @@ def _precos_sem_publicacao(categoria_de, derivados):
             if alvos:
                 if f"/{v.chave}|" in alvos or f"|{v.chave}|" in alvos:
                     return True
-            elif f"{_nome(v.rotulo)} " in resumo or f"{_nome(v.rotulo)}:" in resumo:
+            elif _resumo_antigo_conta(resumo, v):
                 if v.campo == Vigencia.Campo.VALOR_REFERENCIA:
                     derivados[pk].add(v.chave)
                 else:
@@ -304,6 +304,23 @@ def _precos_sem_publicacao(categoria_de, derivados):
         return False
 
     return _vigencias(CAMPOS_DE_PRECO, "catalogo", _titulo_do_preco, categoria_de, cobertas=coberta)
+
+
+def _resumo_antigo_conta(resumo, v) -> bool:
+    """Se o resumo de uma publicação de antes da TSK conta ESTA mudança.
+
+    O PUT antigo escrevia uma linha por mudança, "NOME: de → para" (ou "NOME (valor
+    de referência): de → para"), com o valor em duas casas — a mesma forma do
+    `valor` da vigência. Conferir o nome E o valor resultante evita esconder um
+    PATCH antigo (sem publicação) atrás de um PUT do mesmo produto, logo depois,
+    para outro valor.
+    """
+    nome, para = _nome(v.rotulo), (v.valor or "None")
+    return any(
+        (linha.startswith(f"{nome}: ") or linha.startswith(f"{nome} ("))
+        and linha.endswith(f"→ {para}")
+        for linha in resumo.splitlines()
+    )
 
 
 def _catalogo(categoria_de):

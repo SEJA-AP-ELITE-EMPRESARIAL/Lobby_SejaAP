@@ -243,7 +243,16 @@ def estado_publico() -> dict:
         modo, lista = ConfiguracaoDepartamento.Modo.LISTA, lista_completa
         chave_da_versao = hashlib.sha256(
             json.dumps(
-                ["categorias", sorted((slug, str(m), [d.codigo for d in l]) for slug, (m, l) in por_categoria.items())],
+                [
+                    "categorias",
+                    # Código, nome e posição, como em `versao`: renomear um
+                    # departamento no Omie tem de mudar a versão, senão a tela
+                    # aberta descarta a resposta e segue com o nome velho.
+                    sorted(
+                        (slug, str(m), [[d.codigo, d.descricao, d.estrutura] for d in l])
+                        for slug, (m, l) in por_categoria.items()
+                    ),
+                ],
                 ensure_ascii=False,
             ).encode("utf-8")
         ).hexdigest()[:16]

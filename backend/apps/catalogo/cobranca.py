@@ -134,7 +134,8 @@ def _excecoes_validadas(brutas) -> list:
                 "Recarregue a página."
             )
         excecoes.append((produto, _regra_validada(bruta, f'em "{produto.nome}"')))
-    return excecoes
+    # Mesma ordem canônica das categorias, pelo mesmo motivo.
+    return sorted(excecoes, key=lambda par: par[0].pk)
 
 
 def _categorias_validadas(brutas) -> list:
@@ -147,7 +148,10 @@ def _categorias_validadas(brutas) -> list:
         if categoria is None:
             raise CobrancaInvalida(f'Categoria "{slug}" não existe. Recarregue a página.')
         validadas.append((categoria, _regra_validada(bruta, f'em "{categoria.nome}"')))
-    return validadas
+    # Ordem canônica (o id), e não a do JSON: duas publicações simultâneas com as
+    # mesmas categorias em ordens inversas travariam uma à espera da outra
+    # (deadlock no Postgres, 500 para as duas).
+    return sorted(validadas, key=lambda par: par[0].pk)
 
 
 def _grava_da_categoria(categoria, regra, *, autor, quando):
@@ -181,7 +185,7 @@ def publica_politica(dados, *, autor=None) -> dict:
     else:
         # O corpo do /admin antigo: uma regra para o Lobby inteiro.
         regra_geral = _regra_validada(dados.get("geral"), "na política geral")
-        categorias = [(c, regra_geral) for c in Categoria.objects.all()]
+        categorias = [(c, regra_geral) for c in Categoria.objects.order_by("pk")]
 
     if por_categoria and "excecoes" not in dados:
         excecoes = None  # corpo novo sem a chave: as exceções ficam como estão

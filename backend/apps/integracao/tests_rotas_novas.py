@@ -475,3 +475,47 @@ class TravaPeloDjangoAdminTest(Base):
         self.assertEqual(resposta.status_code, 200)
         aberta = Vigencia.objects.get(chave="categoria:treinamentos", campo="travada", vigente_ate__isnull=True)
         self.assertEqual(aberta.valor, "sim")
+
+
+class AchadosDoCodexTest(Base):
+    def test_patch_antigo_seguido_de_put_de_outro_valor_aparece_inteiro(self):
+        """PATCH 100→200 (sem publicação, antes da TSK) e logo depois PUT 200→300:
+        as duas mudanças aparecem, e a publicação não esconde a do PATCH."""
+        from apps.catalogo import vigencias
+
+        produto = Produto.objects.get(categoria__slug="elite", slug="pro")
+        vigencias.registrar("pro", produto.nome, "mensalidade", Decimal("200.00"), autor=self.bruna)
+        vigencias.registrar("pro", produto.nome, "mensalidade", Decimal("300.00"), autor=self.bruna)
+        PublicacaoCatalogo.objects.create(
+            autor=self.bruna, autor_email=BRUNA, catalogo=[], resumo="ELITE PRO: 200.00 → 300.00", alvos=""
+        )
+        itens = self.como("get", f"/api/integracao/historico?area=catalogo&produto=pro&autor={BRUNA}").json()["itens"]
+        titulos = [i["titulo"] for i in itens]
+        self.assertEqual(titulos.count("Catálogo publicado"), 1)
+        preco = [i for i in itens if i["titulo"] == "Preço · ELITE PRO"]
+        self.assertEqual(len(preco), 1)
+        self.assertTrue(preco[0]["alteracoes"][0].endswith("→ R$ 200,00"))
+
+    def test_cobranca_aplica_as_categorias_na_ordem_do_id(self):
+        from unittest import mock
+
+        from apps.catalogo import cobranca
+
+        regra = {"dia_vencimento": 10, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0}
+        ordem = []
+        original = cobranca._grava_da_categoria
+        with mock.patch.object(cobranca, "_grava_da_categoria", side_effect=lambda c, *a, **k: (ordem.append(c.pk), original(c, *a, **k))):
+            resposta = self.como("put", "/api/cobranca", {"categorias": {"produtos": regra, "apn": regra, "elite": regra}})
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        self.assertEqual(ordem, sorted(ordem))
+
+
+class VersaoDosDepartamentosTest(Base):
+    def test_renomear_departamento_com_categorias_divergentes_muda_a_versao(self):
+        sincronizar([dep("1001", "Consultoria", "001.001"), dep("1002", "Comercial", "001.002")])
+        self.como("put", "/api/departamentos/configuracao", {"categorias": {"elite": {"modo": "fixo", "codigo": "1002"}}})
+        antes = APIClient().get("/api/departamentos").json()["versao"]
+        sincronizar([dep("1001", "Consultoria Elite", "001.001"), dep("1002", "Comercial", "001.002")])
+        depois = APIClient().get("/api/departamentos").json()
+        self.assertNotEqual(depois["versao"], antes)
+        self.assertEqual(depois["categorias"]["apn"]["departamentos"][0]["descricao"], "Consultoria Elite")
