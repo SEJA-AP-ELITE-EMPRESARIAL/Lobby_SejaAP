@@ -409,8 +409,10 @@ sudo docker compose logs backend | grep "integração com o Conecta"
 curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/api/catalogo   # 200
 ```
 
-Com tudo certo, apague a cópia: `sudo rm /opt/conecta/env/lobby.env.antes-tsk1068`
-(ela não tem a senha do Redis, mas tem todos os outros segredos).
+**Guarde a cópia `lobby.env.antes-tsk1068` até decidir que não vai mais voltar**
+(uma semana de Redis no ar sem incidente, por exemplo): o "Voltar tudo" abaixo
+depende dela. Ela é `root:600` como o original e tem os mesmos segredos (menos a
+senha do Redis). Só então: `sudo rm /opt/conecta/env/lobby.env.antes-tsk1068`.
 
 #### Os tetos
 
@@ -453,6 +455,9 @@ novo não sobe nada.
 ```bash
 cd /opt/conecta/app/Lobby_SejaAP
 sudo cp -p /opt/conecta/env/lobby.env.antes-tsk1068 /opt/conecta/env/lobby.env
+# Sem a cópia (já apagada): apague à mão as linhas LOBBY_REDIS_SENHA e
+# LOBBY_REDIS_URL do lobby.env e volte os LOBBY_RATE_* à coluna "Antes" da
+# tabela de Os tetos. Nenhum outro valor mudou neste deploy.
 git checkout --detach <o SHA do ANTES>
 # --build é obrigatório: sem ele o compose reaproveita o :latest, que é a imagem
 # NOVA do passo 4, e o código "voltado" seguiria no ar.
