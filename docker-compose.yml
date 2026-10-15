@@ -116,7 +116,9 @@ services:
     # argv de processo de container aparece no `ps` de qualquer usuário do host.
     #
     # Sem persistência (`save ""`, sem AOF): é cache. Reiniciar o Redis zera os
-    # tetos e os `jti` — e os `jti` só valem até o `exp` da asserção (~1 min).
+    # tetos e os `jti`; para uma asserção já usada não passar de novo, o backend
+    # fecha a integração por 130 s depois de achar o Redis vazio (ver
+    # MARCO_DO_CACHE em backend/apps/contas/autenticacao_conecta.py).
     #
     # `noeviction`, e não `volatile-ttl` nem `allkeys-lru`: as duas descartariam
     # justamente o `jti`. O `volatile-ttl` tira primeiro a chave mais perto de
@@ -125,8 +127,9 @@ services:
     # `jti` descartado antes do `exp` é asserção que pode ser repetida. Com
     # `noeviction`, memória cheia vira erro de escrita: o `jti` falha FECHADO
     # (503) e os tetos falham ABERTOS — o mesmo de Redis fora. Toda chave daqui
-    # tem prazo (o `jti` até o `exp`, os tetos até a janela deles), então a
-    # memória se limpa sozinha; 64 MB é folga larga para isso.
+    # tem prazo (o `jti` até o `exp`, os tetos até a janela deles; a exceção é o
+    # marco de uma linha acima), então a memória se limpa sozinha; 64 MB é folga
+    # larga para isso.
     command:
       - sh
       - -c

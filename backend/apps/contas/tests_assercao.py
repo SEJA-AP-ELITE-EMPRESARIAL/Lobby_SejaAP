@@ -85,6 +85,16 @@ class ParDeTeste:
         return jwt.encode(corpo, self.privada, algorithm="EdDSA", headers=cab)
 
 
+def cache_contando_ha_tempo():
+    """O cache do `jti` como o de um Redis no ar há tempo — e não o de um
+    recém-reiniciado, que fecha a integração por uns minutos (`MARCO_DO_CACHE`)."""
+    autenticacao_conecta._cache_do_jti().set(
+        autenticacao_conecta.MARCO_DO_CACHE,
+        int(time.time()) - autenticacao_conecta.JANELA_DEPOIS_DE_CACHE_VAZIO - 1,
+        None,
+    )
+
+
 def conjunto(*pares) -> str:
     return json.dumps({"keys": [p.jwk() for p in pares]})
 
@@ -102,6 +112,11 @@ class BaseAssercao(TestCase):
         # O cache guarda `jti`, o contador de recusas por IP e os tetos por
         # pessoa: sem limpar, um teste herdaria o balde do anterior.
         cache.clear()
+        # O cache de cada teste nasce vazio, como um Redis recém-reiniciado — e
+        # cache vazio fecha a integração por uns minutos (`MARCO_DO_CACHE`). Aqui
+        # ele começa como um cache que já conta há tempo; `CacheVazioTest` cobre
+        # o recém-esvaziado.
+        cache_contando_ha_tempo()
         self.par = ParDeTeste()
         self.liga(self.par)
         self.diretoria = cria_pessoa("diretoria@sejaap.com.br", Papel.DIRETORIA)
@@ -433,6 +448,41 @@ class DesligadaTest(TestCase):
     )
     def test_cache_que_falha_aberto_nunca_guarda_o_jti(self):
         self.assertFalse(autenticacao_conecta.cache_compartilhado())
+
+
+class CacheVazioTest(BaseAssercao):
+    """Redis reiniciado volta vazio (não persiste, TSK-1068): a asserção que já
+    foi usada, e ainda está no prazo, não pode passar de novo."""
+
+    def esvazia(self):
+        autenticacao_conecta._cache_do_jti().clear()
+
+    def test_repeticao_depois_do_reinicio_nao_passa(self):
+        token = self.par.assina()
+        self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+        self.esvazia()
+        with self.assertLogs("lobby.integracao", level=logging.WARNING) as logs:
+            resposta = self.chama("get", QUEM_SOU, token)
+        self.assertRecusa(resposta, 503, "INTEGRACAO_DESLIGADA")
+        self.assertIn("recém-esvaziado", "\n".join(logs.output))
+
+    def test_fecha_so_ate_a_vida_maxima_de_uma_assercao(self):
+        self.esvazia()
+        self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        # O marco que a chamada acima gravou, envelhecido até o fim da janela:
+        cache_do_jti = autenticacao_conecta._cache_do_jti()
+        marco = cache_do_jti.get(autenticacao_conecta.MARCO_DO_CACHE)
+        janela = autenticacao_conecta.JANELA_DEPOIS_DE_CACHE_VAZIO
+        cache_do_jti.set(autenticacao_conecta.MARCO_DO_CACHE, marco - janela + 2, None)
+        self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        cache_do_jti.set(autenticacao_conecta.MARCO_DO_CACHE, marco - janela - 1, None)
+        self.assertEqual(self.get().status_code, 200)
+
+    def test_a_janela_cobre_a_vida_maxima_com_a_tolerancia_do_teto(self):
+        """Aceita até exp+tol, exp até 70 s depois do iat, iat até tol no futuro."""
+        self.assertGreaterEqual(
+            autenticacao_conecta.JANELA_DEPOIS_DE_CACHE_VAZIO, autenticacao_conecta.VALIDADE_MAXIMA + 2 * 30
+        )
 
 
 class LogTest(BaseAssercao):

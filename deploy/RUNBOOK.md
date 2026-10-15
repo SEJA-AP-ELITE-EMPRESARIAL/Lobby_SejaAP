@@ -301,13 +301,18 @@ Como ele está configurado, e por quê (os detalhes estão no `docker-compose.ym
   arquivo dentro do container, nunca na linha de comando (o argv de container
   aparece no `ps` do host). O `LOBBY_REDIS_URL` leva a mesma senha.
 - **Sem persistência** (`save ""`, sem AOF). Reiniciar o Redis zera os tetos e
-  os `jti`, e os `jti` só importam até o `exp` da asserção (~1 min).
+  os `jti`. Uma asserção já usada e ainda no prazo passaria de novo, então o
+  backend guarda no Redis quando ele começou a contar e, com o Redis recém-vazio,
+  **fecha a integração por 130 s** (503 e `cache do jti recém-esvaziado` no log;
+  `MARCO_DO_CACHE` em `autenticacao_conecta.py`): é a vida máxima de uma
+  asserção, 70 s, mais duas vezes o teto da tolerância de relógio.
 - **64 MB e `noeviction`.** Nem `volatile-ttl` nem `allkeys-lru`: os dois
   descartariam primeiro justamente o `jti` (o de prazo mais curto, ~70 s, e o
   que nunca é lido depois de gravado), e `jti` descartado antes do `exp` é
   asserção que pode ser repetida. Com `noeviction`, memória cheia vira erro de
   escrita — o mesmo que Redis fora: integração em 503, tetos abertos. Toda chave
-  dali tem prazo, então a memória se limpa sozinha.
+  dali tem prazo (menos o marco de uma linha do item acima), então a memória se
+  limpa sozinha.
 - **`healthcheck`** (`redis-cli ping` autenticado), e o backend só sobe com ele
   `healthy`. Se o Redis cair **depois**, o backend continua servindo.
 
@@ -334,10 +339,12 @@ sudo cp -p /opt/conecta/env/lobby.env /opt/conecta/env/lobby.env.antes-tsk1068
 # 2. Senha nova, gerada e gravada dentro de um `sh -c` do root: o valor nunca
 #    aparece na tela, no histórico do shell (o que fica lá é este texto, sem a
 #    senha) nem no argv de processo (`printf` é builtin do sh). Hexadecimal: nada
-#    a escapar na URL. Recusa rodar se já houver LOBBY_REDIS_* ativo no arquivo.
+#    a escapar na URL. Recusa rodar se a senha ou a URL já tiverem valor; as
+#    linhas VAZIAS (as do .env.example) ele apaga e escreve de novo.
 sudo sh -c '
   f=/opt/conecta/env/lobby.env
-  if grep -q "^LOBBY_REDIS_" "$f"; then echo "já há LOBBY_REDIS_* em $f: confira à mão"; exit 1; fi
+  if grep -Eq "^LOBBY_REDIS_(SENHA|URL)=." "$f"; then echo "LOBBY_REDIS_* já preenchido em $f: confira à mão"; exit 1; fi
+  sed -i -E "/^LOBBY_REDIS_(SENHA|URL)=$/d" "$f"
   umask 077
   s=$(openssl rand -hex 32)
   printf "\nLOBBY_REDIS_SENHA=%s\nLOBBY_REDIS_URL=redis://:%s@redis:6379/0\n" "$s" "$s" >> "$f"
@@ -431,7 +438,9 @@ O de definir senha é baixo de propósito: se quiser o teto exato de 20/hora, de
 #### Caminho de volta
 
 **Só desligar o Redis do backend** (o código fica): comente a linha
-`LOBBY_REDIS_URL` no `lobby.env` e `sudo docker compose up -d backend`. O backend
+`LOBBY_REDIS_URL` no `lobby.env` e `sudo docker compose up -d --no-deps backend`.
+O `--no-deps` é o que deixa o backend subir mesmo com o Redis `unhealthy` (o
+`depends_on` exigiria ele saudável); o túnel já está de pé. O backend
 volta ao `LocMemCache` — a integração fica em 503, como antes. Os tetos então
 voltam a ser por worker: volte também os `LOBBY_RATE_*` à tabela "Antes", senão o
 teto real vira 9× o antigo. **Não apague `LOBBY_REDIS_SENHA`**: sem ela o compose
@@ -625,8 +634,10 @@ container `categorias`.
 **Redis do Lobby fora do ar** (`lobby-redis` parado ou `unhealthy`) → o lobby
 segue vendendo: os tetos de chamada falham abertos, com um aviso por minuto no log
 (`Redis indisponível no cache default`). A integração com o Conecta responde 503
-`INTEGRACAO_DESLIGADA` até ele voltar. `sudo docker compose up -d redis` o traz de
-volta, vazio, e o backend reconecta sozinho, sem reiniciar. Só a SUBIDA do
+`INTEGRACAO_DESLIGADA` até ele voltar — e por mais 130 s depois, porque ele volta
+vazio (ver *Sem persistência* em [Redis do Lobby](#redis-do-lobby-tsk-1068)).
+`sudo docker compose up -d redis` o traz de volta, e o backend reconecta sozinho,
+sem reiniciar. Só a SUBIDA do
 backend depende dele: com o Redis fora, um `up` que recrie o backend falha com
 `dependency failed to start` — e o backend que já estava no ar continua de pé.
 `NOAUTH`/`WRONGPASS` no log é a senha das duas linhas do `lobby.env` divergindo.

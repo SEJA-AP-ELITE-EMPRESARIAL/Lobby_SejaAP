@@ -118,6 +118,17 @@ CACHES_COMPARTILHADOS = frozenset(
 )
 CACHE_LOCAL = "django.core.cache.backends.locmem.LocMemCache"
 
+# Cache que voltou VAZIO (Redis reiniciado, FLUSHDB) não sabe quais `jti` já
+# foram usados — o Redis do Lobby não persiste, de propósito (TSK-1068). Uma
+# asserção consumida antes do reinício ainda pode estar no prazo, e passaria de
+# novo. Por isso o cache guarda, sem prazo, QUANDO começou a contar; até ele
+# contar há mais tempo que a vida máxima de uma asserção, a integração fica
+# fechada (503). A conta: aceita até `exp + tolerância`, com `exp` até
+# VALIDADE_MAXIMA depois do `iat`, e o `iat` até `tolerância` no futuro — e a
+# tolerância é a do teto (30 s), não a configurada, para não depender dela.
+MARCO_DO_CACHE = "assercao:jti:contando-desde"
+JANELA_DEPOIS_DE_CACHE_VAZIO = VALIDADE_MAXIMA + 2 * 30
+
 
 # ----- recusas ---------------------------------------------------------------
 #
@@ -589,15 +600,28 @@ class AutenticacaoConecta(BaseAuthentication):
         """`SET NX EX` no Redis: duas chamadas com o mesmo `jti` não passam
         as duas (§4.6). Guardado só até o `exp` mais a tolerância."""
         tolerancia = settings.CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS
-        prazo = max(1, assercao.exp - int(time.time()) + tolerancia)
+        agora = int(time.time())
+        prazo = max(1, assercao.exp - agora + tolerancia)
+        cache = _cache_do_jti()
         try:
-            gravou = _cache_do_jti().add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
+            gravou = cache.add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
+            # Ver MARCO_DO_CACHE. `add` sem prazo: só o primeiro depois do
+            # cache vazio grava; os outros leem o que ele gravou.
+            cache.add(MARCO_DO_CACHE, agora, timeout=None)
+            desde = cache.get(MARCO_DO_CACHE)
         except Exception:
             # Cache fora: sem como saber se é repetição. Falha fechada.
             logger.exception("cache indisponível ao gravar o jti da asserção")
             raise IntegracaoDesligada()
         if not gravou:
             raise AssercaoRecusada("JTI_REPETIDO")
+        if not isinstance(desde, int) or agora - desde < JANELA_DEPOIS_DE_CACHE_VAZIO:
+            logger.warning(
+                "cache do jti recém-esvaziado (Redis reiniciado?); a integração "
+                "fica fechada até %ss depois do primeiro uso",
+                JANELA_DEPOIS_DE_CACHE_VAZIO,
+            )
+            raise IntegracaoDesligada()
 
     def _resolve_pessoa(self, email):
         """`User.email__iexact = sub`. NUNCA cria conta (§13.2).
