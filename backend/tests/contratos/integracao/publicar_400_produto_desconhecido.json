@@ -1,0 +1,5 @@
+{
+  "erro": "Produto \"nao-existe\" não existe em \"elite\". Recarregue a página.",
+  "detail": "Produto \"nao-existe\" não existe em \"elite\". Recarregue a página.",
+  "codigo": "PRODUTO_DESCONHECIDO"
+}

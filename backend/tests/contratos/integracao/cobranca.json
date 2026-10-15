@@ -1,0 +1,55 @@
+{
+  "categorias": {
+    "elite": {
+      "nome": "Elite",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0
+    },
+    "treinamentos": {
+      "nome": "Treinamentos",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0
+    },
+    "apn": {
+      "nome": "APN",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0
+    },
+    "produtos": {
+      "nome": "Produtos",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0
+    }
+  },
+  "geral": {
+    "dia_vencimento": 15,
+    "primeiro_vencimento": "mes_seguinte",
+    "entrada_prazo_dias": 0
+  },
+  "categorias_divergem": false,
+  "excecoes": [],
+  "opcoes": {
+    "primeiro_vencimento": [
+      {
+        "valor": "mes_seguinte",
+        "rotulo": "Dia do vencimento do mês SEGUINTE ao da venda"
+      },
+      {
+        "valor": "proximo",
+        "rotulo": "Primeiro dia do vencimento DEPOIS da venda"
+      }
+    ],
+    "dia_vencimento": {
+      "min": 1,
+      "max": 28
+    },
+    "entrada_prazo_dias": {
+      "min": 0,
+      "max": 90
+    }
+  }
+}

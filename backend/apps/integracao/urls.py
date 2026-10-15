@@ -11,9 +11,20 @@ um PATCH em 301 e o corpo se perderia no caminho.
 """
 from django.urls import path
 
-from .views import QuemSouView, SaudeView
+from .views import CategoriaView, HistoricoView, PublicarCatalogoView, QuemSouView, SaudeView
 
 urlpatterns = [
     path("integracao/quem-sou", QuemSouView.as_view(), name="integracao-quem-sou"),
     path("integracao/saude", SaudeView.as_view(), name="integracao-saude"),
+    path(
+        "integracao/catalogo/publicar",
+        PublicarCatalogoView.as_view(),
+        name="integracao-catalogo-publicar",
+    ),
+    path(
+        "integracao/categorias/<slug:slug>",
+        CategoriaView.as_view(),
+        name="integracao-categoria",
+    ),
+    path("integracao/historico", HistoricoView.as_view(), name="integracao-historico"),
 ]

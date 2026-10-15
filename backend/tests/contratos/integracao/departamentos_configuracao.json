@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "categorias": {
+    "elite": {
+      "nome": "Elite",
+      "modo": "fixo",
+      "modo_em_vigor": "fixo",
+      "fixo": {
+        "codigo": "1002",
+        "descricao": "Comercial",
+        "estrutura": "001.002",
+        "ativo": true
+      },
+      "alterado_em": "<varia>",
+      "alterado_por": "bruna.lima@exemplo.com.br"
+    },
+    "treinamentos": {
+      "nome": "Treinamentos",
+      "modo": "lista",
+      "modo_em_vigor": "lista",
+      "fixo": null,
+      "alterado_em": null,
+      "alterado_por": null
+    },
+    "apn": {
+      "nome": "APN",
+      "modo": "lista",
+      "modo_em_vigor": "lista",
+      "fixo": null,
+      "alterado_em": null,
+      "alterado_por": null
+    },
+    "produtos": {
+      "nome": "Produtos",
+      "modo": "lista",
+      "modo_em_vigor": "lista",
+      "fixo": null,
+      "alterado_em": null,
+      "alterado_por": null
+    }
+  },
+  "departamentos": [
+    {
+      "codigo": "1001",
+      "descricao": "Consultoria",
+      "estrutura": "001.001"
+    },
+    {
+      "codigo": "1002",
+      "descricao": "Comercial",
+      "estrutura": "001.002"
+    }
+  ],
+  "sincronizado_em": "<varia>",
+  "modo": "lista",
+  "modo_em_vigor": "lista",
+  "fixo": null,
+  "alterado_em": "<varia>",
+  "alterado_por": "bruna.lima@exemplo.com.br",
+  "categorias_divergem": true
+}

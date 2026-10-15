@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "publicacao": {
+    "publicado_em": "<varia>",
+    "autor": "bruna.lima@exemplo.com.br",
+    "alteracoes": [
+      "ELITE PRO: mensalidade R$ 12.997,00 → R$ 10.497,00",
+      "IMERSÃO: valor à vista R$ 5.000,00 → R$ 5.500,00",
+      "APN: valor de referência — → R$ 35.000,00"
+    ]
+  },
+  "cats": "<lista>"
+}

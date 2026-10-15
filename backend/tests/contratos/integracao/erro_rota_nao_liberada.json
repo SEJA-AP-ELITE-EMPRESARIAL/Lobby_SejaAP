@@ -1,0 +1,5 @@
+{
+  "erro": "Esta rota não está liberada para o Conecta.",
+  "detail": "Esta rota não está liberada para o Conecta.",
+  "codigo": "ROTA_NAO_LIBERADA"
+}

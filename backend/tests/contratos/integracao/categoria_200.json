@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "categoria": {
+    "id": "treinamentos",
+    "nome": "Treinamentos",
+    "locked": false
+  },
+  "alteracao": "Treinamentos: liberada no Lobby"
+}

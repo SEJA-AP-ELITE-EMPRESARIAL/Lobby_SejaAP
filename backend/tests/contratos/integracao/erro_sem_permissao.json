@@ -1,0 +1,5 @@
+{
+  "erro": "Somente a diretoria pode alterar a tabela de preços.",
+  "detail": "Somente a diretoria pode alterar a tabela de preços.",
+  "codigo": "SEM_PERMISSAO"
+}
