@@ -611,29 +611,37 @@ class AutenticacaoConecta(BaseAuthentication):
         prazo = max(1, assercao.exp - agora + tolerancia + 1)
         janela = janela_depois_de_cache_vazio()
         cache = _cache_do_jti()
+        chave = f"assercao:jti:{AUDIENCIA}:{assercao.jti}"
         try:
+            gravou = cache.add(chave, 1, timeout=prazo)
             # Ver MARCO_DO_CACHE. `add` sem prazo: só o primeiro depois do
-            # cache vazio grava; os outros leem o que ele gravou. Conferido
-            # ANTES de gravar o `jti`: na janela nada passa, e a asserção que
-            # levou 503 não fica queimada para uma nova tentativa.
+            # cache vazio grava; os outros leem o que ele gravou.
+            #
+            # A ORDEM IMPORTA: o marco é lido DEPOIS de gravar o `jti`. Um
+            # esvaziamento que deixe o `jti` repetido ser gravado de novo levou
+            # o marco junto, e o marco lido aqui é posterior a ele — cai na
+            # janela. Lido antes, um FLUSHDB entre a leitura e a gravação
+            # deixaria a repetição passar com o marco velho.
             cache.add(MARCO_DO_CACHE, agora, timeout=None)
             desde = cache.get(MARCO_DO_CACHE)
-            if not isinstance(desde, int) or agora - desde <= janela:
-                logger.warning(
-                    "cache do jti recém-esvaziado (Redis reiniciado?); a integração "
-                    "fica fechada até %ss depois do primeiro uso",
-                    janela,
-                )
-                raise IntegracaoDesligada()
-            gravou = cache.add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
-        except IntegracaoDesligada:
-            raise
+            na_janela = not isinstance(desde, int) or agora - desde <= janela
+            if gravou and na_janela:
+                # A asserção leva 503 sem ter sido atendida: não fica queimada
+                # para o Conecta tentar de novo depois da janela.
+                cache.delete(chave)
         except Exception:
             # Cache fora: sem como saber se é repetição. Falha fechada.
             logger.exception("cache indisponível ao gravar o jti da asserção")
             raise IntegracaoDesligada()
         if not gravou:
             raise AssercaoRecusada("JTI_REPETIDO")
+        if na_janela:
+            logger.warning(
+                "cache do jti recém-esvaziado (Redis reiniciado?); a integração "
+                "fica fechada até %ss depois do primeiro uso",
+                janela,
+            )
+            raise IntegracaoDesligada()
 
     def _resolve_pessoa(self, email):
         """`User.email__iexact = sub`. NUNCA cria conta (§13.2).

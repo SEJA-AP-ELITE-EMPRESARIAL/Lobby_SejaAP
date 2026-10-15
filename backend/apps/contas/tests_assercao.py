@@ -489,6 +489,33 @@ class CacheVazioTest(BaseAssercao):
         cache_contando_ha_tempo()
         self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
 
+    def repete_com_esvaziamento(self, quando):
+        """Usa um token, e o repete com o cache esvaziado no meio da conferência:
+        logo antes (`antes`) ou logo depois (`depois`) de gravar o `jti`."""
+        token = self.par.assina()
+        self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+        real = autenticacao_conecta._cache_do_jti()
+        proxy = mock.Mock(wraps=real)
+
+        def add(chave, *args, **kwargs):
+            eh_jti = chave.startswith("assercao:jti:lobby:")
+            if eh_jti and quando == "antes":
+                real.clear()
+            feito = real.add(chave, *args, **kwargs)
+            if eh_jti and quando == "depois":
+                real.clear()
+            return feito
+
+        proxy.add.side_effect = add
+        with mock.patch.object(autenticacao_conecta, "_cache_do_jti", return_value=proxy):
+            return self.chama("get", QUEM_SOU, token)
+
+    def test_esvaziar_logo_antes_de_gravar_o_jti_nao_deixa_repetir(self):
+        self.assertRecusa(self.repete_com_esvaziamento("antes"), 503, "INTEGRACAO_DESLIGADA")
+
+    def test_esvaziar_logo_depois_de_gravar_o_jti_nao_deixa_repetir(self):
+        self.assertRecusa(self.repete_com_esvaziamento("depois"), 401, "JTI_REPETIDO")
+
     def test_a_janela_cobre_a_vida_maxima_com_a_tolerancia_do_teto(self):
         """Aceita até exp+tol, exp até 70 s depois do iat, iat até tol no futuro
         — com o teto da tolerância, seja ele qual for."""
