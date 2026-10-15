@@ -41,6 +41,20 @@ CAMPOS_DE_COBRANCA = (
 # Como um sim/não fica guardado: a mesma forma da trava de categoria.
 SIM, NAO = "sim", "não"
 
+ROTULO_MAX = Vigencia._meta.get_field("rotulo").max_length
+
+
+def cabe(rotulo: str) -> str:
+    """O rótulo no tamanho da coluna (120). Produto pode ter nome de 120, e
+    "NOME · cobrança" passaria — no Postgres, erro e publicação recusada.
+    Corta o NOME, e não o sufixo: é pelo " · " que o histórico separa os dois."""
+    if len(rotulo) <= ROTULO_MAX:
+        return rotulo
+    nome, separador, sufixo = rotulo.rpartition(" · ")
+    if not separador:
+        return rotulo[: ROTULO_MAX - 1] + "…"
+    return nome[: ROTULO_MAX - len(separador) - len(sufixo) - 1] + "…" + separador + sufixo
+
 
 def _pessoa(autor):
     """(usuário ou None, e-mail) de quem fez a mudança. Nunca levanta."""
@@ -68,6 +82,7 @@ def texto(valor) -> str:
 def registrar(chave, rotulo, campo, valor, *, autor=None, quando=None) -> Vigencia | None:
     """Fecha a vigência aberta deste campo e abre outra. `None` se nada mudou."""
     valor = texto(valor)
+    rotulo = cabe(rotulo)
     quando = quando or timezone.now()
 
     aberta = (

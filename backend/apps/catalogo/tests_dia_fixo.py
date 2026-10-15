@@ -188,6 +188,36 @@ class TravaTest(Base):
         self.assertEqual(len(self.travas({"categorias": {"apn": REGRA}})), 1)
 
 
+class RotuloLongoTest(Base):
+    """Achado do Codex: produto pode ter nome de 120, e "NOME · cobrança" não cabe
+    na coluna de 120 do rótulo — no Postgres, publicação recusada com 500 (o
+    SQLite não confere o tamanho, por isso o teste mede)."""
+
+    def test_excecao_de_produto_com_nome_de_120(self):
+        from .models import Produto
+
+        Produto.objects.filter(slug="evo").update(nome="E" * 120)
+        excecao = {"categoria_id": "elite", "produto_id": "evo", **REGRA, "dia_fixo": False}
+        self.assertEqual(self.publica({"categorias": {}, "excecoes": [excecao]}).status_code, 200)
+        from .vigencias import CAMPOS_DE_COBRANCA
+
+        rotulos = set(
+            Vigencia.objects.filter(chave="evo", campo__in=CAMPOS_DE_COBRANCA).values_list("rotulo", flat=True)
+        )
+        self.assertEqual(len(rotulos), 1)
+        (rotulo,) = rotulos
+        self.assertEqual(len(rotulo), 120)
+        self.assertTrue(rotulo.endswith("… · cobrança"))
+        titulo = consulta({"area": "cobranca", "produto": "evo"})["itens"][0]["titulo"]
+        self.assertEqual(titulo, "Exceção de cobrança · " + rotulo.split(" · ")[0])
+
+    def test_rotulo_que_cabe_nao_muda(self):
+        from .vigencias import cabe
+
+        self.assertEqual(cabe("ELITE PRO · cobrança"), "ELITE PRO · cobrança")
+        self.assertEqual(len(cabe("X" * 130)), 120)
+
+
 class SemDiaFixoNoCorpoTest(Base):
     def test_categoria_que_ja_existe_mantem_o_gravado(self):
         self.desliga_elite_e_o_pro()
@@ -396,6 +426,13 @@ class MigracaoDoDiaFixoTest(TransactionTestCase):
         excecao = Politica.objects.create(
             geral=False, produto=pro, dia_vencimento=5, primeiro_vencimento="mes_seguinte", entrada_prazo_dias=0
         )
+        # Uma exceção de produto com o nome no limite (120): a semente não pode
+        # passar do tamanho do rótulo.
+        evo = Produto.objects.get(categoria__slug="elite", slug="evo")
+        Produto.objects.filter(pk=evo.pk).update(nome="V" * 120)
+        Politica.objects.create(
+            geral=False, produto=evo, dia_vencimento=6, primeiro_vencimento="mes_seguinte", entrada_prazo_dias=0
+        )
         self.criada_em = timezone.now() - timedelta(days=40)
         for campo, valor in (("dia_vencimento", "5"), ("primeiro_vencimento", "mes_seguinte"), ("entrada_prazo_dias", "0")):
             Vigencia.objects.create(
@@ -427,6 +464,8 @@ class MigracaoDoDiaFixoTest(TransactionTestCase):
         self.assertEqual(sementes.count(), len(self.regras_de_antes))
         self.assertEqual(Vigencia.objects.exclude(campo="dia_fixo").count(), self.vigencias_de_antes)
         self.assertEqual({(s.valor, s.autor_id, s.autor_email) for s in sementes}, {("sim", None, "")})
+        self.assertEqual(sementes.get(chave="evo").rotulo, "V" * 108 + "… · cobrança")
+        self.assertTrue(all(len(s.rotulo) <= 120 for s in sementes))
         self.assertEqual(sementes.get(chave="pro").vigente_de, self.criada_em)
         copia = Vigencia.objects.get(chave="categoria:apn", campo="dia_vencimento", vigente_ate__isnull=True)
         self.assertEqual(sementes.get(chave="categoria:apn").vigente_de, copia.vigente_de)

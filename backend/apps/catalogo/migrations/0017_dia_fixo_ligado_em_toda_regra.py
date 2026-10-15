@@ -26,8 +26,18 @@ voltar para um modelo que só conhece o dia fixo.
 from django.db import migrations, models
 
 PREFIXO = "categoria:"
+# O tamanho de `Vigencia.rotulo`. Produto pode ter nome de 120, e "NOME · cobrança"
+# não caberia: corta-se o nome, como em `vigencias.cabe` (copiado: é história).
+ROTULO_MAX = 120
 # Os campos de cobrança que já tinham linha do tempo antes desta migration.
 CAMPOS = ("dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
+
+
+def _rotulo(nome):
+    sufixo = " · cobrança"
+    if len(nome) + len(sufixo) <= ROTULO_MAX:
+        return nome + sufixo
+    return nome[: ROTULO_MAX - len(sufixo) - 1] + "…" + sufixo
 
 
 def _chave_e_rotulo(politica):
@@ -35,8 +45,8 @@ def _chave_e_rotulo(politica):
     if politica.geral:
         return "geral", "Política de cobrança"
     if politica.categoria_id:
-        return PREFIXO + politica.categoria.slug, f"{politica.categoria.nome} · cobrança"
-    return politica.produto.slug, f"{politica.produto.nome} · cobrança"
+        return PREFIXO + politica.categoria.slug, _rotulo(politica.categoria.nome)
+    return politica.produto.slug, _rotulo(politica.produto.nome)
 
 
 def semear(apps, schema_editor):
