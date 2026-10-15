@@ -238,24 +238,45 @@ const PIX_COBRANCA_ATIVA = false;
  * no /admin. Aí a rota devolve `modo: "fixo"` e um item só, e esta tela mostra o
  * campo preenchido e travado. Quem filtra é o backend; aqui só se lê o modo. Sem
  * `modo` na resposta (backend de antes da TSK-585), vale a lista.
+ *
+ * POR CATEGORIA (TSK-1059, 15/10/2026). Cada categoria tem a sua escolha, e a
+ * rota manda `categorias: {slug: {modo, departamentos}}`. A tela usa a da
+ * categoria da venda (`departamentosDaCategoria`); sem a chave (backend de
+ * antes) ou sem a categoria nela, vale o `modo`/`departamentos` de sempre.
  * ========================================================================== */
 const DEPARTAMENTOS_URL = '/api/departamentos';
 const DEPARTAMENTOS_RECONSULTA_MS = 5 * 60 * 1000;
 
-// Devolve { versao, lista } ou lança — quem chama decide o que fazer sem ela.
+const normalizaDepartamentos = (lista) => lista
+  .filter((x) => x && x.codigo && x.descricao)
+  .map((x) => ({ codigo: String(x.codigo), descricao: String(x.descricao), estrutura: String(x.estrutura || '') }));
+
+// Devolve { versao, modo, lista, porCategoria } ou lança — quem chama decide o
+// que fazer sem ela.
 async function buscaDepartamentos() {
   const r = await fetch(DEPARTAMENTOS_URL, { cache: 'no-store' });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const d = await r.json();
   if (!d || !Array.isArray(d.departamentos)) throw new Error('resposta sem departamentos');
+  const porCategoria = {};
+  if (d.categorias && typeof d.categorias === 'object') {
+    Object.entries(d.categorias).forEach(([slug, c]) => {
+      if (c && Array.isArray(c.departamentos)) {
+        porCategoria[slug] = { modo: c.modo === 'fixo' ? 'fixo' : 'lista', lista: normalizaDepartamentos(c.departamentos) };
+      }
+    });
+  }
   return {
     versao: String(d.versao || ''),
     modo: d.modo === 'fixo' ? 'fixo' : 'lista',
-    lista: d.departamentos
-      .filter((x) => x && x.codigo && x.descricao)
-      .map((x) => ({ codigo: String(x.codigo), descricao: String(x.descricao), estrutura: String(x.estrutura || '') })),
+    lista: normalizaDepartamentos(d.departamentos),
+    porCategoria,
   };
 }
+
+// O que vale para a venda de uma categoria: a escolha dela, ou a de sempre.
+const departamentosDaCategoria = (deps, catId) =>
+  (deps && deps.porCategoria && catId && deps.porCategoria[catId]) || { modo: deps.modo, lista: deps.lista };
 
 // O que vai no payload do n8n: o código é o que o Omie entende; o nome e a
 // estrutura vão junto para quem lê a venda sem abrir o Omie.
@@ -534,10 +555,16 @@ function normalizaCobranca(bruta, padrao) {
   };
 }
 
-// A regra que vale para um produto: a exceção dele, se houver, ou a geral.
-const cobrancaDoProduto = (product) => (product && product.cobranca)
-  ? normalizaCobranca(product.cobranca, COBRANCA)
+// A regra que vale para um produto: a exceção dele, se houver; senão a da
+// CATEGORIA dele (TSK-1059: cada categoria tem a sua, vinda em `cat.cobranca`);
+// senão a geral, que é o fallback offline e o que um backend de antes manda.
+const cobrancaDaCategoria = (cat) => (cat && cat.cobranca)
+  ? normalizaCobranca(cat.cobranca, COBRANCA)
   : COBRANCA;
+const cobrancaDoProduto = (product, cat) => {
+  const daCategoria = cobrancaDaCategoria(cat);
+  return (product && product.cobranca) ? normalizaCobranca(product.cobranca, daCategoria) : daCategoria;
+};
 
 // Vencimento da parcela `idx` (0-based), a partir da data da entrada.
 function parcelaVencimento(baseISO, idx, cobranca) {
@@ -1056,11 +1083,11 @@ const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom d
 const mesesDeCobranca = (product) => (product && product.recurring ? (product.vigencia || 12) : 12);
 
 // Monta o cronograma padrão de um produto (entrada + parcelas, total = price),
-// pela regra de cobrança que vale para ele — a exceção dele, ou a geral.
-function initPayment(product) {
+// pela regra de cobrança que vale para ele — a exceção dele, ou a da categoria.
+function initPayment(product, cat) {
   const total = product.price;
   const meses = mesesDeCobranca(product);
-  const cob = cobrancaDoProduto(product);
+  const cob = cobrancaDoProduto(product, cat);
   const entrada = product.recurring ? product.monthly : round2(total / meses);
   const entradaData = dataDaEntrada(cob);
   const parcelas = buildSchedule(meses - 1, total, entrada, entradaData, cob);
@@ -1376,7 +1403,8 @@ function App() {
   // `estado`: 'carregando' até a primeira resposta; 'ok' ou 'erro' depois.
   // `atualizadaEm`: quando a lista mudou com a tela aberta (null na 1ª carga).
   // `modo`: 'fixo' quando a diretoria fixou o departamento — a lista tem um item.
-  const [deps, setDeps] = useState({ versao: null, modo: 'lista', lista: [], estado: 'carregando', atualizadaEm: null });
+  // `porCategoria`: a escolha de cada categoria (TSK-1059); a venda usa a dela.
+  const [deps, setDeps] = useState({ versao: null, modo: 'lista', lista: [], porCategoria: {}, estado: 'carregando', atualizadaEm: null });
 
   // Reconsulta e, se a versão mudou, troca a lista no lugar. Se o departamento
   // escolhido não está mais nela, limpa a escolha e deixa o aviso. Falha de
@@ -1393,20 +1421,25 @@ function App() {
     }
     setDeps((d) => (d.versao === novo.versao
       ? { ...d, estado: 'ok' }
-      : { versao: novo.versao, modo: novo.modo, lista: novo.lista, estado: 'ok', atualizadaEm: d.versao === null ? null : new Date() }));
-    if (novo.modo === 'fixo' && novo.lista.length) {
-      // Com fixo, a escolha acompanha a diretoria sem aviso: o consultor não
-      // escolheu nada. E fica gravada no `s` de propósito — se a diretoria soltar
-      // a lista no meio da venda, ela segue com o departamento que já mostrava.
-      const fixo = novo.lista[0].codigo;
-      patch((d) => (d.departamento === fixo && !d.departamentoAviso ? {} : { departamento: fixo, departamentoAviso: '' }));
-    } else {
+      : { versao: novo.versao, modo: novo.modo, lista: novo.lista, porCategoria: novo.porCategoria, estado: 'ok', atualizadaEm: d.versao === null ? null : new Date() }));
+    // A escolha que vale é a da categoria da venda em andamento — lida dentro do
+    // `patch`, porque a reconsulta roda num timer e a categoria pode ter mudado.
+    patch((d) => {
+      const vale = departamentosDaCategoria(novo, d.catId);
+      if (vale.modo === 'fixo' && vale.lista.length) {
+        // Com fixo, a escolha acompanha a diretoria sem aviso: o consultor não
+        // escolheu nada. E fica gravada no `s` de propósito — se a diretoria
+        // soltar a lista no meio da venda, ela segue com o departamento que já
+        // mostrava.
+        const fixo = vale.lista[0].codigo;
+        return d.departamento === fixo && !d.departamentoAviso ? {} : { departamento: fixo, departamentoAviso: '' };
+      }
       // "Não está mais disponível", e não "saiu do Omie": desde a TSK-585 quem
       // tira um departamento da tela também pode ser a diretoria.
-      patch((d) => (!d.departamento || novo.lista.some((x) => x.codigo === d.departamento)
+      return !d.departamento || vale.lista.some((x) => x.codigo === d.departamento)
         ? {}
-        : { departamento: '', departamentoAviso: 'O departamento escolhido não está mais disponível. Escolha outro.' }));
-    }
+        : { departamento: '', departamentoAviso: 'O departamento escolhido não está mais disponível. Escolha outro.' };
+    });
     return novo;
   };
   useEffect(() => {
@@ -1524,12 +1557,20 @@ function App() {
   // Ao abrir a APN, o valor já vem preenchido com o de referência configurado em
   // /admin (quando há). NÃO é trava: a APN é venda de valor negociado, e o campo
   // segue livre — o de referência só evita começar do zero em toda venda.
-  const onCategory = (id) => patch(() => {
+  //
+  // Trocar de categoria limpa o departamento escolhido (TSK-1059): cada categoria
+  // tem a sua escolha, e o fixo da Elite não pode chegar pré-selecionado numa
+  // venda da APN. Com fixo na categoria nova, a tela o mostra sozinha.
+  const onCategory = (id) => patch((d) => {
     const cat = getCat(id);
     const referencia = cat && Number.isFinite(Number(cat.valor_referencia)) ? Number(cat.valor_referencia) : NaN;
+    const vale = departamentosDaCategoria(deps, id);
     return {
       screen: 'flow', step: 0, catId: id, product: null, autorizacao: null, dhAdiantamentoEdit: false, observacao: '',
       ...(cat && cat.flow === 'apn' ? { apnValor: referencia } : {}),
+      ...(id !== d.catId
+        ? { departamento: vale.modo === 'fixo' && vale.lista.length ? vale.lista[0].codigo : '', departamentoAviso: '' }
+        : {}),
     };
   });
   // Produto de fluxo próprio não tem preço nem cronograma: `initPayment` sobre
@@ -1547,7 +1588,7 @@ function App() {
       ...(trocouDeFluxo ? { step: etapaDoProduto(fluxoNovo, cat) } : {}),
       ...(p.flow
         ? { unitValue: 0, entradaValor: 0, entradaData: '', parcelas: [] }
-        : { unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p) }),
+        : { unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p, cat) }),
     };
   });
   const next = () => patch((d) => ({ step: Math.min(ultimoStep, d.step + 1) }));
@@ -1600,8 +1641,8 @@ function App() {
   // unitValue = mensalidade (produtos recorrentes) ou valor à vista (eventos).
   const unitValue = Number(s.unitValue) || 0;
   const total = product ? (product.recurring ? round2(unitValue * (product.vigencia || 12)) : unitValue) : 0;
-  // A regra de cobrança deste produto: a exceção dele, se tiver, ou a geral.
-  const cobranca = cobrancaDoProduto(product);
+  // A regra de cobrança deste produto: a exceção dele, se tiver, ou a da categoria.
+  const cobranca = cobrancaDoProduto(product, cat);
   const setEntradaValor = (n) => patch((d) => { const v = Number.isFinite(n) ? Math.max(0, n) : 0; return { entradaValor: v, parcelas: redistributeSchedule(d.parcelas, total, v) }; });
   const setEntradaForma = (v) => patch({ entradaForma: v });
   // Ao mudar a data de contratação (entrada), recalcula os vencimentos: as
@@ -1627,7 +1668,7 @@ function App() {
   const resetSchedule = () => patch((d) => { const arr = d.parcelas.map((p) => ({ ...p, manual: false })); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
   const toggleEdit = () => {
     if (!s.editMode && !autorizado) { patch({ pedindoAutorizacao: 'pagamento' }); return; }
-    if (s.editMode) patch({ editMode: false, ...initPayment(product) });
+    if (s.editMode) patch({ editMode: false, ...initPayment(product, cat) });
     else patch({ editMode: true });
   };
 
@@ -1670,7 +1711,7 @@ function App() {
     // A observação é a justificativa da negociação: descartada a negociação,
     // ela não pode continuar escrita no cadastro.
     observacao: '',
-    ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product) } : {}),
+    ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product, getCat(d.catId)) } : {}),
   }));
 
   // ----- Igualar parcelas: ao alterar a 1ª parcela, oferecer aplicar o valor às demais -----
@@ -1722,17 +1763,19 @@ function App() {
   const exceeded = diff < -0.01; // total definido (entrada + parcelas) ultrapassa o valor do contrato
   const parcelasUniformes = s.parcelas.length > 0 && s.parcelas.every((p) => Math.abs((Number(p.valor) || 0) - (Number(s.parcelas[0].valor) || 0)) < 0.005);
 
-  // ----- Departamento (Elite e APN) -----
+  // ----- Departamento (por categoria: Elite, APN, Produtos…) -----
   // Obrigatório sempre que houver lista. Sem lista nenhuma — backend fora do
   // ar, ou o Omie ainda não sincronizado — a venda SEGUE sem departamento, com
   // aviso na tela: pelo mesmo motivo do CATS embutido, consultor em campo não
   // perde venda por causa de infra.
   // Com fixo, o departamento é o da lista, e não o do `s`: o `restart` limpa o
   // `s`, e a próxima venda não pode esperar a reconsulta para poder avançar.
-  const departamentoSel = (deps.modo === 'fixo'
-    ? deps.lista[0]
-    : deps.lista.find((d) => d.codigo === s.departamento)) || null;
-  const departamentoOk = !!departamentoSel || (deps.estado !== 'carregando' && deps.lista.length === 0);
+  // A escolha que vale é a da categoria desta venda (TSK-1059).
+  const depsDaVenda = departamentosDaCategoria(deps, s.catId);
+  const departamentoSel = (depsDaVenda.modo === 'fixo'
+    ? depsDaVenda.lista[0]
+    : depsDaVenda.lista.find((d) => d.codigo === s.departamento)) || null;
+  const departamentoOk = !!departamentoSel || (deps.estado !== 'carregando' && depsDaVenda.lista.length === 0);
   const rotuloDepartamento = departamentoSel ? departamentoSel.descricao : (departamentoOk ? '—' : 'Escolha na etapa do cliente');
   // Última conferência, no momento que importa: a lista pode ter mudado depois
   // da última reconsulta. Devolve o departamento como está no Omie AGORA, null
@@ -1742,9 +1785,10 @@ function App() {
   // Com fixo, vale o fixo de AGORA: se a diretoria trocou de A para B com a venda
   // aberta, ela sai com B, em vez de parar dizendo que A saiu da lista.
   const departamentoNoEnvio = async () => {
-    if (deps.modo !== 'fixo' && !s.departamento) return null;
-    const novo = await atualizaDepartamentos();
-    if (!novo) return departamentoSel;   // consulta falhou: segue com o que a tela mostrava
+    if (depsDaVenda.modo !== 'fixo' && !s.departamento) return null;
+    const consulta = await atualizaDepartamentos();
+    if (!consulta) return departamentoSel;   // consulta falhou: segue com o que a tela mostrava
+    const novo = departamentosDaCategoria(consulta, s.catId);
     if (novo.modo === 'fixo') return novo.lista[0] || null;
     const escolhido = novo.lista.find((d) => d.codigo === s.departamento);
     if (escolhido) return escolhido;
@@ -2679,10 +2723,11 @@ function App() {
   const estiloDaDescricao = (ladoALado) => ({ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 12px', minHeight: ladoALado ? '2.5em' : undefined });
 
   // Cartão do departamento — o mesmo no Elite e na APN, no fim da etapa do
-  // cliente. É da VENDA, não do cliente: por isso vem depois dos dados dele.
+  // cliente. É da VENDA, não do cliente: por isso vem depois dos dados dele. A
+  // lista e o modo são os da categoria da venda (`depsDaVenda`).
   const renderDepartamento = (ladoALado) => {
-    const semLista = deps.estado !== 'carregando' && deps.lista.length === 0;
-    const fixo = deps.modo === 'fixo' && departamentoSel;
+    const semLista = deps.estado !== 'carregando' && depsDaVenda.lista.length === 0;
+    const fixo = depsDaVenda.modo === 'fixo' && departamentoSel;
     return (
       <div className="card" style={estiloDoCartao(ladoALado)}>
         <div className="sec-title" style={{ marginBottom: 6 }}>Departamento</div>
@@ -2703,10 +2748,10 @@ function App() {
         ) : (
           <>
             <label className="lbl" htmlFor="departamento">Departamento da venda{!semLista && <span style={{ color: 'var(--primary)' }}> *</span>}</label>
-            <select id="departamento" className="inp" style={{ height: 46 }} value={departamentoSel ? s.departamento : ''} disabled={deps.lista.length === 0}
+            <select id="departamento" className="inp" style={{ height: 46 }} value={departamentoSel ? s.departamento : ''} disabled={depsDaVenda.lista.length === 0}
               onChange={(e) => patch({ departamento: e.target.value, departamentoAviso: '' })}>
               <option value="">{deps.estado === 'carregando' ? 'Carregando departamentos…' : semLista ? 'Nenhum departamento disponível' : 'Selecione o departamento'}</option>
-              {deps.lista.map((d) => <option key={d.codigo} value={d.codigo}>{d.descricao}</option>)}
+              {depsDaVenda.lista.map((d) => <option key={d.codigo} value={d.codigo}>{d.descricao}</option>)}
             </select>
           </>
         )}
@@ -2887,7 +2932,7 @@ function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>event_repeat</span>
               <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Parcelas</span>
-              <span title={product && product.cobranca ? 'Este produto tem regra própria de cobrança' : 'Regra de cobrança do Lobby'} style={{ font: '500 11px var(--font-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-light)', borderRadius: 6, padding: '3px 8px' }}>vencimento todo dia {cobranca.dia_vencimento}</span>
+              <span title={product && product.cobranca ? 'Este produto tem regra própria de cobrança' : 'Regra de cobrança da categoria'} style={{ font: '500 11px var(--font-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-light)', borderRadius: 6, padding: '3px 8px' }}>vencimento todo dia {cobranca.dia_vencimento}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ font: '500 12px var(--font-secondary)', color: 'var(--text-muted)' }}>Quantidade</span>
