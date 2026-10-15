@@ -506,7 +506,10 @@ categorias (a regra única dele não leva o `dia_fixo`) nem nas exceções.
 **Volta só de imagem** (sem desfazer a migration) é segura: o backend de antes
 não lê a coluna, e o padrão no banco deixa ele criar exceção. Só que ele não
 sabe do dia desligado — todo produto volta ao dia fixo enquanto a imagem antiga
-estiver no ar.
+estiver no ar. E exceção que ele criar ou remover nesse meio-tempo fica sem a
+linha do tempo do `dia_fixo` (ou com ela aberta): só o histórico sai torto — a
+primeira mudança depois mostra "dia do vencimento fixo: ligado" sem o "de" —,
+as datas não.
 
 ### Integração com o Conecta (TSK-1059): deploy, e só depois ligar
 

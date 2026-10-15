@@ -281,6 +281,26 @@ class HistoricoUnificadoTest(Base):
         titulos = [i["titulo"] for i in self.cobranca(produto="pro")]
         self.assertEqual(titulos, ["Exceção de cobrança removida · ELITE PRO", "Exceção de cobrança · ELITE PRO"])
 
+    def test_mudar_pelo_django_admin_entra_na_linha_do_tempo(self):
+        from django.contrib import admin as django_admin
+        from django.test import RequestFactory
+
+        politica = PoliticaCobranca.objects.get(categoria__slug="elite")
+        politica.dia_fixo = False
+        pedido = RequestFactory().post("/")
+        pedido.user = self.diretoria
+        formulario = type("Form", (), {"changed_data": ["dia_fixo"]})()
+        django_admin.site._registry[PoliticaCobranca].save_model(pedido, politica, formulario, True)
+
+        aberta = Vigencia.objects.get(chave="categoria:elite", campo="dia_fixo", vigente_ate__isnull=True)
+        self.assertEqual((aberta.valor, aberta.autor), ("não", self.diretoria))
+        # E o Conecta religando depois é registrado, com o de → para certo.
+        self.publica({"categorias": {"elite": {**REGRA, "dia_fixo": True}}})
+        evento = self.cobranca(categoria="elite")[0]
+        self.assertEqual(
+            evento["alteracoes"], ["dia do vencimento fixo: desligado (parcelas no dia da venda) → ligado"]
+        )
+
     def test_historico_antigo_mostra_o_campo_com_rotulo(self):
         """O `/api/historico` do /admin antigo: o registro novo sai com rótulo, sem quebrar."""
         self.publica({"categorias": {"elite": {**REGRA, "dia_fixo": False}}})
@@ -368,6 +388,13 @@ class MigracaoDoDiaFixoTest(TransactionTestCase):
             {"dia_vencimento": 5, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0, "dia_fixo": True},
         )
         self.assertEqual(Politica.objects.get(pk=pk_da_excecao).produto.slug, "pro")
+
+        # A exceção criada por pessoa antes do deploy: a semente fica sozinha no
+        # grupo dela (sem autor) e não pode virar evento, nem derrubar a consulta.
+        eventos = consulta({"area": "cobranca", "produto": "pro"})["itens"]
+        self.assertEqual([e["titulo"] for e in eventos], ["Exceção de cobrança · ELITE PRO"])
+        self.assertEqual(len(eventos[0]["alteracoes"]), 3)
+        self.assertFalse(any("dia do vencimento fixo" in a for a in eventos[0]["alteracoes"]))
 
     def test_volta_tira_a_coluna_e_a_linha_do_tempo_do_dia_fixo(self):
         self.prepara_o_banco_de_antes()

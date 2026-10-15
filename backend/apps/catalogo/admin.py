@@ -14,7 +14,8 @@ Divisão de trabalho, e ela mudou em 17/08/2026:
 O aviso que segue valendo: alteração feita por aqui **não** entra no histórico de
 publicações nem abre vigência. Para o valor de um produto, use o `/admin`. A
 exceção é a trava da categoria (`travada`): desde a TSK-1059 mudá-la por aqui
-abre vigência com autor (`CategoriaAdmin.save_model`).
+abre vigência com autor (`CategoriaAdmin.save_model`). E, desde a TSK-1077, a
+regra de cobrança (`PoliticaCobrancaAdmin.save_model`), que ganhou o `dia_fixo`.
 """
 from django.contrib import admin
 
@@ -26,7 +27,7 @@ from .models import (
     Vigencia,
 )
 from .travas import NAO, SIM
-from .vigencias import registrar
+from .vigencias import registrar, registrar_politica
 
 
 class ProdutoInline(admin.TabularInline):
@@ -133,6 +134,18 @@ class PoliticaCobrancaAdmin(admin.ModelAdmin):
 
     list_display = ("__str__", "geral", "categoria", "produto", "dia_fixo", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
     list_filter = ("geral", "dia_fixo", "primeiro_vencimento")
+
+    def save_model(self, request, obj, form, change):
+        """Mudar a regra por aqui também entra na linha do tempo (TSK-1077).
+
+        Mesmo motivo da trava em `CategoriaAdmin.save_model`: desligado aqui em
+        silêncio, o `dia_fixo` seguiria "ligado" na linha do tempo, e o Conecta
+        religando depois não registraria nada (o valor "não mudou").
+        `registrar_politica` grava só o campo que mudou de fato, com o autor.
+        """
+        super().save_model(request, obj, form, change)
+        if form.changed_data:
+            registrar_politica(obj, autor=request.user)
 
     def has_delete_permission(self, request, obj=None):
         # A política geral não pode sumir: sem ela o front não monta cronograma.
