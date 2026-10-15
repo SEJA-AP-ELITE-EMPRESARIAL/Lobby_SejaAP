@@ -598,15 +598,17 @@ function parcelaVencimento(baseISO, idx, cobranca) {
 
 // De que data as parcelas partem. Com o dia fixo, da data da entrada: é ela que
 // decide o MÊS da primeira parcela, e mudá-la refaz o cronograma. Sem ele, do
-// dia da VENDA, que é hoje — a entrada segue o prazo dela e pode cair até depois
-// da primeira parcela, mas não arrasta as parcelas junto.
-const inicioDasParcelas = (entradaISO, cobranca) =>
-  ((cobranca || COBRANCA).dia_fixo ? (entradaISO || todayISO()) : todayISO());
+// dia da VENDA (`vendaData`, o dia em que o cronograma foi montado) — a entrada
+// segue o prazo dela e pode cair até depois da primeira parcela, mas não arrasta
+// as parcelas junto. Guardada no estado, e não lida do relógio a cada ação: uma
+// venda aberta antes da meia-noite não ganha parcela nova em outro dia.
+const inicioDasParcelas = (entradaISO, cobranca, vendaISO) =>
+  ((cobranca || COBRANCA).dia_fixo ? (entradaISO || todayISO()) : (vendaISO || todayISO()));
 
 // O dia do mês em que as parcelas vencem, para os textos da tela.
-const diaDasParcelas = (cobranca) => {
+const diaDasParcelas = (cobranca, vendaISO) => {
   const cob = cobranca || COBRANCA;
-  return cob.dia_fixo ? cob.dia_vencimento : ymd(todayISO())[2];
+  return cob.dia_fixo ? cob.dia_vencimento : ymd(vendaISO || todayISO())[2];
 };
 
 // Data em que a entrada é paga: o dia da venda, salvo prazo configurado.
@@ -1121,8 +1123,9 @@ function initPayment(product, cat) {
   const cob = cobrancaDoProduto(product, cat);
   const entrada = product.recurring ? product.monthly : round2(total / meses);
   const entradaData = dataDaEntrada(cob);
-  const parcelas = buildSchedule(meses - 1, total, entrada, inicioDasParcelas(entradaData, cob), cob);
-  return { entradaForma: 'pix', entradaValor: entrada, entradaData, parcelas, editMode: false };
+  const vendaData = todayISO();
+  const parcelas = buildSchedule(meses - 1, total, entrada, inicioDasParcelas(entradaData, cob, vendaData), cob);
+  return { entradaForma: 'pix', entradaValor: entrada, entradaData, vendaData, parcelas, editMode: false };
 }
 
 /* ===== Logo ===== */
@@ -1380,7 +1383,7 @@ function App() {
     cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
-    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
+    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', vendaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0,
     observacao: '',
     // Departamento da venda (código do Omie) e o aviso de quando ele saiu da
@@ -1618,7 +1621,7 @@ function App() {
       product: p, priceEdit: false, editMode: false, dhAdiantamentoEdit: false, autorizacao: null, observacao: '',
       ...(trocouDeFluxo ? { step: etapaDoProduto(fluxoNovo, cat) } : {}),
       ...(p.flow
-        ? { unitValue: 0, entradaValor: 0, entradaData: '', parcelas: [] }
+        ? { unitValue: 0, entradaValor: 0, entradaData: '', vendaData: '', parcelas: [] }
         : { unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p, cat) }),
     };
   });
@@ -1688,7 +1691,7 @@ function App() {
   } : { entradaData: v }));
   const setCount = (raw) => patch((d) => {
     const n = Math.max(0, Math.min(60, Math.round(Number(raw) || 0)));
-    const start = inicioDasParcelas(d.entradaData, cobranca);
+    const start = inicioDasParcelas(d.entradaData, cobranca, d.vendaData);
     const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: parcelaVencimento(start, i, cobranca), forma: 'boleto', manual: false });
     return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) };
   });
@@ -1757,7 +1760,7 @@ function App() {
   const rebuildDefault = (newTotal) => {
     const meses = mesesDeCobranca(product);
     const entrada = round2(newTotal / meses);
-    return { entradaValor: entrada, parcelas: buildSchedule(meses - 1, newTotal, entrada, inicioDasParcelas(s.entradaData || dataDaEntrada(cobranca), cobranca), cobranca), editMode: false };
+    return { entradaValor: entrada, parcelas: buildSchedule(meses - 1, newTotal, entrada, inicioDasParcelas(s.entradaData || dataDaEntrada(cobranca), cobranca, s.vendaData), cobranca), editMode: false };
   };
   const setUnitValue = (n) => patch(() => {
     const val = Number.isFinite(n) ? n : 0;
@@ -2479,7 +2482,7 @@ function App() {
     cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
-    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
+    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', vendaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '', departamento: '', departamentoAviso: '',
     categoriaFin: '', categoriaFinAviso: '',
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
@@ -2927,7 +2930,7 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
           <div>
             <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Configuração de pagamento</h2>
-            <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada {cobranca.entrada_prazo_dias ? `em ${cobranca.entrada_prazo_dias} dias` : 'no dia da venda'} + {Math.max(0, mesesDeCobranca(product) - 1)} parcelas iguais, todas no dia {diaDasParcelas(cobranca)}{cobranca.dia_fixo ? '' : ` (dia da venda${diaDasParcelas(cobranca) > 28 ? '; no último dia do mês que não o tiver' : ''})`}. Habilite a edição para personalizar.</p>
+            <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada {cobranca.entrada_prazo_dias ? `em ${cobranca.entrada_prazo_dias} dias` : 'no dia da venda'} + {Math.max(0, mesesDeCobranca(product) - 1)} parcelas iguais, todas no dia {diaDasParcelas(cobranca, s.vendaData)}{cobranca.dia_fixo ? '' : ` (dia da venda${diaDasParcelas(cobranca, s.vendaData) > 28 ? '; no último dia do mês que não o tiver' : ''})`}. Habilite a edição para personalizar.</p>
           </div>
           <EditToggle on={s.editMode} onToggle={toggleEdit} label="Editar valores" restrito={!autorizado} />
         </div>
@@ -2965,7 +2968,7 @@ function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>event_repeat</span>
               <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Parcelas</span>
-              <span title={(product && product.cobranca ? 'Este produto tem regra própria de cobrança' : 'Regra de cobrança da categoria') + (cobranca.dia_fixo ? '' : ' — parcelas no dia do mês da venda')} style={{ font: '500 11px var(--font-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-light)', borderRadius: 6, padding: '3px 8px' }}>{cobranca.dia_fixo ? 'vencimento' : 'parcelas'} todo dia {diaDasParcelas(cobranca)}</span>
+              <span title={(product && product.cobranca ? 'Este produto tem regra própria de cobrança' : 'Regra de cobrança da categoria') + (cobranca.dia_fixo ? '' : ' — parcelas no dia do mês da venda')} style={{ font: '500 11px var(--font-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-light)', borderRadius: 6, padding: '3px 8px' }}>{cobranca.dia_fixo ? 'vencimento' : 'parcelas'} todo dia {diaDasParcelas(cobranca, s.vendaData)}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ font: '500 12px var(--font-secondary)', color: 'var(--text-muted)' }}>Quantidade</span>
@@ -2997,7 +3000,7 @@ function App() {
                 {/* Vencimento travado no dia 15. Só quem tem autorização (que é o
                     que liga `editMode`) pode mexer, igual aos valores. */}
                 {notEdit ? (
-                  <div title={`Vencimento travado no dia ${diaDasParcelas(cobranca)}`} style={{ display: 'flex', alignItems: 'center', gap: 5, height: 40, font: "500 13px 'Roboto'", color: 'var(--text-secondary)' }}>
+                  <div title={`Vencimento travado no dia ${diaDasParcelas(cobranca, s.vendaData)}`} style={{ display: 'flex', alignItems: 'center', gap: 5, height: 40, font: "500 13px 'Roboto'", color: 'var(--text-secondary)' }}>
                     <span className="ms-icon" style={{ fontSize: 15, color: 'var(--text-muted)' }}>lock</span>{dmy(p.data)}
                   </div>
                 ) : (
