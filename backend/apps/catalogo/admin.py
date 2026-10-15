@@ -12,7 +12,9 @@ Divisão de trabalho, e ela mudou em 17/08/2026:
   menor esforço era justamente o que não deixava rastro.
 
 O aviso que segue valendo: alteração feita por aqui **não** entra no histórico de
-publicações nem abre vigência. Para o valor de um produto, use o `/admin`.
+publicações nem abre vigência. Para o valor de um produto, use o `/admin`. A
+exceção é a trava da categoria (`travada`): desde a TSK-1059 mudá-la por aqui
+abre vigência com autor (`CategoriaAdmin.save_model`).
 """
 from django.contrib import admin
 

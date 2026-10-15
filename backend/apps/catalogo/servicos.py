@@ -74,6 +74,11 @@ def _numero(valor):
     # comparação, como 500 (achado na revisão da TSK-1059).
     if not numero.is_finite():
         raise CatalogoInvalido("Valor numérico inválido no catálogo.")
+    # Número gigante (1e26, ou 27 dígitos colados no campo) passava daqui e
+    # estourava no `arredonda`, fora de qualquer try; "1e1000000" ainda prendia o
+    # worker segundos no `int()`. Nenhum valor do catálogo passa de 10^9.
+    if numero.adjusted() > 15:
+        raise CatalogoInvalido("Valor numérico inválido no catálogo.")
     return numero
 
 

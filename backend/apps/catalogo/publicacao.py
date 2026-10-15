@@ -226,11 +226,13 @@ def publica_edicoes(dados, *, autor):
             if not produto.nome:
                 raise PublicacaoInvalida(f'O produto "{slug}" precisa de um nome.')
 
-        # Toda a validação de modelo antes da primeira gravação. O `full_clean`
-        # confere a sigla contra o BANCO, onde os produtos deste lote ainda têm a
-        # sigla velha: duas siglas novas iguais no mesmo lote passariam as duas e
-        # estourariam no índice único do segundo `save()`. Por isso a conferência
-        # entre eles mesmos vem aqui, antes.
+        # Toda a validação de modelo antes da primeira gravação: formato, tamanho
+        # e sigla contra o BANCO (`full_clean`).
+        for produto in mexidos.values():
+            _valida_texto(produto)
+        # O `full_clean` não enxerga o próprio lote: no banco os produtos daqui
+        # ainda têm a sigla velha, e duas siglas novas iguais passariam as duas
+        # e estourariam no índice único do segundo `save()`.
         siglas = {}
         for produto in mexidos.values():
             outro = siglas.setdefault(produto.sigla, produto)
@@ -239,8 +241,6 @@ def publica_edicoes(dados, *, autor):
                     f'A sigla {produto.sigla} ficaria em "{outro.nome}" e em "{produto.nome}". '
                     "Cada produto precisa de uma sigla só dele."
                 )
-        for produto in mexidos.values():
-            _valida_texto(produto)
 
         linhas, alvos = [], set()
         for chave, produto in mexidos.items():
@@ -253,13 +253,12 @@ def publica_edicoes(dados, *, autor):
             try:
                 produto.save()
             except IntegrityError:
-                # Rede de segurança para o que a validação acima não previu
-                # (trocar a sigla de dois produtos entre si, por exemplo). Sai
-                # do `atomic` com a exceção: nada do lote fica gravado.
+                # Rede de segurança para uma corrida: outro produto ganhou a mesma
+                # sigla (um POST /api/produtos) entre a validação acima e esta
+                # gravação. Sai do `atomic` com a exceção: nada do lote fica.
                 raise PublicacaoInvalida(
-                    f'"{produto.nome}" não pôde ser gravado: a sigla ou o identificador '
-                    "colide com outro produto. Para trocar siglas entre dois produtos, "
-                    "publique em duas vezes."
+                    f'"{produto.nome}" não pôde ser gravado: a sigla colide com outro '
+                    "produto. Recarregue a página e confira as siglas."
                 )
             registrar_produto(produto, autor=autor, quando=agora)
 

@@ -330,7 +330,9 @@ servidor do Conecta, nunca aqui) e a TSK-1060 estiver pronta para chamar:
    recebe 429, ou seja, vende com preço possivelmente velho sem erro na tela.
    Para manter o comportamento de hoje, triplique os valores no mesmo deploy
    (por exemplo `LOBBY_RATE_CATALOGO=720/hour`, `LOBBY_RATE_COMPROVANTE=360/hour`,
-   `LOBBY_RATE_LOGIN=360/hour`, e os de 600/hour para 1800/hour).
+   `LOBBY_RATE_LOGIN=360/hour`, `LOBBY_RATE_DEFINIR_SENHA=60/hour`, e os de
+   600/hour para 1800/hour). O de definir senha é baixo de propósito: se quiser o
+   teto exato de 20/hora, deixe como está.
 2. **Chave pública.** `CONECTA_ASSERCAO_CHAVES` no `.env` (formato no
    `.env.example`: conjunto JWK, um `kid` por chave). Nunca a privada: o Lobby
    recusa um JWK com `d`.

@@ -171,8 +171,12 @@ NIVEIS = {
 }
 
 
-# Recusas que não contam no teto por IP: ver `AutenticacaoConecta.authenticate`.
-RECUSAS_LEGITIMAS = frozenset({"SEM_CONTA", "CONTA_INATIVA"})
+# Recusas que não contam no teto por IP: todas chegam com asserção de assinatura
+# e claims BOAS (ver `AutenticacaoConecta.authenticate`). Sem conta e conta
+# inativa são pessoas que ainda não podem; impersonação escrevendo e rota fora
+# da lista são, pelo ADR-002 §4.7, contadas "por pessoa", não por IP — e todo o
+# tráfego do Conecta sai de um IP só.
+RECUSAS_LEGITIMAS = frozenset({"SEM_CONTA", "CONTA_INATIVA", "IMPERSONACAO_RECUSADA", "ROTA_NAO_LIBERADA"})
 
 
 class AssercaoRecusada(exceptions.AuthenticationFailed):

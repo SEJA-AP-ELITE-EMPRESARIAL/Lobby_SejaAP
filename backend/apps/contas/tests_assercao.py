@@ -506,6 +506,16 @@ class AchadosDaRevisaoTest(BaseAssercao):
                 self.assertRecusa(self.get(sub="nunca.entrou@exemplo.com.br"), 401, "SEM_CONTA")
             self.assertEqual(self.get().status_code, 200)
 
+    def test_conta_inativa_e_impersonacao_nao_enchem_o_teto_por_ip(self):
+        self.gerente.is_active = False
+        self.gerente.save()
+        with mock.patch.object(FalhasPorIp, "THROTTLE_RATES", {"integracao_falhas": "2/min"}):
+            for _ in range(3):
+                self.assertRecusa(self.get(sub="gerente@sejaap.com.br"), 401, "CONTA_INATIVA")
+                resposta = self.chama("put", "/api/cobranca", self.par.assina(imp=True), {"geral": {}})
+                self.assertRecusa(resposta, 403, "IMPERSONACAO_RECUSADA")
+            self.assertEqual(self.get().status_code, 200)
+
     def test_401_do_admin_antigo_segue_com_o_cabecalho_do_jwt(self):
         resposta = APIClient().put("/api/cobranca", {}, format="json")
         self.assertEqual(resposta.status_code, 401)

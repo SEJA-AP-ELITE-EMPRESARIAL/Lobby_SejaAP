@@ -373,6 +373,12 @@ class AchadosDaRevisaoTest(Base):
         ]})
         self.assertRecusa(resposta, 400, "DADOS_INVALIDOS")
         self.assertIn("ZZZ", resposta.json()["erro"])
+        # Sigla fora do formato recebe a mensagem do formato, não a de repetição.
+        resposta = self.publica({"produtos": [
+            {"categoria": "elite", "slug": "base", "sigla": "ab"},
+            {"categoria": "elite", "slug": "pre", "sigla": "ab"},
+        ]})
+        self.assertIn("3 letras", resposta.json()["erro"])
         self.assertEqual(PublicacaoCatalogo.objects.count(), antes)
         self.assertFalse(Produto.objects.filter(sigla="ZZZ").exists())
 
@@ -389,8 +395,10 @@ class AchadosDaRevisaoTest(Base):
         cliente.force_authenticate(user=self.bruna)
         cats = cliente.get("/api/catalogo").json()["cats"]
         elite = next(c for c in cats if c["id"] == "elite")
-        elite["products"][0]["monthly"] = "NaN"
-        self.assertEqual(cliente.put("/api/catalogo", {"cats": cats}, format="json").status_code, 400)
+        for valor in ("NaN", 1e26, 10**27, "1e1000000"):
+            elite["products"][0]["monthly"] = valor
+            with self.subTest(valor=str(valor)[:12]):
+                self.assertEqual(cliente.put("/api/catalogo", {"cats": cats}, format="json").status_code, 400)
         resposta = cliente.post("/api/produtos", {"categoria_id": "elite", "nome": "X", "sigla": "XXX",
                                                   "recorrente": False, "valor": "NaN"}, format="json")
         self.assertEqual(resposta.status_code, 400)
