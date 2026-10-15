@@ -120,3 +120,19 @@ jobs:
             grep -E "\.\.\. skipped" "$RUNNER_TEMP/testes.log" || true
             exit 1
           fi
+
+  front:
+    name: Front — datas do cronograma
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Datas do cronograma (index.html)
+        # As datas vão com a venda para o n8n e o Omie, e o servidor confere só
+        # os valores (TSK-1077). O teste roda as funções do próprio index.html,
+        # sem navegador e sem dependência: o Node que já vem no runner basta.
+        # Dois fusos, porque é no Date local que a conta é feita.
+        run: |
+          node --version
+          TZ=America/Sao_Paulo node --test tests/front/cronograma.test.mjs
+          TZ=UTC node --test tests/front/cronograma.test.mjs
