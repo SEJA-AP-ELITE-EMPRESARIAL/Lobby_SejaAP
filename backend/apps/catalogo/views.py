@@ -24,12 +24,23 @@ Regras que não podem se perder na migração:
   tabela de preços cacheada na borda é venda fechada com valor errado.
 - **401 derruba a sessão do admin** (`admin.html:228`), então 401 é só para
   "não autenticado". Autenticado sem permissão de publicar recebe 403.
+
+O CONECTA (TSK-1059)
+
+As views com `AceitaAssercao` também atendem o Admin Lobby do Conecta, pela
+asserção (`apps/contas/autenticacao_conecta.py`), na lista fechada da §13.4 do
+ADR-002: GET do catálogo, GET/PUT da cobrança, POST de produto e GET das
+publicações. O `PUT /api/catalogo` e o `PATCH` de produto ficam FORA — o Conecta
+publica por `/api/integracao/catalogo/publicar`, que grava um registro só —, e
+seguem aqui para o /admin de hoje até a TSK-1062. A permissão é a mesma nos dois
+caminhos: `PodePublicarTabela`, pelo papel do Lobby.
 """
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.contas.autenticacao_conecta import AceitaAssercao, recusa
 from apps.contas.permissions import PodePublicarTabela
 
 from . import produtos as servico_produtos
@@ -40,7 +51,7 @@ from .servicos import CatalogoInvalido, publica_catalogo
 from .throttling import CatalogoPublicoThrottle
 
 
-class CatalogoView(APIView):
+class CatalogoView(AceitaAssercao, APIView):
     """Leitura pública, escrita restrita, no mesmo caminho."""
 
     def get_permissions(self):
@@ -140,7 +151,7 @@ class CatalogoView(APIView):
         )
 
 
-class CobrancaView(APIView):
+class CobrancaView(AceitaAssercao, APIView):
     """A regra de data do cronograma — leitura pública, escrita da diretoria.
 
     Leitura pública pelo mesmo motivo do catálogo: o consultor não faz login, e
@@ -174,13 +185,11 @@ class CobrancaView(APIView):
         try:
             estado = publica_politica(request.data or {}, autor=request.user)
         except CobrancaInvalida as erro:
-            return self._sem_cache(
-                Response({"erro": str(erro)}, status=status.HTTP_400_BAD_REQUEST)
-            )
+            return self._sem_cache(recusa(request, str(erro)))
         return self._sem_cache(Response({"ok": True, **estado}))
 
 
-class ProdutosView(APIView):
+class ProdutosView(AceitaAssercao, APIView):
     """Criar produto. Só diretoria.
 
     Fica separada do `PUT /api/catalogo` porque as duas operações têm garantias
@@ -195,7 +204,7 @@ class ProdutosView(APIView):
         try:
             produto = servico_produtos.cria(request.data or {}, autor=request.user)
         except servico_produtos.ProdutoInvalido as erro:
-            return Response({"erro": str(erro)}, status=status.HTTP_400_BAD_REQUEST)
+            return recusa(request, str(erro))
         return Response(
             {"ok": True, "produto": serializa_produto(produto)},
             status=status.HTTP_201_CREATED,
@@ -271,7 +280,7 @@ class HistoricoView(APIView):
         return resposta
 
 
-class PublicacoesView(APIView):
+class PublicacoesView(AceitaAssercao, APIView):
     """As publicações da tabela: quem apertou "publicar", quando, e o que mudou.
 
     O QUE ISTO ACRESCENTA AO `/api/historico`

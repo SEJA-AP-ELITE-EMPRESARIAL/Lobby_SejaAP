@@ -21,6 +21,7 @@ import json
 import logging
 import time
 import uuid
+import warnings
 from unittest import mock
 
 import jwt
@@ -260,14 +261,18 @@ class RecusaTest(BaseAssercao):
         """A confusão de algoritmo clássica: `algorithms` escrito à mão a barra."""
         agora = int(time.time())
         segredo = self.par.jwk()["x"]
-        token = jwt.encode(
-            {"iss": "conecta", "aud": "lobby", "sub": "diretoria@sejaap.com.br", "iat": agora, "nbf": agora,
-             "exp": agora + 60, "jti": str(uuid.uuid4()), "imp": False},
-            segredo,
-            algorithm="HS256",
-            headers={"kid": self.par.kid},
-        )
-        self.assertRecusa(self.chama("get", QUEM_SOU, token), 401, "CABECALHO_INVALIDO")
+        with warnings.catch_warnings():
+            # O PyJWT avisa que o segredo é curto; aqui ele é o ataque, não um erro.
+            warnings.simplefilter("ignore", jwt.warnings.InsecureKeyLengthWarning)
+            token = jwt.encode(
+                {"iss": "conecta", "aud": "lobby", "sub": "diretoria@sejaap.com.br", "iat": agora, "nbf": agora,
+                 "exp": agora + 60, "jti": str(uuid.uuid4()), "imp": False},
+                segredo,
+                algorithm="HS256",
+                headers={"kid": self.par.kid},
+            )
+            resposta = self.chama("get", QUEM_SOU, token)
+        self.assertRecusa(resposta, 401, "CABECALHO_INVALIDO")
 
     def test_alg_none(self):
         cab = _b64url(json.dumps({"alg": "none", "typ": "JWT", "kid": self.par.kid}).encode())

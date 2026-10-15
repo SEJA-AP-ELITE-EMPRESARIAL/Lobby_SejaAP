@@ -78,6 +78,10 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # O cabeçalho da asserção do Conecta só vale nas views que a declaram; em
+    # qualquer outra, 403 ROTA_NAO_LIBERADA (TSK-1059). Ver
+    # apps/contas/autenticacao_conecta.py.
+    "apps.contas.autenticacao_conecta.FechaRotasForaDaLista",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

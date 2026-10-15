@@ -706,3 +706,63 @@ def registra_chamada(request, response):
         ip_do_cliente(request),
         f" detalhe={registro['detalhe']}" if registro.get("detalhe") else "",
     )
+
+
+# ----- o resto do Lobby ------------------------------------------------------
+
+
+class FechaRotasForaDaLista:
+    """Middleware: o cabeçalho da asserção numa view que não a declara é 403.
+
+    A classe de autenticação só existe nas views com `AceitaAssercao`; nas
+    outras o cabeçalho seria simplesmente ignorado — e o Conecta veria um 401
+    genérico, ou pior, um 200 anônimo numa rota pública, sem `codigo` para
+    decidir. Aqui a lista fechada vale para o Lobby inteiro, inclusive para o
+    /django-admin/ e o /metrics: qualquer view fora dela responde
+    `ROTA_NAO_LIBERADA`, antes de rodar (§5, "qualquer outra rota responde 403").
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        return self.get_response(request)
+
+    def process_view(self, request, view_func, view_args, view_kwargs):
+        if CABECALHO not in request.META:
+            return None
+        classe = getattr(view_func, "view_class", None) or getattr(view_func, "cls", None)
+        if isinstance(classe, type) and issubclass(classe, AceitaAssercao):
+            return None
+
+        from django.http import JsonResponse
+
+        frase = FRASES["ROTA_NAO_LIBERADA"]
+        resposta = JsonResponse(
+            {"erro": frase, "detail": frase, "codigo": "ROTA_NAO_LIBERADA"}, status=403
+        )
+        resposta["Cache-Control"] = "no-store"
+        resolvida = getattr(request, "resolver_match", None)
+        logger.error(
+            "integracao kid=- jti=- sub=- aud=- url=%s metodo=%s status=403 "
+            "codigo=ROTA_NAO_LIBERADA tempo=- ip=%s",
+            getattr(resolvida, "url_name", None) or request.path,
+            request.method,
+            ip_do_cliente(request),
+        )
+        return resposta
+
+
+def recusa(request, frase, status=400, codigo="DADOS_INVALIDOS"):
+    """O 400 das views da lista, com `codigo` para o Conecta.
+
+    Para o /admin de hoje a resposta continua `{"erro": ...}`, byte a byte: o
+    `codigo` (e o `detail` do ADR) só entram quando a chamada veio com a
+    asserção.
+    """
+    from rest_framework.response import Response
+
+    corpo = {"erro": frase}
+    if CABECALHO in request.META:
+        corpo.update(detail=frase, codigo=codigo)
+    return Response(corpo, status=status)
