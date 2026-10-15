@@ -149,6 +149,45 @@ class DesligarTest(Base):
         self.assertFalse(Vigencia.objects.filter(chave="pro", campo="dia_fixo", vigente_ate__isnull=True).exists())
 
 
+class TravaTest(Base):
+    """Achado do Codex: duas publicações ao mesmo tempo (uma desliga o dia fixo,
+    a outra muda o vencimento sem mandá-lo) deixavam a linha do tempo dizendo
+    "ligado" com o banco desligado. A corrida só existe com trava de linha de
+    verdade (Postgres; reproduzida e conferida no QA da TSK-1077) — o SQLite do
+    CI não trava. Aqui fica a garantia de que a publicação trava o que vai ler."""
+
+    def travas(self, corpo):
+        from unittest import mock
+
+        from django.db.models import QuerySet
+
+        original = QuerySet.select_for_update
+        travadas = []
+
+        def espia(consulta, *args, **kwargs):
+            if consulta.model is PoliticaCobranca:
+                travadas.append(consulta)
+            return original(consulta, *args, **kwargs)
+
+        with mock.patch.object(QuerySet, "select_for_update", autospec=True, side_effect=espia):
+            resposta = self.publica(corpo)
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        return travadas
+
+    def test_corpo_novo_trava_a_categoria_e_todas_as_excecoes(self):
+        excecao = {"categoria_id": "elite", "produto_id": "pro", **REGRA}
+        travadas = self.travas({"categorias": {"elite": REGRA}, "excecoes": [excecao]})
+        # A Elite, todas as exceções de uma vez (na ordem do produto) e a do PRO.
+        self.assertEqual(len(travadas), 3)
+
+    def test_corpo_antigo_trava_a_geral_e_cada_categoria(self):
+        travadas = self.travas({"geral": REGRA, "excecoes": []})
+        self.assertEqual(len(travadas), 1 + len(CATEGORIAS) + 1)
+
+    def test_corpo_novo_sem_excecoes_nao_trava_excecao(self):
+        self.assertEqual(len(self.travas({"categorias": {"apn": REGRA}})), 1)
+
+
 class SemDiaFixoNoCorpoTest(Base):
     def test_categoria_que_ja_existe_mantem_o_gravado(self):
         self.desliga_elite_e_o_pro()

@@ -180,12 +180,30 @@ def _categorias_validadas(brutas) -> list:
     return sorted(validadas, key=lambda par: par[0].pk)
 
 
-def _grava_da_categoria(categoria, regra, *, autor, quando):
-    politica, criada = PoliticaCobranca.objects.get_or_create(
-        categoria=categoria, defaults={"geral": False, **regra}
-    )
+def _travada(**alvo_e_defaults):
+    """A política do alvo, travada até o fim da publicação (ou criada).
+
+    Travada ANTES de comparar e gravar. Sem isso, duas publicações ao mesmo
+    tempo — uma desligando o dia fixo, outra mexendo no vencimento sem mandá-lo
+    — deixariam a segunda comparar com a cópia que leu antes: o banco ficaria
+    com o dia fixo desligado (o `update_fields` não o toca), e a linha do tempo
+    registraria um "religado" que não aconteceu. Travada, a segunda espera a
+    primeira terminar e lê o que ela gravou.
+
+    A ordem das travas é sempre a mesma (a geral, as categorias e as exceções
+    pelo id), para duas publicações não ficarem esperando uma pela outra.
+    """
+    return PoliticaCobranca.objects.select_for_update().get_or_create(**alvo_e_defaults)
+
+
+def _grava(alvo, regra, *, autor, quando):
+    politica, criada = _travada(**alvo, defaults={"geral": False, **regra})
     if criada or _aplica(politica, regra):
         registrar_politica(politica, autor=autor, quando=quando)
+
+
+def _grava_da_categoria(categoria, regra, *, autor, quando):
+    _grava({"categoria": categoria}, regra, autor=autor, quando=quando)
 
 
 @transaction.atomic
@@ -226,7 +244,7 @@ def publica_politica(dados, *, autor=None) -> dict:
     agora = timezone.now()
 
     if regra_geral is not None:
-        geral = PoliticaCobranca.geral_atual()
+        geral, _ = _travada(geral=True, defaults={"produto": None})
         if _aplica(geral, regra_geral):
             registrar_politica(geral, autor=autor, quando=agora)
 
@@ -236,14 +254,16 @@ def publica_politica(dados, *, autor=None) -> dict:
     if excecoes is None:
         return estado_atual()
 
+    # Todas as exceções de hoje travadas de uma vez, na ordem do produto — as
+    # que ficam e as que vão sair. Travadas uma a uma, na ordem da lista, duas
+    # publicações (uma mantendo uma exceção que a outra remove) poderiam travar
+    # as mesmas linhas em ordens opostas e esperar uma pela outra.
+    list(PoliticaCobranca.objects.select_for_update().filter(produto__isnull=False).order_by("produto_id"))
+
     mantidos = set()
     for produto, regra in excecoes:
-        politica, criada = PoliticaCobranca.objects.get_or_create(
-            produto=produto, defaults={"geral": False, **regra}
-        )
+        _grava({"produto": produto}, regra, autor=autor, quando=agora)
         mantidos.add(produto.pk)
-        if criada or _aplica(politica, regra):
-            registrar_politica(politica, autor=autor, quando=agora)
 
     # Exceções que a tela não mandou de volta deixaram de existir. A linha do
     # tempo fecha o período delas, com QUEM removeu — sem isso, a trilha diria
