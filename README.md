@@ -293,10 +293,19 @@ no login, que precisa de um Conecta ID alcançável (`AUTH_CENTRAL_ATIVO`).
 A stack completa, igual à de produção:
 
 ```bash
-cp .env.example .env      # e preencha banco + IDENTIDADE_APP_KEY
+cp .env.example .env      # e preencha banco, IDENTIDADE_APP_KEY e a senha do Redis
 docker compose up -d --build
 # lobby: http://127.0.0.1:8095   ·   painel: http://127.0.0.1:8095/admin
 ```
+
+A senha do Redis vai em duas linhas, `LOBBY_REDIS_SENHA` e `LOBBY_REDIS_URL`
+(`redis://:<senha>@redis:6379/0`). Sem `LOBBY_REDIS_SENHA` o compose recusa subir
+qualquer serviço.
+
+A suíte contra um Redis de verdade, como o CI faz: com `LOBBY_REDIS_URL` no ambiente
+roda também o `JtiEntreProcessosTest` (o `jti` repetido entre dois processos); sem
+ele, esses 3 testes são pulados. **A suíte esvazia o Redis** (`cache.clear()` é
+FLUSHDB): só aponte para um descartável.
 
 Servir só o HTML (`npx serve .`) continua funcionando para mexer em layout: o lobby
 cai no catálogo embutido e a edição de valores fica indisponível.
@@ -417,7 +426,8 @@ Cloudflare (proxied, Full strict)
           └── 127.0.0.1:8095  →  container lobby-frontend (nginx)
                  ├── /            index.html · admin.html
                  └── /api/        →  lobby-backend (Django + gunicorn)
-                                        └── db-tunnel → Postgres na db-sejaap:5437
+                                        ├── db-tunnel → Postgres na db-sejaap:5437
+                                        └── lobby-redis (sem porta, só na rede do compose)
    lobby-departamentos (sem porta) ── a cada 1 h: Omie → db-tunnel
    lobby-categorias    (sem porta) ── a cada 1 h: Omie (ListarCategorias) → db-tunnel
 ```
@@ -432,6 +442,13 @@ Cloudflare (proxied, Full strict)
 - **Rede:** o backend entra na `identidade-net`, criada pela stack do Conecta ID, para
   alcançar `identidade-api:8000`. Ela é `external: true` — se o Conecta ID não estiver
   de pé, o `up` falha alto, e isso é proposital.
+- **Redis próprio (TSK-1068):** `lobby-redis`, `redis:7-alpine` com senha, só na
+  rede interna do compose — sem porta no host e fora da `identidade-net`. Guarda o
+  `jti` da asserção do Conecta (sem ele, a integração fica em 503) e os tetos de
+  chamada (sem ele, falham abertos e o lobby vende igual). É cache: não persiste.
+  Variáveis novas no `lobby.env`: `LOBBY_REDIS_SENHA` e `LOBBY_REDIS_URL`; os
+  `LOBBY_RATE_*` das rotas do consultor foram triplicados para manter o teto real
+  de antes. Ordem do primeiro deploy e caminho de volta: RUNBOOK, "Redis do Lobby".
 - **Migrations não rodam sozinhas.** Aplique à mão antes de trocar o container, como
   nos outros apps da casa.
 

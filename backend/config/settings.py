@@ -154,8 +154,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Desde a TSK-1059 o cache compartilhado deixou de ser opcional para uma coisa:
 # a asserção do Conecta guarda nele o `jti` contra repetição (ADR-002 §4.6), e
 # sem Redis a integração fica DESLIGADA em produção (503 INTEGRACAO_DESLIGADA).
-# Em produção `LOBBY_REDIS_URL` aponta para o Redis do Conecta ID, num índice
-# próprio — ver o .env.example e o deploy/RUNBOOK.md.
+# Em produção `LOBBY_REDIS_URL` aponta para o Redis PRÓPRIO do Lobby (TSK-1068),
+# o serviço `redis` do docker-compose.yml, com senha e só na rede interna do
+# compose — ver o .env.example e o deploy/RUNBOOK.md.
 #
 # DOIS ALIASES PARA O MESMO REDIS, de propósito:
 #   default   os throttles. Falha ABERTA (`config/cache.py`): Redis fora não
