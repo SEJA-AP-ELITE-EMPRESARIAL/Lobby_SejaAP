@@ -33,7 +33,8 @@ REGRAS, todas conferidas ANTES da primeira escrita:
 - `valor_referencia` só na categoria de fluxo próprio (a APN). `null` limpa.
 
 O que esta rota não faz, como o PUT antigo: criar, apagar ou reordenar produto,
-nem mudar slug ou categoria. Criar é o `POST /api/produtos`; apagar não existe.
+nem mudar slug ou categoria. Criar é o `POST /api/produtos`, só pelo /admin
+antigo (fora da lista do Conecta desde a TSK-1077); apagar não existe.
 """
 from decimal import Decimal, InvalidOperation
 

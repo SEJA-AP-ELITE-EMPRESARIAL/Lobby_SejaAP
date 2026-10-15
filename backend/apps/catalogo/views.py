@@ -29,8 +29,9 @@ O CONECTA (TSK-1059)
 
 As views com `AceitaAssercao` também atendem o Admin Lobby do Conecta, pela
 asserção (`apps/contas/autenticacao_conecta.py`), na lista fechada da §13.4 do
-ADR-002: GET do catálogo, GET/PUT da cobrança, POST de produto e GET das
-publicações. O `PUT /api/catalogo` e o `PATCH` de produto ficam FORA — o Conecta
+ADR-002: GET do catálogo, GET/PUT da cobrança e GET das publicações. O POST de
+produto esteve na lista e saiu na TSK-1077: produto novo entra por
+desenvolvimento. O `PUT /api/catalogo` e o `PATCH` de produto ficam FORA — o Conecta
 publica por `/api/integracao/catalogo/publicar`, que grava um registro só —, e
 seguem aqui para o /admin de hoje até a TSK-1062. A permissão é a mesma nos dois
 caminhos: `PodePublicarTabela`, pelo papel do Lobby.
@@ -192,7 +193,11 @@ class CobrancaView(AceitaAssercao, APIView):
 
 
 class ProdutosView(AceitaAssercao, APIView):
-    """Criar produto. Só diretoria.
+    """Criar produto. Só diretoria, e só pelo /admin antigo (JWT de sessão).
+
+    Fora da lista do Conecta desde a TSK-1077: com a asserção, 403
+    `ROTA_NAO_LIBERADA`. O `AceitaAssercao` fica, como no `PUT /api/catalogo`: a
+    asserção é conferida e a recusa sai na linha de log da integração.
 
     Fica separada do `PUT /api/catalogo` porque as duas operações têm garantias
     diferentes: publicar preço não cria nem apaga linha, por desenho (ver

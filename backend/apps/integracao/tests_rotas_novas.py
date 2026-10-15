@@ -424,11 +424,25 @@ class AchadosDaRevisaoTest(Base):
                                                   "recorrente": False, "valor": "NaN"}, format="json")
         self.assertEqual(resposta.status_code, 400)
 
-    def test_post_de_produto_pela_assercao_grava_a_pessoa_do_sub(self):
-        resposta = self.como("post", "/api/produtos", {
+    def test_post_de_produto_saiu_da_lista_e_o_admin_antigo_ainda_cria(self):
+        """TSK-1077: produto novo entra por desenvolvimento, não pelo Conecta."""
+        corpo = {
             "categoria_id": "elite", "nome": "ELITE MASTER", "sigla": "MAS",
             "recorrente": True, "mensalidade": "39997", "vigencia_meses": 12,
-        })
+        }
+        publicacoes = PublicacaoCatalogo.objects.count()
+        resposta = self.como("post", "/api/produtos", corpo)
+        self.assertRecusa(resposta, 403, "ROTA_NAO_LIBERADA")
+        confere(self, resposta.json(), "erro_rota_nao_liberada")
+        self.assertFalse(Produto.objects.filter(slug="elite-master").exists())
+        self.assertEqual(PublicacaoCatalogo.objects.count(), publicacoes)
+
+        # O /admin antigo, com o JWT de sessão de hoje, continua criando.
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        cliente = APIClient()
+        cliente.credentials(HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(self.bruna).access_token}")
+        resposta = cliente.post("/api/produtos", corpo, format="json")
         self.assertEqual(resposta.status_code, 201, resposta.content)
         publicacao = PublicacaoCatalogo.objects.order_by("-publicado_em", "-id").first()
         self.assertEqual(publicacao.autor, self.bruna)

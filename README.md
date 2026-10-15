@@ -241,6 +241,8 @@ com o papel que ela tem **aqui**: só a diretoria publica, como no `/admin`.
   método (`apps/contas/autenticacao_conecta.py`, `ROTAS_LIBERADAS`). Fora dela,
   403 `ROTA_NAO_LIBERADA` — inclusive o `PUT /api/catalogo` e o `PATCH` de produto,
   que o Conecta substitui pela publicação abaixo. Venda, sessão e senha nunca.
+  Criar produto (`POST /api/produtos`) também ficou fora, desde a TSK-1077: produto
+  novo entra por desenvolvimento, e a rota segue só para o `/admin` antigo.
 - **"Entrar como usuário"** (`imp`) só lê; escrever é 403.
 - **Sem a chave pública, ou sem Redis em produção, fica desligada** (503
   `INTEGRACAO_DESLIGADA`) — e só para quem manda o cabeçalho. O consultor e o

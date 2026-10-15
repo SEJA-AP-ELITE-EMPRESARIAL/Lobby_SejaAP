@@ -83,6 +83,11 @@ METODOS_DE_LEITURA = frozenset({"GET", "HEAD", "OPTIONS"})
 # credencial do Lobby é o que a asserção existe para não fazer), `/api/venda/*`
 # (do consultor e do n8n), o `/api/historico` antigo, `/django-admin/`,
 # `/metrics` e DELETE em qualquer rota.
+#
+# E o `POST /api/produtos`, desde a TSK-1077 (decisão de 15/10/2026): os
+# produtos novos não têm todos os mesmos campos, e o formulário único de criar
+# saiu do Conecta. Produto novo entra por desenvolvimento; a rota continua
+# existindo para o /admin antigo, com o JWT de sessão.
 ROTAS_LIBERADAS = {
     # Rotas novas, sob /api/integracao/.
     "integracao-quem-sou": frozenset({"GET"}),
@@ -93,7 +98,6 @@ ROTAS_LIBERADAS = {
     # Rotas que já existiam.
     "catalogo": frozenset({"GET"}),
     "cobranca": frozenset({"GET", "PUT"}),
-    "produtos": frozenset({"POST"}),
     "departamentos-configuracao": frozenset({"GET", "PUT"}),
     "categorias-financeiras-configuracao": frozenset({"GET", "PUT"}),
     "dh-avaliacao-valores-configuracao": frozenset({"GET", "PUT"}),

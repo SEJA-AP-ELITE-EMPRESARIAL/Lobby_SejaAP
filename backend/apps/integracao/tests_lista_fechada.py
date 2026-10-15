@@ -67,6 +67,9 @@ class ForaDaListaTest(BaseAssercao):
     def test_rotas_fora_da_lista(self):
         rotas = [
             ("patch", "/api/produtos/elite/pro", {"nome": "X"}),
+            # Fora desde a TSK-1077: produto novo entra por desenvolvimento.
+            ("post", "/api/produtos", {"categoria_id": "elite", "nome": "X", "sigla": "XXX",
+                                       "recorrente": False, "valor": "100"}),
             ("post", "/api/sessao", {"email": "a@b.c", "senha": "x"}),
             ("get", "/api/sessao/atual", None),
             ("post", "/api/senha/esqueci", {"email": "a@b.c"}),
