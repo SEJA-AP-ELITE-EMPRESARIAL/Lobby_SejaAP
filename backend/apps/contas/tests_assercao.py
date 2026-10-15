@@ -372,7 +372,13 @@ class DesligadaTest(TestCase):
                 self.assertEqual(resposta.status_code, 503)
                 self.assertEqual(resposta.json()["codigo"], "INTEGRACAO_DESLIGADA")
 
-    @override_settings(DEBUG=False)
+    @override_settings(
+        DEBUG=False,
+        CACHES={
+            "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+            "assercao": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "assercao"},
+        },
+    )
     def test_cache_por_processo_em_producao_desliga(self):
         """Com 3 workers e `LocMemCache`, o mesmo `jti` passaria 3 vezes (§4.6)."""
         with override_settings(CONECTA_ASSERCAO_CHAVES=conjunto(self.par)):
