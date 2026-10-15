@@ -22,8 +22,8 @@ from apps.contas.models import Papel
 from .models import Categoria, PoliticaCobranca, Vigencia
 from .tests_escrita import cria_pessoa
 
-GERAL = {"dia_vencimento": 15, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0}
-DIA_10 = {"dia_vencimento": 10, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 1}
+GERAL = {"dia_vencimento": 15, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0, "dia_fixo": True}
+DIA_10 = {"dia_vencimento": 10, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 1, "dia_fixo": True}
 CATEGORIAS = ["elite", "treinamentos", "apn", "produtos"]
 
 

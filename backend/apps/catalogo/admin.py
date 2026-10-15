@@ -131,8 +131,8 @@ class ProdutoAdmin(admin.ModelAdmin):
 class PoliticaCobrancaAdmin(admin.ModelAdmin):
     """A regra de data do cronograma. O caminho normal é o `/admin`."""
 
-    list_display = ("__str__", "geral", "categoria", "produto", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
-    list_filter = ("geral", "primeiro_vencimento")
+    list_display = ("__str__", "geral", "categoria", "produto", "dia_fixo", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
+    list_filter = ("geral", "dia_fixo", "primeiro_vencimento")
 
     def has_delete_permission(self, request, obj=None):
         # A política geral não pode sumir: sem ela o front não monta cronograma.

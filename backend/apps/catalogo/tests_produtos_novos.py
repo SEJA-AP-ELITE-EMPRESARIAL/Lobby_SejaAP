@@ -420,7 +420,7 @@ class FallbackDoFrontTest(TestCase):
 
         self.assertIn(
             "cobranca: { dia_vencimento: 5, primeiro_vencimento: 'proximo', "
-            "entrada_prazo_dias: 3 }",
+            "entrada_prazo_dias: 3, dia_fixo: true }",
             bloco,
         )
         self.assertNotIn("'{", bloco)  # nenhum dicionário virou texto

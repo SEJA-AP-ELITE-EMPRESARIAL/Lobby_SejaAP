@@ -37,6 +37,7 @@ REGRA_PADRAO = {
     "dia_vencimento": 15,
     "primeiro_vencimento": PrimeiroVencimento.MES_SEGUINTE,
     "entrada_prazo_dias": 0,
+    "dia_fixo": True,
 }
 
 
@@ -110,7 +111,7 @@ class LeituraTest(BaseCobranca):
 
         self.assertEqual(
             evo["cobranca"],
-            {"dia_vencimento": 5, "primeiro_vencimento": "proximo", "entrada_prazo_dias": 3},
+            {"dia_vencimento": 5, "primeiro_vencimento": "proximo", "entrada_prazo_dias": 3, "dia_fixo": True},
         )
         self.assertNotIn("cobranca", pro)
 

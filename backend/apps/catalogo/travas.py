@@ -13,9 +13,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import Categoria, Vigencia
-from .vigencias import registrar
-
-SIM, NAO = "sim", "não"
+from .vigencias import NAO, SIM, registrar
 
 
 def rotulo_da_trava(valor: str) -> str:

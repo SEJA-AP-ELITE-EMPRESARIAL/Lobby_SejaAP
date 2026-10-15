@@ -35,7 +35,11 @@ CAMPOS_DE_COBRANCA = (
     Vigencia.Campo.DIA_VENCIMENTO,
     Vigencia.Campo.PRIMEIRO_VENCIMENTO,
     Vigencia.Campo.ENTRADA_PRAZO_DIAS,
+    Vigencia.Campo.DIA_FIXO,
 )
+
+# Como um sim/não fica guardado: a mesma forma da trava de categoria.
+SIM, NAO = "sim", "não"
 
 
 def _pessoa(autor):
@@ -51,6 +55,8 @@ def texto(valor) -> str:
     com o registro anterior é textual, e `Decimal("12997")` contra
     `Decimal("12997.00")` viraria uma mudança que não houve.
     """
+    if isinstance(valor, bool):
+        return SIM if valor else NAO
     if isinstance(valor, Decimal):
         return f"{valor:.2f}"
     if valor is None:
@@ -152,6 +158,7 @@ def registrar_politica(
             (Vigencia.Campo.DIA_VENCIMENTO, politica.dia_vencimento),
             (Vigencia.Campo.PRIMEIRO_VENCIMENTO, politica.primeiro_vencimento),
             (Vigencia.Campo.ENTRADA_PRAZO_DIAS, politica.entrada_prazo_dias),
+            (Vigencia.Campo.DIA_FIXO, politica.dia_fixo),
         )
     ]
     return [r for r in registros if r is not None]

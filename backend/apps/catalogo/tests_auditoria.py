@@ -113,7 +113,8 @@ class RemocaoDeExcecaoTest(Base):
         self.assertEqual(resposta.status_code, 200, resposta.content)
 
         fechadas = Vigencia.objects.filter(chave="pro", campo__in=vigencias.CAMPOS_DE_COBRANCA)
-        self.assertEqual(fechadas.count(), 3)
+        # Os quatro campos da regra, o dia fixo junto (TSK-1077).
+        self.assertEqual(fechadas.count(), 4)
         for vigencia in fechadas:
             self.assertIsNotNone(vigencia.vigente_ate)
             self.assertEqual(vigencia.autor, self.diretoria)
