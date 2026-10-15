@@ -321,6 +321,16 @@ servidor do Conecta, nunca aqui) e a TSK-1060 estiver pronta para chamar:
      `LOBBY_REDIS_URL=redis://<serviço>:6379/0`.
    O código não muda em nenhum dos dois. Sem Redis alcançável, a integração fica
    em 503 e o resto do Lobby segue igual (os tetos de chamada falham abertos).
+
+   **Antes de preencher, reveja os `LOBBY_RATE_*`.** Com o `LocMemCache` de hoje
+   cada um dos 3 workers conta sozinho e o teto real é ~3× o configurado; com
+   Redis ele passa a valer o número exato e sobrevive a deploy. Num evento com
+   vários consultores atrás do mesmo IP, `LOBBY_RATE_CATALOGO=240/hour` vira 240
+   de verdade (hoje são ~720) — e o `index.html` cai no catálogo EMBUTIDO quando
+   recebe 429, ou seja, vende com preço possivelmente velho sem erro na tela.
+   Para manter o comportamento de hoje, triplique os valores no mesmo deploy
+   (por exemplo `LOBBY_RATE_CATALOGO=720/hour`, `LOBBY_RATE_COMPROVANTE=360/hour`,
+   `LOBBY_RATE_LOGIN=360/hour`, e os de 600/hour para 1800/hour).
 2. **Chave pública.** `CONECTA_ASSERCAO_CHAVES` no `.env` (formato no
    `.env.example`: conjunto JWK, um `kid` por chave). Nunca a privada: o Lobby
    recusa um JWK com `d`.

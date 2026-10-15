@@ -23,6 +23,8 @@ from .models import (
     PublicacaoCatalogo,
     Vigencia,
 )
+from .travas import NAO, SIM
+from .vigencias import registrar
 
 
 class ProdutoInline(admin.TabularInline):
@@ -71,6 +73,24 @@ class CategoriaAdmin(admin.ModelAdmin):
     @admin.display(description="produtos")
     def qtd_produtos(self, obj):
         return obj.produtos.count()
+
+    def save_model(self, request, obj, form, change):
+        """Liberar ou tirar a categoria daqui também entra na linha do tempo.
+
+        Desde a TSK-1059 a trava tem histórico com autor (`Vigencia`, campo
+        `travada`). Se ela mudasse por aqui em silêncio, a linha do tempo ficaria
+        dizendo o estado antigo — e a próxima mudança feita pelo Conecta, para
+        esse mesmo estado antigo, não seria registrada (o valor "não mudou").
+        """
+        super().save_model(request, obj, form, change)
+        if "travada" in form.changed_data:
+            registrar(
+                Vigencia.PREFIXO_CATEGORIA + obj.slug,
+                obj.nome,
+                Vigencia.Campo.TRAVADA,
+                SIM if obj.travada else NAO,
+                autor=request.user,
+            )
 
 
 @admin.register(Produto)

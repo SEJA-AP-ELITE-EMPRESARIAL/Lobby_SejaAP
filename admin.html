@@ -1182,7 +1182,7 @@ function AbaCobranca({ api, catalogo, aoPublicar }) {
       {dados.categorias_divergem && (
         <Aviso tipo="atencao">
           As categorias estão com regras <strong>diferentes</strong>, feitas no Admin Lobby do Conecta:{' '}
-          {Object.values(dados.categorias || {}).map((c) => `${c.nome}: dia ${c.dia_vencimento}`).join(' · ')}.
+          {Object.values(dados.categorias || {}).map((c) => `${c.nome}: dia ${c.dia_vencimento}, ${c.primeiro_vencimento === 'proximo' ? 'próximo vencimento' : 'mês seguinte'}, entrada ${c.entrada_prazo_dias ? 'em ' + c.entrada_prazo_dias + ' dia(s)' : 'no dia da venda'}`).join(' · ')}.
           {' '}A regra abaixo é a geral — <strong>publicar aqui aplica a mesma regra a todas as categorias</strong>.
         </Aviso>
       )}

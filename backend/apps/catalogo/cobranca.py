@@ -185,6 +185,10 @@ def publica_politica(dados, *, autor=None) -> dict:
 
     if por_categoria and "excecoes" not in dados:
         excecoes = None  # corpo novo sem a chave: as exceções ficam como estão
+    elif por_categoria and not isinstance(dados.get("excecoes"), list):
+        # `null` não é "nenhuma exceção": no corpo novo, quem quer apagar todas
+        # manda `[]`. Um `null` por engano não pode apagar as exceções em silêncio.
+        raise CobrancaInvalida("`excecoes` precisa ser uma lista (ou ficar de fora para não mudar).")
     else:
         excecoes = _excecoes_validadas(dados.get("excecoes") or [])
 

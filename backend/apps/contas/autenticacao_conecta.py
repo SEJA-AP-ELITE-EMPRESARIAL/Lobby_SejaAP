@@ -171,6 +171,10 @@ NIVEIS = {
 }
 
 
+# Recusas que não contam no teto por IP: ver `AutenticacaoConecta.authenticate`.
+RECUSAS_LEGITIMAS = frozenset({"SEM_CONTA", "CONTA_INATIVA"})
+
+
 class AssercaoRecusada(exceptions.AuthenticationFailed):
     """401. Subclasse de `AuthenticationFailed` para o DRF manter o 401 e montar
     o `WWW-Authenticate` — sem isso ele o rebaixaria a 403."""
@@ -435,11 +439,17 @@ class AutenticacaoConecta(BaseAuthentication):
 
         try:
             return self._confere(request, token.strip(), registro)
-        except (AssercaoRecusada, AssercaoProibida):
-            try:
-                falhas.conta(request)
-            except Exception:
-                logger.exception("cache indisponível ao contar a recusa da asserção")
+        except (AssercaoRecusada, AssercaoProibida) as recusa:
+            # Sem conta e conta inativa chegam com asserção de assinatura BOA: não
+            # é alguém batendo na porta, é uma pessoa que ainda não entrou no
+            # Lobby. Contá-las no teto por IP — e todo o tráfego do Conecta sai de
+            # um IP só — deixaria a diretoria inteira em 429 porque meia dúzia
+            # de pessoas sem conta abriu a tela.
+            if recusa.codigo not in RECUSAS_LEGITIMAS:
+                try:
+                    falhas.conta(request)
+                except Exception:
+                    logger.exception("cache indisponível ao contar a recusa da asserção")
             raise
 
     # ----- a conferência, na ordem da §4.7 --------------------------------
@@ -458,11 +468,14 @@ class AutenticacaoConecta(BaseAuthentication):
             raise AssercaoRecusada("CABECALHO_INVALIDO")
 
         kid = cabecalho.get("kid")
-        registro["kid"] = kid if isinstance(kid, str) else repr(kid)
         chave = chaves_publicas().get(kid) if isinstance(kid, str) else None
         if chave is None:
-            # Sem tentar as outras chaves: `kid` desconhecido é recusa.
+            # Sem tentar as outras chaves: `kid` desconhecido é recusa. O que veio
+            # vai para o log CURTO e entre aspas: é texto de quem quer que tenha
+            # mandado o cabeçalho, e cru ele poderia forjar uma linha de log.
+            registro["kid"] = repr(kid)[:64]
             raise AssercaoRecusada("KID_DESCONHECIDO")
+        registro["kid"] = kid
 
         try:
             claims = jwt.decode(
@@ -673,6 +686,17 @@ class AceitaAssercao:
         if self.assercao_obrigatoria:
             return [AutenticacaoConectaObrigatoria()]
         return [AutenticacaoConecta(), *super().get_authenticators()]
+
+    def get_authenticate_header(self, request):
+        # O DRF monta o `WWW-Authenticate` do 401 pelo PRIMEIRO autenticador, que
+        # aqui é o da asserção. Para quem não mandou a asserção (o /admin de
+        # hoje), o 401 continua dizendo o que dizia: `Bearer realm="api"`.
+        if not self.assercao_obrigatoria and CABECALHO not in request.META:
+            for autenticador in self.get_authenticators()[1:]:
+                cabecalho = autenticador.authenticate_header(request)
+                if cabecalho:
+                    return cabecalho
+        return super().get_authenticate_header(request)
 
     def check_throttles(self, request):
         # Os da view primeiro (alguns sobrescrevem `get_throttles`, e por isso

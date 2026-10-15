@@ -38,7 +38,7 @@ nem mudar slug ou categoria. Criar é o `POST /api/produtos`; apagar não existe
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import FieldDoesNotExist, ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .models import (
@@ -73,6 +73,10 @@ def _dinheiro(bruto, rotulo, teto) -> Decimal:
     try:
         valor = arredonda(Decimal(str(bruto).replace(",", ".").strip()))
     except (InvalidOperation, ValueError):
+        raise PublicacaoInvalida(f"{rotulo}: valor inválido.")
+    # "NaN" passa pelo Decimal e pelo quantize sem erro, e só estoura na
+    # comparação abaixo — um 500 em vez de uma recusa.
+    if not valor.is_finite():
         raise PublicacaoInvalida(f"{rotulo}: valor inválido.")
     if not (Decimal(0) < valor <= teto):
         raise PublicacaoInvalida(f"{rotulo}: valor fora da faixa permitida.")
@@ -222,7 +226,19 @@ def publica_edicoes(dados, *, autor):
             if not produto.nome:
                 raise PublicacaoInvalida(f'O produto "{slug}" precisa de um nome.')
 
-        # Toda a validação de modelo antes da primeira gravação.
+        # Toda a validação de modelo antes da primeira gravação. O `full_clean`
+        # confere a sigla contra o BANCO, onde os produtos deste lote ainda têm a
+        # sigla velha: duas siglas novas iguais no mesmo lote passariam as duas e
+        # estourariam no índice único do segundo `save()`. Por isso a conferência
+        # entre eles mesmos vem aqui, antes.
+        siglas = {}
+        for produto in mexidos.values():
+            outro = siglas.setdefault(produto.sigla, produto)
+            if outro is not produto:
+                raise PublicacaoInvalida(
+                    f'A sigla {produto.sigla} ficaria em "{outro.nome}" e em "{produto.nome}". '
+                    "Cada produto precisa de uma sigla só dele."
+                )
         for produto in mexidos.values():
             _valida_texto(produto)
 
@@ -234,7 +250,17 @@ def publica_edicoes(dados, *, autor):
                 continue
             linhas.extend(mudancas)
             alvos.add(alvo_de_produto(produto))
-            produto.save()
+            try:
+                produto.save()
+            except IntegrityError:
+                # Rede de segurança para o que a validação acima não previu
+                # (trocar a sigla de dois produtos entre si, por exemplo). Sai
+                # do `atomic` com a exceção: nada do lote fica gravado.
+                raise PublicacaoInvalida(
+                    f'"{produto.nome}" não pôde ser gravado: a sigla ou o identificador '
+                    "colide com outro produto. Para trocar siglas entre dois produtos, "
+                    "publique em duas vezes."
+                )
             registrar_produto(produto, autor=autor, quando=agora)
 
         for categoria, novo in referencias:

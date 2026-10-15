@@ -57,6 +57,8 @@ def _decimal(bruto, campo, teto):
         valor = arredonda(Decimal(str(bruto).replace(",", ".").strip()))
     except (InvalidOperation, ValueError, TypeError, AttributeError):
         raise ProdutoInvalido(f"{campo} inválido.")
+    if not valor.is_finite():  # "NaN" passa pelo quantize e estourava abaixo
+        raise ProdutoInvalido(f"{campo} inválido.")
     if not (Decimal(0) < valor <= teto):
         raise ProdutoInvalido(f"{campo} fora da faixa permitida.")
     return valor

@@ -63,12 +63,18 @@ def _numero(valor):
     O KV precisava disso porque o admin mandava o que o `MoneyInput` produzisse.
     Mantido para não recusar uma publicação que hoje passa.
     """
-    if isinstance(valor, (int, float, Decimal)):
-        return Decimal(str(valor))
     try:
-        return Decimal(str(valor if valor is not None else "").replace(",", "."))
+        if isinstance(valor, (int, float, Decimal)):
+            numero = Decimal(str(valor))
+        else:
+            numero = Decimal(str(valor if valor is not None else "").replace(",", "."))
     except (InvalidOperation, ValueError):
         raise CatalogoInvalido("Valor numérico inválido no catálogo.")
+    # "NaN" e "Infinity" passam pelo Decimal e estouravam adiante, numa
+    # comparação, como 500 (achado na revisão da TSK-1059).
+    if not numero.is_finite():
+        raise CatalogoInvalido("Valor numérico inválido no catálogo.")
+    return numero
 
 
 def _valor_publicado(bruto: dict, produto: Produto) -> Decimal:

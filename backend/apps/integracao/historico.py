@@ -132,12 +132,27 @@ def _evento(id_, area, quando, autor, titulo, alteracoes, categoria=None, produt
 # ----- fontes -----------------------------------------------------------------
 
 
-def _publicacoes():
+def _categorias_dos_produtos() -> dict:
+    """slug do produto → slug da categoria, para os slugs que não se repetem.
+
+    A `Vigencia` guarda só o slug do produto (o histórico não depende de linha
+    viva). Para o filtro por categoria achar o preço e a exceção de cobrança de
+    um produto, a categoria sai daqui; slug repetido entre categorias fica sem.
+    """
+    vistos = defaultdict(set)
+    for slug, categoria in Produto.objects.values_list("slug", "categoria__slug"):
+        vistos[slug].add(categoria)
+    return {slug: next(iter(cats)) for slug, cats in vistos.items() if len(cats) == 1}
+
+
+def _publicacoes(derivados):
+    """As publicações. As de antes da TSK-1059 não têm `alvos`; para elas valem
+    os derivados das vigências de preço que elas cobrem (`_precos_sem_publicacao`)."""
     eventos = []
     for p in PublicacaoCatalogo.objects.only("id", "publicado_em", "autor_email", "resumo", "alvos"):
-        alvos = [a for a in p.alvos.split("|") if a]
+        alvos = [a for a in p.alvos.split("|") if a] or sorted(derivados.get(p.pk, ()))
         produtos = [a.split("/", 1)[1] for a in alvos if "/" in a]
-        categorias = sorted({a.split("/", 1)[0] for a in alvos})
+        categorias = sorted({a.split("/", 1)[0] for a in alvos} - {"?"})
         evento = _evento(
             f"publicacao:{p.pk}",
             "catalogo",
@@ -162,10 +177,11 @@ def _anterior(linhas_da_chave, vigencia):
     return None
 
 
-def _vigencias(campos, area, titulo_de, *, cobertas=None):
+def _vigencias(campos, area, titulo_de, categoria_de, *, cobertas=None):
     """Agrupa as vigências em eventos: mesma chave, mesmo instante, mesma pessoa.
 
     `cobertas` (só no catálogo) diz quais aberturas já aparecem numa publicação.
+    `categoria_de` resolve a categoria das chaves que são slug de produto.
     """
     linhas = list(Vigencia.objects.filter(campo__in=list(campos)).order_by("vigente_de", "id"))
     por_chave_campo = defaultdict(list)
@@ -196,6 +212,8 @@ def _vigencias(campos, area, titulo_de, *, cobertas=None):
                 _de_para(campos[v.campo], v.campo, anterior.valor if anterior else None, v.valor)
             )
         titulo, categoria, produto = titulo_de(chave, grupo[0], primeira=primeira and not autor)
+        if produto and not categoria:
+            categoria = categoria_de.get(produto)
         eventos.append(
             _evento(f"vigencia:{grupo[0].pk}", area, quando, autor, titulo, alteracoes, categoria, produto)
         )
@@ -209,7 +227,7 @@ def _vigencias(campos, area, titulo_de, *, cobertas=None):
                 autor,
                 f"Exceção de cobrança removida · {nome}",
                 [f"{nome} volta a seguir a regra da categoria"],
-                None,
+                categoria_de.get(chave),
                 chave,
             )
         )
@@ -247,7 +265,7 @@ def _titulo_do_preco(chave, vigencia, primeira=False):
     return f"Preço · {nome}{sufixo}", None, chave
 
 
-def _precos_sem_publicacao():
+def _precos_sem_publicacao(categoria_de, derivados):
     """As vigências de preço que nenhuma publicação conta.
 
     Desde a TSK-1059 toda mudança de preço tem publicação, com `alvos`. Antes
@@ -256,29 +274,42 @@ def _precos_sem_publicacao():
     vigência é "coberta" quando a mesma pessoa publicou logo depois dela uma
     publicação que toca aquele alvo: pelos `alvos` (as de agora) ou, nas de
     antes, pelo nome do produto no resumo, que o PUT escrevia como "NOME: de → para".
+
+    Quando quem cobre é uma publicação de antes, o alvo vai para `derivados`, e
+    é por ele que aquela publicação passa no filtro por produto e por categoria.
     """
     publicadas = defaultdict(list)
-    for email, quando, alvos, resumo in PublicacaoCatalogo.objects.values_list(
-        "autor_email", "publicado_em", "alvos", "resumo"
+    for pk, email, quando, alvos, resumo in PublicacaoCatalogo.objects.values_list(
+        "id", "autor_email", "publicado_em", "alvos", "resumo"
     ):
-        publicadas[email].append((quando, alvos, resumo))
+        publicadas[email].append((quando, pk, alvos, resumo))
     for lista in publicadas.values():
         lista.sort(key=lambda p: p[0])
 
     def coberta(v):
         lista = publicadas.get(v.autor_email, [])
         i = bisect.bisect_left([p[0] for p in lista], v.vigente_de)
-        for quando, alvos, resumo in lista[i:]:
+        for quando, pk, alvos, resumo in lista[i:]:
             if quando - v.vigente_de > JANELA_DA_PUBLICACAO:
                 break
             if alvos:
                 if f"/{v.chave}|" in alvos or f"|{v.chave}|" in alvos:
                     return True
             elif f"{_nome(v.rotulo)} " in resumo or f"{_nome(v.rotulo)}:" in resumo:
+                if v.campo == Vigencia.Campo.VALOR_REFERENCIA:
+                    derivados[pk].add(v.chave)
+                else:
+                    derivados[pk].add(f"{categoria_de.get(v.chave, '?')}/{v.chave}")
                 return True
         return False
 
-    return _vigencias(CAMPOS_DE_PRECO, "catalogo", _titulo_do_preco, cobertas=coberta)
+    return _vigencias(CAMPOS_DE_PRECO, "catalogo", _titulo_do_preco, categoria_de, cobertas=coberta)
+
+
+def _catalogo(categoria_de):
+    derivados = defaultdict(set)
+    precos = _precos_sem_publicacao(categoria_de, derivados)  # preenche `derivados`
+    return _publicacoes(derivados) + precos
 
 
 def _escolha(modo, descricao, rotulo_fixo):
@@ -376,12 +407,12 @@ def _configuracoes_de_valores():
 
 
 FONTES = {
-    "catalogo": lambda: _publicacoes() + _precos_sem_publicacao(),
-    "cobranca": lambda: _vigencias(CAMPOS_DE_COBRANCA, "cobranca", _titulo_da_cobranca),
-    "categorias": lambda: _vigencias({Vigencia.Campo.TRAVADA: "situação"}, "categorias", _titulo_da_trava),
-    "departamento": _configuracoes_de_departamento,
-    "categoria_financeira": _configuracoes_de_categoria_financeira,
-    "dh_avaliacao": _configuracoes_de_valores,
+    "catalogo": _catalogo,
+    "cobranca": lambda c: _vigencias(CAMPOS_DE_COBRANCA, "cobranca", _titulo_da_cobranca, c),
+    "categorias": lambda c: _vigencias({Vigencia.Campo.TRAVADA: "situação"}, "categorias", _titulo_da_trava, c),
+    "departamento": lambda c: _configuracoes_de_departamento(),
+    "categoria_financeira": lambda c: _configuracoes_de_categoria_financeira(),
+    "dh_avaliacao": lambda c: _configuracoes_de_valores(),
 }
 
 
@@ -428,11 +459,14 @@ def consulta(parametros) -> dict:
     pagina = _inteiro(parametros.get("pagina"), 1, 1, 100000)
     por_pagina = _inteiro(parametros.get("por_pagina"), POR_PAGINA_PADRAO, 1, POR_PAGINA_MAX)
 
+    categoria_de = _categorias_dos_produtos()
     eventos = []
     for nome, fonte in FONTES.items():
         if area and nome != area:
             continue
-        eventos.extend(e for e in fonte() if _passa(e, produto=produto, categoria=categoria, autor=autor))
+        eventos.extend(
+            e for e in fonte(categoria_de) if _passa(e, produto=produto, categoria=categoria, autor=autor)
+        )
 
     # Mais recente primeiro; o id desempata o mesmo instante de forma estável.
     eventos.sort(key=lambda e: (e["quando"], e["id"]), reverse=True)

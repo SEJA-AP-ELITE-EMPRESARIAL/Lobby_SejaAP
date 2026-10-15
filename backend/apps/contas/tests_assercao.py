@@ -486,3 +486,42 @@ class TetoTest(BaseAssercao):
             self.assertRecusa(self.get(), 429, "MUITAS_CHAMADAS")
             # Outra pessoa, mesmo IP: o balde é outro.
             self.assertEqual(self.get(sub="gerente@sejaap.com.br").status_code, 200)
+
+
+class AchadosDaRevisaoTest(BaseAssercao):
+    """O que a revisão de contexto limpo da TSK-1059 achou na autenticação."""
+
+    def test_kid_desconhecido_nao_forja_linha_de_log(self):
+        outra = ParDeTeste("x\n[ERROR] integracao kid=forjado status=200")
+        with self.assertLogs("lobby.integracao", level=logging.INFO) as logs:
+            self.chama("get", QUEM_SOU, outra.assina())
+        self.assertEqual(len(logs.output), 1)
+        self.assertNotIn("\n", logs.output[0])
+        self.assertIn("kid='x\\n[ERROR]", logs.output[0])
+
+    def test_sem_conta_nao_enche_o_teto_por_ip(self):
+        """Sem conta vem com assinatura boa: é uma pessoa, não alguém batendo na porta."""
+        with mock.patch.object(FalhasPorIp, "THROTTLE_RATES", {"integracao_falhas": "2/min"}):
+            for _ in range(4):
+                self.assertRecusa(self.get(sub="nunca.entrou@exemplo.com.br"), 401, "SEM_CONTA")
+            self.assertEqual(self.get().status_code, 200)
+
+    def test_401_do_admin_antigo_segue_com_o_cabecalho_do_jwt(self):
+        resposta = APIClient().put("/api/cobranca", {}, format="json")
+        self.assertEqual(resposta.status_code, 401)
+        self.assertEqual(resposta["WWW-Authenticate"], 'Bearer realm="api"')
+
+    @override_settings(
+        CACHES={
+            "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+            "assercao": {
+                "BACKEND": "django.core.cache.backends.redis.RedisCache",
+                "LOCATION": "redis://127.0.0.1:1/3",
+                "OPTIONS": {"socket_connect_timeout": 1, "socket_timeout": 1},
+            },
+        }
+    )
+    def test_redis_do_jti_fora_e_503_de_ponta_a_ponta(self):
+        with self.assertLogs("lobby.integracao", level=logging.ERROR):
+            resposta = self.get()
+        self.assertRecusa(resposta, 503, "INTEGRACAO_DESLIGADA")

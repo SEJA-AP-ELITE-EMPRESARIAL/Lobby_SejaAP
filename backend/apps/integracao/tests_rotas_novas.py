@@ -360,3 +360,110 @@ class ContratoDasConfiguracoesTest(Base):
         )
         self.assertEqual(resposta.status_code, 200, resposta.content)
         confere(self, resposta.json(), "departamentos_configuracao")
+
+
+class AchadosDaRevisaoTest(Base):
+    """O que a revisão de contexto limpo da TSK-1059 achou, um teste por achado."""
+
+    def test_sigla_repetida_dentro_do_lote_e_400_e_nao_500(self):
+        antes = PublicacaoCatalogo.objects.count()
+        resposta = self.publica({"produtos": [
+            {"categoria": "elite", "slug": "base", "sigla": "ZZZ"},
+            {"categoria": "elite", "slug": "pre", "sigla": "ZZZ"},
+        ]})
+        self.assertRecusa(resposta, 400, "DADOS_INVALIDOS")
+        self.assertIn("ZZZ", resposta.json()["erro"])
+        self.assertEqual(PublicacaoCatalogo.objects.count(), antes)
+        self.assertFalse(Produto.objects.filter(sigla="ZZZ").exists())
+
+    def test_nan_e_infinito_sao_recusados_sem_500(self):
+        for valor in ("NaN", "nan", "Infinity", "-Infinity"):
+            with self.subTest(valor=valor):
+                resposta = self.publica({"valores": [{"categoria": "elite", "produto": "pro", "monthly": valor}]})
+                self.assertRecusa(resposta, 400, "DADOS_INVALIDOS")
+                resposta = self.publica({"valores": [{"categoria": "elite", "produto": "imersao", "price": valor}]})
+                self.assertRecusa(resposta, 400, "DADOS_INVALIDOS")
+
+    def test_nan_no_put_antigo_e_no_post_de_produto_tambem(self):
+        cliente = APIClient()
+        cliente.force_authenticate(user=self.bruna)
+        cats = cliente.get("/api/catalogo").json()["cats"]
+        elite = next(c for c in cats if c["id"] == "elite")
+        elite["products"][0]["monthly"] = "NaN"
+        self.assertEqual(cliente.put("/api/catalogo", {"cats": cats}, format="json").status_code, 400)
+        resposta = cliente.post("/api/produtos", {"categoria_id": "elite", "nome": "X", "sigla": "XXX",
+                                                  "recorrente": False, "valor": "NaN"}, format="json")
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_post_de_produto_pela_assercao_grava_a_pessoa_do_sub(self):
+        resposta = self.como("post", "/api/produtos", {
+            "categoria_id": "elite", "nome": "ELITE MASTER", "sigla": "MAS",
+            "recorrente": True, "mensalidade": "39997", "vigencia_meses": 12,
+        })
+        self.assertEqual(resposta.status_code, 201, resposta.content)
+        publicacao = PublicacaoCatalogo.objects.order_by("-publicado_em", "-id").first()
+        self.assertEqual(publicacao.autor, self.bruna)
+        self.assertEqual(Vigencia.objects.get(chave="elite-master", campo="mensalidade").autor, self.bruna)
+
+    def test_excecoes_null_no_corpo_novo_e_recusado(self):
+        excecao = {"categoria_id": "elite", "produto_id": "pro", "dia_vencimento": 5,
+                   "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0}
+        self.como("put", "/api/cobranca", {"categorias": {}, "excecoes": [excecao]})
+        resposta = self.como("put", "/api/cobranca", {"categorias": {}, "excecoes": None})
+        self.assertRecusa(resposta, 400, "DADOS_INVALIDOS")
+        self.assertTrue(Produto.objects.get(categoria__slug="elite", slug="pro").politica_cobranca)
+
+
+class HistoricoLegadoTest(Base):
+    """Publicação de antes da TSK-1059: sem `alvos`, com a vigência do PUT antigo."""
+
+    def setUp(self):
+        super().setUp()
+        from apps.catalogo import vigencias
+
+        produto = Produto.objects.get(categoria__slug="elite", slug="pro")
+        vigencias.registrar("pro", produto.nome, "mensalidade", Decimal("11500.00"), autor=self.bruna)
+        PublicacaoCatalogo.objects.create(
+            autor=self.bruna, autor_email=BRUNA, catalogo=[], resumo="ELITE PRO: 12997.00 → 11500.00", alvos=""
+        )
+
+    def historico(self, **filtros):
+        consulta = "&".join(f"{k}={v}" for k, v in filtros.items())
+        return self.como("get", f"/api/integracao/historico?{consulta}").json()["itens"]
+
+    def test_filtro_por_produto_acha_a_publicacao_antiga(self):
+        itens = self.historico(area="catalogo", produto="pro", autor=BRUNA)
+        self.assertEqual([i["titulo"] for i in itens], ["Catálogo publicado"])
+        self.assertEqual(itens[0]["alteracoes"], ["ELITE PRO: 12997.00 → 11500.00"])
+        self.assertEqual((itens[0]["categoria"], itens[0]["produto"]), ("elite", "pro"))
+
+    def test_filtro_por_categoria_acha_a_publicacao_antiga_e_a_excecao_de_produto(self):
+        excecao = {"categoria_id": "elite", "produto_id": "pro", "dia_vencimento": 5,
+                   "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0}
+        self.como("put", "/api/cobranca", {"categorias": {}, "excecoes": [excecao]})
+        itens = self.historico(categoria="elite", autor=BRUNA)
+        titulos = [i["titulo"] for i in itens]
+        self.assertIn("Catálogo publicado", titulos)
+        self.assertIn("Exceção de cobrança · ELITE PRO", titulos)
+        self.assertEqual(self.historico(categoria="apn", autor=BRUNA), [])
+
+
+class TravaPeloDjangoAdminTest(Base):
+    def test_mudar_a_trava_no_django_admin_entra_na_linha_do_tempo(self):
+        from django.contrib import admin as django_admin
+        from django.test import RequestFactory
+
+        categoria = Categoria.objects.get(slug="treinamentos")
+        categoria.travada = False
+        pedido = RequestFactory().post("/")
+        pedido.user = self.bruna
+        formulario = type("Form", (), {"changed_data": ["travada"]})()
+        django_admin.site._registry[Categoria].save_model(pedido, categoria, formulario, True)
+
+        aberta = Vigencia.objects.get(chave="categoria:treinamentos", campo="travada", vigente_ate__isnull=True)
+        self.assertEqual((aberta.valor, aberta.autor), ("não", self.bruna))
+        # E a volta pelo Conecta, para o estado da semente, é registrada.
+        resposta = self.como("patch", "/api/integracao/categorias/treinamentos", {"locked": True})
+        self.assertEqual(resposta.status_code, 200)
+        aberta = Vigencia.objects.get(chave="categoria:treinamentos", campo="travada", vigente_ate__isnull=True)
+        self.assertEqual(aberta.valor, "sim")
