@@ -155,6 +155,12 @@ index.html ◄──── GET /api/departamentos (anônimo, só os ativos) ─�
   Cada gravação é uma linha nova em `ConfiguracaoDepartamento`, com autor, e sem
   linha nenhuma vale a lista. Se o fixo for inativado no Omie, o consultor volta a
   ver a lista (a aba avisa), e o fixo volta a valer sozinho quando o Omie o reativa.
+- **Por categoria** (desde 15/10/2026, TSK-1059). Elite, APN e Produtos têm cada
+  uma a sua escolha (lista ou fixo), e a regra do fixo inativo vale para cada uma.
+  O `GET /api/departamentos` manda `categorias: {slug: {modo, departamentos}}`, e
+  o lobby usa a da categoria da venda. O `/admin` de hoje continua salvando uma
+  escolha só, que vale para todas; quem configura por categoria é o Admin Lobby do
+  Conecta.
 - Para trazer uma mudança do Omie na hora, sem esperar a rodada:
   `docker exec lobby-backend python manage.py sincronizar_departamentos`.
 
@@ -221,6 +227,38 @@ index.html ◄── GET /api/dh-avaliacao/valores (anônimo) ──────
   novo e aparece um aviso na etapa Itens; no envio, a venda volta para lá.
 - Backend fora do ar: os campos abrem com os valores iniciais, livres, e a venda
   segue — pelo motivo do `CATS` embutido.
+
+### Administração pelo Conecta (TSK-1059)
+
+A tela de administração do Lobby passa a morar no Conecta (Admin Lobby, TSK-1060).
+O servidor do Conecta chama o Lobby **em nome de uma pessoa**, com uma asserção
+curta assinada em Ed25519 no cabeçalho `X-Conecta-Assercao` (ADR-002 §§4 e 13).
+O Lobby confere a assinatura com a chave pública e atende como aquela pessoa —
+com o papel que ela tem **aqui**: só a diretoria publica, como no `/admin`.
+
+- **Não cria conta.** Sem conta no Lobby com aquele e-mail, 401 `SEM_CONTA`.
+- **Não é passe geral.** Vale só numa lista fechada de rotas, conferida por nome e
+  método (`apps/contas/autenticacao_conecta.py`, `ROTAS_LIBERADAS`). Fora dela,
+  403 `ROTA_NAO_LIBERADA` — inclusive o `PUT /api/catalogo` e o `PATCH` de produto,
+  que o Conecta substitui pela publicação abaixo. Venda, sessão e senha nunca.
+- **"Entrar como usuário"** (`imp`) só lê; escrever é 403.
+- **Sem a chave pública, ou sem Redis em produção, fica desligada** (503
+  `INTEGRACAO_DESLIGADA`) — e só para quem manda o cabeçalho. O consultor e o
+  `/admin` de hoje não percebem nada.
+
+Rotas novas, sob `/api/integracao/`:
+
+| Rota | Para quê |
+|---|---|
+| `GET quem-sou` | Quem é a pessoa e se ela publica (a tela abre em só leitura quando não) |
+| `GET saude` | Quais `kid` o Lobby aceita, para a troca de chave |
+| `POST catalogo/publicar` | Valores e textos dos produtos num clique, numa transação: uma `PublicacaoCatalogo` com autor e a lista de → para. Tudo ou nada |
+| `PATCH categorias/<slug>` | `{"locked": bool}`: tira a categoria do Lobby ou a libera, com autor e histórico |
+| `GET historico` | Histórico unificado — publicações, preços, cobrança (com quem removeu exceção), trava de categoria, departamento, categoria financeira e DH - Avaliação. Filtro por área, produto, categoria e autor; paginado |
+
+Os corpos de resposta são contrato, em `backend/tests/contratos/integracao/`, e os
+testes comparam com eles. Como ligar em produção: `deploy/RUNBOOK.md`, "Integração
+com o Conecta".
 
 ### Expurgo do histórico de publicações
 
@@ -328,7 +366,7 @@ sete abas — e tudo o que se faz por lá fica registrado com autor e período:
 | **Departamentos** | Se o consultor escolhe o departamento da venda (Elite e APN) na lista do Omie ou se toda venda sai com um departamento fixo. |
 | **Categorias** | A mesma escolha para a categoria financeira da venda da APN: lista completa ou categoria fixa. |
 | **DH - Avaliação** | O valor com que Relatório e Devolutiva abrem na venda do DH - Avaliação, e se cada um fica livre ou fixo (travado no lobby e recusado pelo comprovante se vier diferente). |
-| **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — geral e por produto. |
+| **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — por categoria (desde a TSK-1059) e por produto. A exceção do produto vence a da categoria; categoria nova começa pela regra geral. Pelo `/admin` de hoje, a regra salva vale para todas as categorias. |
 | **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
 | **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |
 

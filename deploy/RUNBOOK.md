@@ -19,6 +19,7 @@ Operação do Lobby na **prod.solucoes (187.77.48.164)**.
 | Identidade | Conecta ID, por `identidade-api:8000` na rede `identidade-net` |
 | Departamentos | `lobby-departamentos` — traz a lista do Omie para o dropdown do Elite e da APN, de hora em hora; sem porta |
 | Categorias | `lobby-categorias` — traz as categorias financeiras para o campo Categoria da APN, de hora em hora, pelo `ListarCategorias` do Omie com a mesma chave dos departamentos; sem porta |
+| Conecta (TSK-1059) | O Admin Lobby do Conecta chama `/api/integracao/*` e algumas rotas de administração com a asserção `X-Conecta-Assercao` (ADR-002 §13). Precisa de `CONECTA_ASSERCAO_CHAVES` e de `LOBBY_REDIS_URL`; sem eles, 503 `INTEGRACAO_DESLIGADA` e nada mais muda |
 
 Portas vizinhas já tomadas nesta VPS — confira antes de mexer:
 8090 conecta-crm · 8091 kanban-frontend · 8092 kanban-mcp · 8093 formularios ·
@@ -272,6 +273,78 @@ publicar.**
    [Só o front](#só-o-front). Os valores de Relatório e Devolutiva (R$ 150 e
    R$ 450, livres, até alguém salvar) ficam na aba **DH - Avaliação** do `/admin`.
 
+### Integração com o Conecta (TSK-1059): deploy, e só depois ligar
+
+São dois momentos, e o primeiro não liga nada:
+
+**1. Deploy do código** — roteiro [Com migration](#com-migration-a-ordem-importa)
+(construir, migrar, só então subir). Front e backend juntos: o `index.html` novo
+monta o cronograma e o departamento pela categoria do produto, e o backend novo
+é quem manda a regra de cada categoria. As migrations, em ordem:
+
+| Migration | O que faz | Desfazer |
+|---|---|---|
+| `catalogo/0013` | Esquema: `Vigencia.encerrado_por`, `Vigencia.chave` de 40 para 60, campo `travada`; `PublicacaoCatalogo.alvos` | Sim. Recusa se já houver `Vigencia.chave` com mais de 40 caracteres (só existe se alguma categoria tiver slug com mais de 30) |
+| `catalogo/0014` | Esquema: `PoliticaCobranca.categoria` e a constraint de três casos | Sim |
+| `catalogo/0015` | Dado: copia a regra geral de cobrança para **cada** categoria, com a linha do tempo aberta na data da vigência da geral | Sim. Com todas as categorias iguais, a regra delas volta para a geral; com regras diferentes, a geral fica como está e as categorias voltam a segui-la (o que foi configurado por categoria se perde) |
+| `catalogo/0016` | Dado: abre a linha do tempo da trava (`travada`) de cada categoria | Sim. Apaga a linha do tempo da trava |
+| `departamentos/0003` | Esquema: `ConfiguracaoDepartamento.categoria` e `copiada_de` | Sim |
+| `departamentos/0004` | Dado: a última escolha de departamento de hoje vira a de **cada** categoria, com o mesmo autor e a mesma data | Sim. Com todas as categorias iguais, a escolha delas vira uma gravação sem categoria; com escolhas diferentes, volta a valer a última de antes do deploy |
+
+No dia do deploy **nenhuma venda muda**: cada categoria nasce com a regra geral e
+com a escolha de departamento de hoje. Para conferir, antes e depois:
+
+```bash
+curl -s https://lobby.sejaap.com.br/api/departamentos | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['versao'], d['modo'])"
+# a mesma versão antes e depois: nenhum lobby aberto acha que a lista mudou
+curl -s https://lobby.sejaap.com.br/api/catalogo | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['cobranca']); [print(c['id'], c['cobranca']) for c in d['cats']]"
+# toda categoria com a mesma regra do `cobranca` do envelope
+```
+
+O `/admin` de hoje segue funcionando com o corpo de sempre — e o backend aplica o
+que ele salva a **todas** as categorias. Quando as categorias divergem (o Conecta
+mudou uma), a aba avisa e salvar unifica.
+
+**2. Ligar a integração** — quando o Conecta tiver a chave (o par nasce no
+servidor do Conecta, nunca aqui) e a TSK-1060 estiver pronta para chamar:
+
+1. **Redis.** A decisão de 15/10/2026 (ADR-002 §13.2) é usar o Redis do Conecta
+   ID, índice 3: `LOBBY_REDIS_URL=redis://identidade-redis:6379/3`. **Hoje o
+   `identidade-redis` só está na rede `identidade_interna`**, que a stack do
+   Conecta ID fecha de propósito ("os apps NÃO entram"), e o backend do Lobby só
+   está na `identidade-net`. Antes de preencher, alguém decide:
+   - pôr o serviço `redis` do Conecta ID também na `identidade-net` (mudança no
+     compose do conecta-id; abre aquele Redis, que não tem senha, a todo app da
+     `identidade-net`); ou
+   - dar ao Lobby um Redis próprio no compose dele (um serviço `redis:7-alpine`
+     sem porta publicada, só na rede `default`), e apontar
+     `LOBBY_REDIS_URL=redis://<serviço>:6379/0`.
+   O código não muda em nenhum dos dois. Sem Redis alcançável, a integração fica
+   em 503 e o resto do Lobby segue igual (os tetos de chamada falham abertos).
+2. **Chave pública.** `CONECTA_ASSERCAO_CHAVES` no `.env` (formato no
+   `.env.example`: conjunto JWK, um `kid` por chave). Nunca a privada: o Lobby
+   recusa um JWK com `d`.
+3. `sudo docker compose up -d backend` e, no log da subida:
+
+   ```bash
+   sudo docker compose logs backend | grep "integração com o Conecta"
+   # integração com o Conecta ligada; kids aceitos: conecta-AAAAMM-a
+   # ou: integração com o Conecta DESLIGADA: <motivo>
+   ```
+
+4. Do lado do Conecta, `GET /api/integracao/saude` com uma asserção válida
+   responde `{"kids": [...], "emissor": "conecta", "audiencia": "lobby"}`.
+
+**Troca de chave** é a do ADR-002 §8.2: as duas públicas juntas em
+`CONECTA_ASSERCAO_CHAVES`, reiniciar, conferir o `saude`, virar o assinador no
+Conecta, esperar 5 minutos, tirar a antiga. **Vazamento** (§8.3): tirar o `kid`
+comprometido daqui e reiniciar vem PRIMEIRO.
+
+**Log.** Uma linha por chamada no logger `lobby.integracao`, com `kid`, `jti`,
+`sub`, url, método, status, `codigo`, tempo e IP — nunca a asserção. Recusa de
+relógio traz a diferença medida (`detalhe=venceu há 75s`): arrume o NTP, não a
+tolerância.
+
 ## Verificações
 
 ```bash
@@ -388,16 +461,13 @@ janela de indisponibilidade:
 
 ## Pendências conhecidas
 
-- **Sem cache compartilhado.** O throttle das rotas anônimas usa `LocMemCache`, que é
-  por processo do gunicorn (3 workers) e zera a cada deploy. Os tetos são contenção de
-  rajada, não limite exato. Preencher `LOBBY_REDIS_URL` resolve — **mas não basta.**
-
-  > ⚠️ **Armadilha:** o pacote `redis` **não está** em `requirements.txt` nem em
-  > `requirements-prod.txt`. O `settings.py:146-152` troca para `RedisCache` assim
-  > que a variável existir, e o backend sobe normalmente — só morre no primeiro
-  > acesso ao cache, que é o **throttle do login**. Ao ligar a variável, adicione
-  > `redis>=5.1.0` ao `requirements-prod.txt` no mesmo commit (o 5.1.0 é o piso
-  > que o Django 6.0 exige).
+- **Sem cache compartilhado (até ligar a integração do Conecta).** O throttle das
+  rotas anônimas usa `LocMemCache`, que é por processo do gunicorn (3 workers) e zera
+  a cada deploy. Os tetos são contenção de rajada, não limite exato. Preencher
+  `LOBBY_REDIS_URL` resolve, e desde a TSK-1059 o pacote `redis` está no
+  `requirements.txt` — a armadilha de "sobe e morre no primeiro throttle" acabou. Com
+  o Redis fora do ar, os tetos falham abertos (`config/cache.py`) em vez de virar 500
+  no lobby. Falta a rede: ver [Integração com o Conecta](#integração-com-o-conecta-tsk-1059-deploy-e-só-depois-ligar).
 - **A origem aceita conexão de fora da Cloudflare** (medido em 21/09/2026, TSK-195).
   O IP do visitante vem do `CF-Connecting-IP` (`backend/config/real_ip.py`), e ele só é
   confiável quando a requisição passou pela Cloudflare. Mas a 443 da .164 responde a
