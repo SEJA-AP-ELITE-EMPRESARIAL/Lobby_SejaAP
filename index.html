@@ -1117,13 +1117,15 @@ const mesesDeCobranca = (product) => (product && product.recurring ? (product.vi
 
 // Monta o cronograma padrão de um produto (entrada + parcelas, total = price),
 // pela regra de cobrança que vale para ele — a exceção dele, ou a da categoria.
-function initPayment(product, cat) {
+// `vendaAtual`: a data da venda em curso, quando o cronograma é REFEITO (sair da
+// edição, encerrar a autorização); sem ela, a venda começa hoje.
+function initPayment(product, cat, vendaAtual) {
   const total = product.price;
   const meses = mesesDeCobranca(product);
   const cob = cobrancaDoProduto(product, cat);
   const entrada = product.recurring ? product.monthly : round2(total / meses);
   const entradaData = dataDaEntrada(cob);
-  const vendaData = todayISO();
+  const vendaData = vendaAtual || todayISO();
   const parcelas = buildSchedule(meses - 1, total, entrada, inicioDasParcelas(entradaData, cob, vendaData), cob);
   return { entradaForma: 'pix', entradaValor: entrada, entradaData, vendaData, parcelas, editMode: false };
 }
@@ -1704,7 +1706,7 @@ function App() {
   const resetSchedule = () => patch((d) => { const arr = d.parcelas.map((p) => ({ ...p, manual: false })); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
   const toggleEdit = () => {
     if (!s.editMode && !autorizado) { patch({ pedindoAutorizacao: 'pagamento' }); return; }
-    if (s.editMode) patch({ editMode: false, ...initPayment(product, cat) });
+    if (s.editMode) patch({ editMode: false, ...initPayment(product, cat, s.vendaData) });
     else patch({ editMode: true });
   };
 
@@ -1747,7 +1749,7 @@ function App() {
     // A observação é a justificativa da negociação: descartada a negociação,
     // ela não pode continuar escrita no cadastro.
     observacao: '',
-    ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product, getCat(d.catId)) } : {}),
+    ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product, getCat(d.catId), d.vendaData) } : {}),
   }));
 
   // ----- Igualar parcelas: ao alterar a 1ª parcela, oferecer aplicar o valor às demais -----

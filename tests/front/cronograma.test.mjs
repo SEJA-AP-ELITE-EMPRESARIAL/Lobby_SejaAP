@@ -4,8 +4,9 @@
 //
 // As datas vão com a venda para o n8n e o Omie, e o servidor do Lobby confere
 // só os valores — um erro aqui não para em lugar nenhum antes de virar cobrança.
-// O teste roda as funções DO PRÓPRIO index.html (o trecho entre `const pad2` e
-// "Formas de pagamento"), com o relógio trocado pela data da venda, e compara:
+// O teste roda as funções DO PRÓPRIO index.html (o trecho de JS puro entre
+// `const round2` e o componente "Logo", onde estão a regra, as datas e o
+// `initPayment`), com o relógio trocado pela data da venda, e compara:
 //
 // - dia fixo LIGADO com a fórmula de antes da TSK-1077, copiada abaixo: com ele
 //   ligado nada pode mudar, venda a venda, de 2026 a 2028;
@@ -19,8 +20,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
-const inicio = html.indexOf('const pad2');
-const fim = html.indexOf('// ===== Formas de pagamento');
+const inicio = html.indexOf('const round2');
+const fim = html.indexOf('/* ===== Logo');
 assert.ok(inicio > 0 && fim > inicio, 'o trecho das datas sumiu do index.html — ajuste os marcadores');
 
 const DataDeVerdade = Date;
@@ -31,8 +32,8 @@ class DataDaVenda extends DataDeVerdade {
 }
 globalThis.Date = DataDaVenda;
 const lobby = new Function(
-  html.slice(inicio, fim).replace(/^let COBRANCA/m, 'var COBRANCA')
-  + '\nreturn { parcelaVencimento, inicioDasParcelas, diaDasParcelas, dataDaEntrada, normalizaCobranca };',
+  html.slice(inicio, fim).replace(/^let COBRANCA/m, 'var COBRANCA').replace(/^let CATS/m, 'var CATS')
+  + '\nreturn { parcelaVencimento, inicioDasParcelas, diaDasParcelas, dataDaEntrada, normalizaCobranca, initPayment };',
 )();
 
 const PADRAO = { dia_vencimento: 15, primeiro_vencimento: 'mes_seguinte', entrada_prazo_dias: 0, dia_fixo: true };
@@ -130,6 +131,30 @@ test('desligado parte da data da venda guardada, não do relógio nem da entrada
   assert.equal(lobby.parcelaVencimento(lobby.inicioDasParcelas('2026-11-20', cob, '2026-10-31'), 0, cob), '2026-11-30');
   assert.equal(lobby.diaDasParcelas(cob, '2026-10-31'), 31);
   assert.equal(lobby.diaDasParcelas(lobby.normalizaCobranca(PADRAO, PADRAO), '2026-10-31'), 15);
+});
+
+test('initPayment: refazer o cronograma depois da meia-noite mantém o dia da venda', () => {
+  const produto = { id: 'pro', price: 155964, monthly: 12997, recurring: true, vigencia: 12 };
+  const desligada = { cobranca: DESLIGADO };
+  hoje = '2026-10-31T23:50:00';
+  const aberta = lobby.initPayment(produto, desligada);
+  assert.equal(aberta.vendaData, '2026-10-31');
+  assert.deepEqual(aberta.parcelas.slice(0, 2).map((p) => p.data), ['2026-11-30', '2026-12-31']);
+  // Sair da edição / encerrar a autorização já em 01/11: a venda segue a de 31/10.
+  hoje = '2026-11-01T00:05:00';
+  const refeita = lobby.initPayment(produto, desligada, aberta.vendaData);
+  assert.equal(refeita.vendaData, '2026-10-31');
+  assert.deepEqual(refeita.parcelas.map((p) => p.data), aberta.parcelas.map((p) => p.data));
+  assert.equal(refeita.parcelas.length, 11);
+  // Venda nova (sem data anterior) começa no dia de hoje.
+  assert.deepEqual(lobby.initPayment(produto, desligada).parcelas[0].data, '2026-12-01');
+  // Ligado, a data da venda não entra: igual a antes, pela entrada de hoje.
+  const ligada = { cobranca: PADRAO };
+  assert.deepEqual(
+    lobby.initPayment(produto, ligada, '2026-10-31').parcelas.map((p) => p.data),
+    lobby.initPayment(produto, ligada).parcelas.map((p) => p.data),
+  );
+  assert.equal(lobby.initPayment(produto, ligada).parcelas[0].data, '2026-12-15');
 });
 
 test('sem dia_fixo no JSON (backend de antes) ou com texto, fica ligado', () => {
