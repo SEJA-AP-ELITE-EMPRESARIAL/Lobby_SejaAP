@@ -136,14 +136,16 @@ def registrar_categoria(categoria, *, autor=None, quando=None) -> list[Vigencia]
 def registrar_politica(
     politica: PoliticaCobranca, *, autor=None, quando=None
 ) -> list[Vigencia]:
-    """Registra o que mudou numa política de cobrança (geral ou de um produto)."""
+    """Registra o que mudou numa política de cobrança (geral, de categoria ou de
+    produto)."""
     quando = quando or timezone.now()
-    chave = Vigencia.CHAVE_GERAL if politica.geral else politica.produto.slug
-    rotulo = (
-        "Política de cobrança"
-        if politica.geral
-        else f"{politica.produto.nome} · cobrança"
-    )
+    if politica.geral:
+        chave, rotulo = Vigencia.CHAVE_GERAL, "Política de cobrança"
+    elif politica.categoria_id:
+        chave = Vigencia.PREFIXO_CATEGORIA + politica.categoria.slug
+        rotulo = f"{politica.categoria.nome} · cobrança"
+    else:
+        chave, rotulo = politica.produto.slug, f"{politica.produto.nome} · cobrança"
     registros = [
         registrar(chave, rotulo, campo, valor, autor=autor, quando=quando)
         for campo, valor in (

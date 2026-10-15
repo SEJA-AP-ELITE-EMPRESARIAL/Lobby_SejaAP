@@ -152,9 +152,15 @@ class ContratoDoCatalogoTest(TestCase):
             # Campos da categoria (tudo menos a lista de produtos), incluindo a
             # AUSÊNCIA de chave: `locked` e `flow` só saem quando valem algo, e o
             # front testa `!!c.locked` / `c.flow === 'apn'`.
+            #
+            # `cobranca` fica fora desta comparação: é a regra de cobrança da
+            # categoria, acrescentada pela TSK-1059 e conferida em
+            # `tests_cobranca_por_categoria.py`. É chave a mais, que o front de
+            # antes ignora.
+            fora = {"products", "cobranca"}
             self.assertEqual(
-                {k: v for k, v in servida.items() if k != "products"},
-                {k: v for k, v in esperada.items() if k != "products"},
+                {k: v for k, v in servida.items() if k not in fora},
+                {k: v for k, v in esperada.items() if k not in fora},
                 f'Campos da categoria "{esperada["id"]}" mudaram.',
             )
 

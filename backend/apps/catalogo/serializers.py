@@ -91,7 +91,7 @@ def serializa_produto(produto, politica=None) -> dict:
     return dados
 
 
-def serializa_categoria(categoria, produtos=None) -> dict:
+def serializa_categoria(categoria, produtos=None, geral=None) -> dict:
     """Espelha a categoria normalizada do KV (`functions/_lib/catalogo.js:155-162`).
 
     Duas diferenças deliberadas em relação ao normalizador antigo:
@@ -126,6 +126,14 @@ def serializa_categoria(categoria, produtos=None) -> dict:
     # e o front distingue "não configurado" de "configurado como zero".
     if categoria.valor_referencia is not None:
         dados["valor_referencia"] = numero(categoria.valor_referencia)
+    politica = getattr(categoria, "politica_cobranca", None)
+    if politica is None:
+        if geral is None:
+            from .models import PoliticaCobranca
+
+            geral = PoliticaCobranca.geral_atual()
+        politica = geral
+    dados["cobranca"] = serializa_politica(politica)
     dados["products"] = [serializa_produto(p) for p in produtos]
     return dados
 
@@ -137,10 +145,14 @@ def serializa_catalogo(categorias) -> list[dict]:
     (`index.html:1284`). No KV ela era a ordem do array; aqui é `Categoria.ordem`.
 
     Quem chama precisa ter feito `prefetch_related("produtos__politica_cobranca")`
-    — ver `CatalogoView._cats`. Sem isso, cada produto vira uma consulta a mais
-    procurando uma exceção que quase nunca existe.
+    e `select_related("politica_cobranca")` — ver `CatalogoView._cats`. Sem isso,
+    cada produto e cada categoria viram uma consulta a mais procurando a regra
+    de cobrança.
     """
+    from .models import PoliticaCobranca
+
+    geral = PoliticaCobranca.geral_atual()
     return [
-        serializa_categoria(cat, list(cat.produtos.all()))
+        serializa_categoria(cat, list(cat.produtos.all()), geral=geral)
         for cat in categorias
     ]

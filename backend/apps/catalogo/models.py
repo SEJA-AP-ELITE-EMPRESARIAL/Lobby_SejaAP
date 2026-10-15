@@ -514,9 +514,18 @@ class PrimeiroVencimento(models.TextChoices):
 class PoliticaCobranca(models.Model):
     """Como o cronograma de uma venda nasce — o que era constante no `index.html`.
 
-    Uma linha vale para o Lobby inteiro (`geral=True`); cada produto pode ter a
-    sua, e o que não for preenchido lá herda a geral. Foi a forma escolhida com o
-    usuário: o caso comum é uma regra só, e a exceção não pode exigir deploy.
+    TRÊS NÍVEIS, desde a TSK-1059 (15/10/2026):
+
+    - a da CATEGORIA (`categoria`): é a que vale para os produtos dela. Cada
+      categoria (Elite, APN, Produtos...) tem a sua;
+    - a do PRODUTO (`produto`): a exceção. Vence a da categoria;
+    - a GERAL (`geral=True`): a regra com que toda categoria COMEÇA. Categoria
+      sem linha própria — uma categoria nova, criada no /django-admin/ — segue a
+      geral até alguém gravar a regra dela.
+
+    Até a TSK-1059 havia só a geral e as exceções. A migration 0015 copiou a
+    geral para cada categoria que existia, então no dia do deploy nenhuma venda
+    mudou de data.
 
     Não confundir com NEGOCIAÇÃO. Isto é o padrão com que o cronograma abre, e
     vale para todas as vendas seguintes — por isso é da diretoria, mesmo alcance
@@ -538,6 +547,16 @@ class PoliticaCobranca(models.Model):
         blank=True,
         verbose_name="produto",
         help_text="Vazio na política geral. Preenchido, é a exceção deste produto.",
+    )
+    categoria = models.OneToOneField(
+        Categoria,
+        on_delete=models.CASCADE,
+        related_name="politica_cobranca",
+        null=True,
+        blank=True,
+        verbose_name="categoria",
+        help_text="Preenchido, é a regra desta categoria: vale para os produtos "
+        "dela que não têm exceção própria.",
     )
 
     dia_vencimento = models.PositiveSmallIntegerField(
@@ -571,7 +590,7 @@ class PoliticaCobranca(models.Model):
     class Meta:
         verbose_name = "política de cobrança"
         verbose_name_plural = "políticas de cobrança"
-        ordering = ("-geral", "produto__categoria", "produto__ordem", "id")
+        ordering = ("-geral", "categoria__ordem", "produto__categoria", "produto__ordem", "id")
         constraints = [
             # Uma única política geral. `fields=["geral"]` com a condição faz um
             # índice PARCIAL: só as linhas com geral=True disputam a unicidade,
@@ -581,18 +600,25 @@ class PoliticaCobranca(models.Model):
                 condition=models.Q(geral=True),
                 name="uma_unica_politica_geral",
             ),
-            # As duas metades: geral não tem produto, exceção tem. Sem isto, uma
-            # linha com os dois (ou nenhum) passaria despercebida e o front leria
-            # uma política que não é de ninguém.
+            # Os três casos, um de cada vez: geral (nem produto nem categoria),
+            # exceção de produto, regra de categoria. Sem isto, uma linha com
+            # dois alvos (ou nenhum) passaria despercebida e o front leria uma
+            # política que não é de ninguém.
             models.CheckConstraint(
-                name="politica_geral_ou_de_produto",
-                condition=models.Q(geral=True, produto__isnull=True)
-                | models.Q(geral=False, produto__isnull=False),
+                name="politica_geral_de_categoria_ou_de_produto",
+                condition=models.Q(geral=True, produto__isnull=True, categoria__isnull=True)
+                | models.Q(geral=False, produto__isnull=False, categoria__isnull=True)
+                | models.Q(geral=False, produto__isnull=True, categoria__isnull=False),
             ),
         ]
 
     def __str__(self) -> str:
-        alvo = self.produto.nome if self.produto else "todos os produtos"
+        if self.produto_id:
+            alvo = self.produto.nome
+        elif self.categoria_id:
+            alvo = f"categoria {self.categoria.nome}"
+        else:
+            alvo = "regra geral (início de toda categoria)"
         return f"dia {self.dia_vencimento} · {alvo}"
 
     @classmethod

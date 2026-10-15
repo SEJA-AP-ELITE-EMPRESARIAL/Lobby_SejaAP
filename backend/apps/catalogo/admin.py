@@ -109,12 +109,13 @@ class ProdutoAdmin(admin.ModelAdmin):
 class PoliticaCobrancaAdmin(admin.ModelAdmin):
     """A regra de data do cronograma. O caminho normal é o `/admin`."""
 
-    list_display = ("__str__", "geral", "produto", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
+    list_display = ("__str__", "geral", "categoria", "produto", "dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
     list_filter = ("geral", "primeiro_vencimento")
 
     def has_delete_permission(self, request, obj=None):
         # A política geral não pode sumir: sem ela o front não monta cronograma.
-        # Exceção de produto se remove no /admin, que fecha a vigência junto.
+        # Exceção de produto se remove no /admin, que fecha a vigência junto. A
+        # regra de categoria também não se apaga: muda-se, pela tela, com autor.
         return False
 
 
@@ -149,7 +150,7 @@ class PublicacaoCatalogoAdmin(admin.ModelAdmin):
     list_display = ("publicado_em", "autor_email", "resumo_curto")
     ordering = ("-publicado_em",)
     search_fields = ("autor_email", "resumo")
-    readonly_fields = ("publicado_em", "autor", "autor_email", "catalogo", "resumo")
+    readonly_fields = ("publicado_em", "autor", "autor_email", "catalogo", "resumo", "alvos")
 
     def has_add_permission(self, request):
         return False

@@ -74,7 +74,9 @@ def diferencas(nome: str, antes: dict, depois: dict) -> list[str]:
 def grava_publicacao(*, autor, linhas, alvos) -> PublicacaoCatalogo:
     """Uma `PublicacaoCatalogo` com o catálogo como fica servido depois dela."""
     catalogo = serializa_catalogo(
-        Categoria.objects.prefetch_related("produtos__politica_cobranca").all()
+        Categoria.objects.select_related("politica_cobranca").prefetch_related(
+            "produtos__politica_cobranca"
+        )
     )
     return PublicacaoCatalogo.objects.create(
         autor=autor if (autor is not None and getattr(autor, "is_authenticated", False)) else None,

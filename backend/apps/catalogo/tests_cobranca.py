@@ -201,7 +201,7 @@ class ValidacaoTest(BaseCobranca):
         )
         self.assertEqual(resposta.status_code, 400)
         self.assertEqual(PoliticaCobranca.geral_atual().dia_vencimento, 15)
-        self.assertFalse(PoliticaCobranca.objects.filter(geral=False).exists())
+        self.assertFalse(PoliticaCobranca.objects.filter(produto__isnull=False).exists())
 
 
 class ExcecaoPorProdutoTest(BaseCobranca):
@@ -215,11 +215,11 @@ class ExcecaoPorProdutoTest(BaseCobranca):
 
     def test_cria_e_depois_remove_a_excecao(self):
         self.publica({"geral": REGRA_PADRAO, "excecoes": [self._excecao(dia_vencimento=5)]})
-        self.assertEqual(PoliticaCobranca.objects.filter(geral=False).count(), 1)
+        self.assertEqual(PoliticaCobranca.objects.filter(produto__isnull=False).count(), 1)
 
         # A tela reenvia a lista completa; a exceção que não vem, sai.
         self.publica({"geral": REGRA_PADRAO, "excecoes": []})
-        self.assertEqual(PoliticaCobranca.objects.filter(geral=False).count(), 0)
+        self.assertEqual(PoliticaCobranca.objects.filter(produto__isnull=False).count(), 0)
 
     def test_remover_a_excecao_fecha_a_vigencia_dela(self):
         """Sem isto, a trilha diria que o produto cobra no dia 5 até hoje — e o

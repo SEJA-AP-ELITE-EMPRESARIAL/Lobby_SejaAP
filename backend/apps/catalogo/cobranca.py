@@ -16,6 +16,22 @@ fazer isso.
 O corpo é a lista COMPLETA de exceções, como a tela mostra. Exceção que não vem
 no corpo é removida — pela mesma razão que o `/admin` manda o catálogo inteiro
 no PUT: a tela é a fonte, e ela sempre tem o conjunto todo na mão.
+
+POR CATEGORIA (TSK-1059, ADR-002 §13.5)
+
+Desde 15/10/2026 cada categoria tem a sua regra. Dois corpos são aceitos:
+
+    {"categorias": {"elite": {...}, "apn": {...}}, "excecoes": [...]}
+        O do Admin Lobby do Conecta. Categoria ausente no corpo não muda;
+        `excecoes` ausente também não muda — presente, é a lista completa.
+
+    {"geral": {...}, "excecoes": [...]}
+        O do /admin de hoje (até a TSK-1062). A tela dele fala de UMA regra para
+        o Lobby inteiro, e o backend faz o que ela diz: aplica a regra à geral e a
+        TODAS as categorias. Foi a escolha mais segura para o /admin antigo
+        continuar funcionando sem mudar de semântica — ver o relatório da TSK.
+
+Os dois juntos são recusados: não há como saber qual a pessoa quis.
 """
 from django.db import transaction
 from django.utils import timezone
@@ -24,6 +40,7 @@ from .models import (
     DIA_VENCIMENTO_MAX,
     DIA_VENCIMENTO_MIN,
     ENTRADA_PRAZO_MAX,
+    Categoria,
     PoliticaCobranca,
     PrimeiroVencimento,
     Produto,
@@ -87,20 +104,7 @@ def _aplica(politica: PoliticaCobranca, regra: dict) -> bool:
     return mudou
 
 
-@transaction.atomic
-def publica_politica(dados, *, autor=None) -> dict:
-    """Aplica a política geral e a lista de exceções. Devolve o estado publicado.
-
-    Levanta `CobrancaInvalida` sem ter tocado no banco — a validação inteira
-    acontece antes da primeira escrita, e a transação cobre o resto. Publicação
-    pela metade aqui significaria produto cobrando num dia e o resto em outro.
-    """
-    if not isinstance(dados, dict):
-        raise CobrancaInvalida("Corpo inválido: esperado um objeto com `geral`.")
-
-    regra_geral = _regra_validada(dados.get("geral"), "na política geral")
-
-    brutas = dados.get("excecoes") or []
+def _excecoes_validadas(brutas) -> list:
     if not isinstance(brutas, list):
         raise CobrancaInvalida("`excecoes` precisa ser uma lista.")
 
@@ -130,12 +134,72 @@ def publica_politica(dados, *, autor=None) -> dict:
                 "Recarregue a página."
             )
         excecoes.append((produto, _regra_validada(bruta, f'em "{produto.nome}"')))
+    return excecoes
+
+
+def _categorias_validadas(brutas) -> list:
+    if not isinstance(brutas, dict):
+        raise CobrancaInvalida("`categorias` precisa ser um objeto: {\"elite\": {...}, ...}.")
+    existentes = {c.slug: c for c in Categoria.objects.all()}
+    validadas = []
+    for slug, bruta in brutas.items():
+        categoria = existentes.get(str(slug))
+        if categoria is None:
+            raise CobrancaInvalida(f'Categoria "{slug}" não existe. Recarregue a página.')
+        validadas.append((categoria, _regra_validada(bruta, f'em "{categoria.nome}"')))
+    return validadas
+
+
+def _grava_da_categoria(categoria, regra, *, autor, quando):
+    politica, criada = PoliticaCobranca.objects.get_or_create(
+        categoria=categoria, defaults={"geral": False, **regra}
+    )
+    if criada or _aplica(politica, regra):
+        registrar_politica(politica, autor=autor, quando=quando)
+
+
+@transaction.atomic
+def publica_politica(dados, *, autor=None) -> dict:
+    """Aplica as regras e a lista de exceções. Devolve o estado publicado.
+
+    Levanta `CobrancaInvalida` sem ter tocado no banco — a validação inteira
+    acontece antes da primeira escrita, e a transação cobre o resto. Publicação
+    pela metade aqui significaria produto cobrando num dia e o resto em outro.
+    """
+    if not isinstance(dados, dict):
+        raise CobrancaInvalida("Corpo inválido: esperado um objeto com `categorias`.")
+    if "categorias" in dados and "geral" in dados:
+        raise CobrancaInvalida(
+            "Mande `categorias` (a regra de cada categoria) ou `geral` (uma regra "
+            "para todas), não os dois."
+        )
+
+    por_categoria = "categorias" in dados
+    if por_categoria:
+        categorias = _categorias_validadas(dados.get("categorias"))
+        regra_geral = None
+    else:
+        # O corpo do /admin antigo: uma regra para o Lobby inteiro.
+        regra_geral = _regra_validada(dados.get("geral"), "na política geral")
+        categorias = [(c, regra_geral) for c in Categoria.objects.all()]
+
+    if por_categoria and "excecoes" not in dados:
+        excecoes = None  # corpo novo sem a chave: as exceções ficam como estão
+    else:
+        excecoes = _excecoes_validadas(dados.get("excecoes") or [])
 
     agora = timezone.now()
 
-    geral = PoliticaCobranca.geral_atual()
-    if _aplica(geral, regra_geral):
-        registrar_politica(geral, autor=autor, quando=agora)
+    if regra_geral is not None:
+        geral = PoliticaCobranca.geral_atual()
+        if _aplica(geral, regra_geral):
+            registrar_politica(geral, autor=autor, quando=agora)
+
+    for categoria, regra in categorias:
+        _grava_da_categoria(categoria, regra, autor=autor, quando=agora)
+
+    if excecoes is None:
+        return estado_atual()
 
     mantidos = set()
     for produto, regra in excecoes:
@@ -147,9 +211,9 @@ def publica_politica(dados, *, autor=None) -> dict:
             registrar_politica(politica, autor=autor, quando=agora)
 
     # Exceções que a tela não mandou de volta deixaram de existir. A linha do
-    # tempo fecha o período delas — sem isso, a trilha diria que a exceção vale
-    # até hoje, e o consultor estaria vendo outra data.
-    removidas = PoliticaCobranca.objects.filter(geral=False).exclude(
+    # tempo fecha o período delas, com QUEM removeu — sem isso, a trilha diria
+    # que a exceção vale até hoje, e o consultor estaria vendo outra data.
+    removidas = PoliticaCobranca.objects.filter(produto__isnull=False).exclude(
         produto__in=mantidos
     ).select_related("produto")
     for politica in removidas:
@@ -159,16 +223,44 @@ def publica_politica(dados, *, autor=None) -> dict:
     return estado_atual()
 
 
+def regra_da_categoria(categoria, geral=None) -> dict:
+    """A regra que vale para os produtos sem exceção de uma categoria.
+
+    A dela, se existe; senão a geral, que é a regra com que toda categoria
+    começa (inclusive uma criada depois da TSK-1059 no /django-admin/).
+    Quem chama em laço passa a `geral` e um queryset com
+    `select_related("politica_cobranca")`, para não consultar uma vez por
+    categoria.
+    """
+    politica = getattr(categoria, "politica_cobranca", None)
+    if politica is not None:
+        return politica.como_dicionario()
+    return (geral or PoliticaCobranca.geral_atual()).como_dicionario()
+
+
 def estado_atual() -> dict:
-    """A política geral e as exceções, no formato que a tela e o front leem."""
+    """As regras de cada categoria e as exceções, no formato que as telas leem."""
     geral = PoliticaCobranca.geral_atual()
+    categorias = Categoria.objects.select_related("politica_cobranca").order_by("ordem", "id")
+    por_categoria = {
+        c.slug: {"nome": c.nome, **regra_da_categoria(c, geral)} for c in categorias
+    }
     excecoes = (
-        PoliticaCobranca.objects.filter(geral=False)
+        PoliticaCobranca.objects.filter(produto__isnull=False)
         .select_related("produto", "produto__categoria")
         .order_by("produto__categoria__ordem", "produto__ordem", "produto_id")
     )
+    regra_geral = geral.como_dicionario()
     return {
-        "geral": geral.como_dicionario(),
+        "categorias": por_categoria,
+        # Para o /admin de hoje, que só conhece uma regra. `categorias_divergem`
+        # é o aviso de que ela não conta a história toda: alguma categoria está
+        # com regra própria, diferente desta, e salvar lá a sobrescreve.
+        "geral": regra_geral,
+        "categorias_divergem": any(
+            {k: v for k, v in regra.items() if k != "nome"} != regra_geral
+            for regra in por_categoria.values()
+        ),
         "excecoes": [
             {
                 "categoria_id": p.produto.categoria.slug,
@@ -189,4 +281,4 @@ def estado_atual() -> dict:
     }
 
 
-__all__ = ["CobrancaInvalida", "estado_atual", "publica_politica"]
+__all__ = ["CobrancaInvalida", "estado_atual", "publica_politica", "regra_da_categoria"]

@@ -92,7 +92,9 @@ class CatalogoView(AceitaAssercao, APIView):
         # `politica_cobranca` no prefetch: sem ele, cada produto vira uma consulta
         # a mais atrás de uma exceção que quase nenhum tem.
         return serializa_catalogo(
-            Categoria.objects.prefetch_related("produtos__politica_cobranca").all()
+            Categoria.objects.select_related("politica_cobranca").prefetch_related(
+                "produtos__politica_cobranca"
+            )
         )
 
     # ----- métodos -------------------------------------------------------
