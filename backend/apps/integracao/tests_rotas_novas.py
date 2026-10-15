@@ -275,6 +275,13 @@ class HistoricoTest(Base):
         self.assertEqual(resposta.status_code, 200, resposta.content)
         confere(self, resposta.json(), "historico_cobranca_elite")
 
+    def test_dia_fixo_desligado_com_de_para(self):
+        """TSK-1077. A semente da migration não aparece: o evento é só a mudança."""
+        self.como("put", "/api/cobranca", {"categorias": {"elite": {**self.GERAL, "dia_fixo": False}}})
+        resposta = self.historico(area="cobranca", categoria="elite")
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        confere(self, resposta.json(), "historico_cobranca_elite_dia_fixo")
+
     def test_remocao_de_excecao_aparece_com_quem_removeu(self):
         excecao = {"categoria_id": "elite", "produto_id": "pro", **self.GERAL, "dia_vencimento": 5}
         self.como("put", "/api/cobranca", {"categorias": {}, "excecoes": [excecao]})
@@ -351,6 +358,20 @@ class HistoricoTest(Base):
 class ContratoDasConfiguracoesTest(Base):
     def test_cobranca_por_categoria(self):
         confere(self, self.como("get", "/api/cobranca").json(), "cobranca")
+
+    def test_cobranca_com_o_dia_fixo_desligado(self):
+        """TSK-1077: `dia_fixo` em cada regra de `categorias.<slug>` e em cada item
+        de `excecoes` — o que o Admin Lobby do Conecta grava e lê (TSK-1078)."""
+        regra = {"dia_vencimento": 15, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0}
+        resposta = self.como("put", "/api/cobranca", {
+            "categorias": {"elite": {**regra, "dia_fixo": False}},
+            "excecoes": [
+                {"categoria_id": "elite", "produto_id": "pro", **regra, "dia_vencimento": 5, "dia_fixo": False},
+                {"categoria_id": "elite", "produto_id": "evo", **regra, "dia_vencimento": 10},
+            ],
+        })
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        confere(self, self.como("get", "/api/cobranca").json(), "cobranca_dia_fixo_desligado")
 
     def test_departamentos_por_categoria(self):
         sincronizar([dep("1001", "Consultoria", "001.001"), dep("1002", "Comercial", "001.002")])

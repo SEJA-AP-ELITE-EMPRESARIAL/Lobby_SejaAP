@@ -1,0 +1,79 @@
+{
+  "categorias": {
+    "elite": {
+      "nome": "Elite",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0,
+      "dia_fixo": false
+    },
+    "treinamentos": {
+      "nome": "Treinamentos",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
+    },
+    "apn": {
+      "nome": "APN",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
+    },
+    "produtos": {
+      "nome": "Produtos",
+      "dia_vencimento": 15,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
+    }
+  },
+  "geral": {
+    "dia_vencimento": 15,
+    "primeiro_vencimento": "mes_seguinte",
+    "entrada_prazo_dias": 0,
+    "dia_fixo": true
+  },
+  "categorias_divergem": false,
+  "excecoes": [
+    {
+      "categoria_id": "elite",
+      "produto_id": "pro",
+      "produto_nome": "ELITE PRO",
+      "dia_vencimento": 5,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0,
+      "dia_fixo": false
+    },
+    {
+      "categoria_id": "elite",
+      "produto_id": "evo",
+      "produto_nome": "ELITE EVO",
+      "dia_vencimento": 10,
+      "primeiro_vencimento": "mes_seguinte",
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
+    }
+  ],
+  "opcoes": {
+    "primeiro_vencimento": [
+      {
+        "valor": "mes_seguinte",
+        "rotulo": "Dia do vencimento do mês SEGUINTE ao da venda"
+      },
+      {
+        "valor": "proximo",
+        "rotulo": "Primeiro dia do vencimento DEPOIS da venda"
+      }
+    ],
+    "dia_vencimento": {
+      "min": 1,
+      "max": 28
+    },
+    "entrada_prazo_dias": {
+      "min": 0,
+      "max": 90
+    }
+  }
+}

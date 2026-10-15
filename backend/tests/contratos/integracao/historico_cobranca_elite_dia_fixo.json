@@ -1,0 +1,60 @@
+{
+  "itens": [
+    {
+      "id": "<varia>",
+      "area": "cobranca",
+      "quando": "<varia>",
+      "autor": "bruna.lima@exemplo.com.br",
+      "titulo": "Regra de cobrança · Elite",
+      "alteracoes": [
+        "dia do vencimento fixo: ligado → desligado (parcelas no dia da venda)"
+      ],
+      "categoria": "elite",
+      "produto": null
+    },
+    {
+      "id": "<varia>",
+      "area": "cobranca",
+      "quando": "<varia>",
+      "autor": null,
+      "titulo": "Regra de cobrança · Elite (copiada da regra geral)",
+      "alteracoes": [
+        "dia do vencimento: dia 15",
+        "primeira parcela: mês seguinte",
+        "prazo da entrada: no dia da venda"
+      ],
+      "categoria": "elite",
+      "produto": null
+    }
+  ],
+  "pagina": 1,
+  "por_pagina": 50,
+  "total": 2,
+  "paginas": 1,
+  "areas": [
+    {
+      "valor": "catalogo",
+      "rotulo": "Catálogo"
+    },
+    {
+      "valor": "cobranca",
+      "rotulo": "Cobrança"
+    },
+    {
+      "valor": "categorias",
+      "rotulo": "Categorias no Lobby"
+    },
+    {
+      "valor": "departamento",
+      "rotulo": "Departamento"
+    },
+    {
+      "valor": "categoria_financeira",
+      "rotulo": "Categoria financeira"
+    },
+    {
+      "valor": "dh_avaliacao",
+      "rotulo": "DH - Avaliação"
+    }
+  ]
+}

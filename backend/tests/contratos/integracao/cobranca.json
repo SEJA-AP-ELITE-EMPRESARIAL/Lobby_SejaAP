@@ -4,31 +4,36 @@
       "nome": "Elite",
       "dia_vencimento": 15,
       "primeiro_vencimento": "mes_seguinte",
-      "entrada_prazo_dias": 0
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
     },
     "treinamentos": {
       "nome": "Treinamentos",
       "dia_vencimento": 15,
       "primeiro_vencimento": "mes_seguinte",
-      "entrada_prazo_dias": 0
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
     },
     "apn": {
       "nome": "APN",
       "dia_vencimento": 15,
       "primeiro_vencimento": "mes_seguinte",
-      "entrada_prazo_dias": 0
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
     },
     "produtos": {
       "nome": "Produtos",
       "dia_vencimento": 15,
       "primeiro_vencimento": "mes_seguinte",
-      "entrada_prazo_dias": 0
+      "entrada_prazo_dias": 0,
+      "dia_fixo": true
     }
   },
   "geral": {
     "dia_vencimento": 15,
     "primeiro_vencimento": "mes_seguinte",
-    "entrada_prazo_dias": 0
+    "entrada_prazo_dias": 0,
+    "dia_fixo": true
   },
   "categorias_divergem": false,
   "excecoes": [],
