@@ -393,12 +393,35 @@ class DesligadaTest(TestCase):
         self.assertFalse(autenticacao_conecta.cache_compartilhado())
 
     def test_cache_fora_do_ar_falha_fechado(self):
+        quebrado = mock.Mock()
+        quebrado.add.side_effect = ConnectionError("redis fora")
         with override_settings(CONECTA_ASSERCAO_CHAVES=conjunto(self.par)), mock.patch.object(
-            autenticacao_conecta.cache, "add", side_effect=ConnectionError("redis fora")
+            autenticacao_conecta, "_cache_do_jti", return_value=quebrado
         ):
             resposta = APIClient().get(QUEM_SOU, HTTP_X_CONECTA_ASSERCAO=self.par.assina())
         self.assertEqual(resposta.status_code, 503)
         self.assertEqual(resposta.json()["codigo"], "INTEGRACAO_DESLIGADA")
+
+    @override_settings(
+        DEBUG=False,
+        CACHES={
+            "default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": "redis://x:1/3"},
+            "assercao": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+        },
+    )
+    def test_quem_vale_e_o_alias_do_jti(self):
+        """Redis só nos throttles não basta: o `jti` mora no alias `assercao`."""
+        self.assertFalse(autenticacao_conecta.cache_compartilhado())
+
+    @override_settings(
+        DEBUG=False,
+        CACHES={
+            "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+            "assercao": {"BACKEND": "config.cache.RedisQueNaoDerrubaAVenda", "LOCATION": "redis://x:1/3"},
+        },
+    )
+    def test_cache_que_falha_aberto_nunca_guarda_o_jti(self):
+        self.assertFalse(autenticacao_conecta.cache_compartilhado())
 
 
 class LogTest(BaseAssercao):

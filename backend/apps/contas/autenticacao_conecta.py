@@ -48,7 +48,7 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.cache import cache
+from django.core.cache import caches
 from rest_framework import exceptions
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.throttling import SimpleRateThrottle
@@ -99,10 +99,15 @@ ROTAS_LIBERADAS = {
     "publicacoes": frozenset({"GET"}),
 }
 
+# O alias de cache do `jti` (ver o bloco CACHES em `config/settings.py`): falha
+# FECHADA, ao contrário do `default` dos throttles.
+ALIAS_DO_CACHE = "assercao"
+
 # Os backends de cache em que um `add` vale para todos os processos. Lista de
 # PERMITIDOS, não de proibidos: um backend novo, ou o `DummyCache` (cujo `add`
 # devolve sempre verdadeiro e deixaria toda repetição passar), fica de fora até
-# alguém decidir o contrário.
+# alguém decidir o contrário. O que falha aberto (`RedisQueNaoDerrubaAVenda`)
+# também fica de fora: o `jti` não pode passar quando o Redis não responde.
 CACHES_COMPARTILHADOS = frozenset(
     {
         "django.core.cache.backends.redis.RedisCache",
@@ -283,8 +288,13 @@ def _le_chaves(bruto: str) -> dict:
     return chaves
 
 
+def _cache_do_jti():
+    return caches[ALIAS_DO_CACHE] if ALIAS_DO_CACHE in settings.CACHES else caches["default"]
+
+
 def cache_compartilhado() -> bool:
-    backend = settings.CACHES.get("default", {}).get("BACKEND", "")
+    configuracao = settings.CACHES.get(ALIAS_DO_CACHE) or settings.CACHES.get("default", {})
+    backend = configuracao.get("BACKEND", "")
     if backend in CACHES_COMPARTILHADOS:
         return True
     # Em dev há um processo só, e o `LocMemCache` basta (§4.6).
@@ -564,7 +574,7 @@ class AutenticacaoConecta(BaseAuthentication):
         tolerancia = settings.CONECTA_ASSERCAO_TOLERANCIA_SEGUNDOS
         prazo = max(1, assercao.exp - int(time.time()) + tolerancia)
         try:
-            gravou = cache.add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
+            gravou = _cache_do_jti().add(f"assercao:jti:{AUDIENCIA}:{assercao.jti}", 1, timeout=prazo)
         except Exception:
             # Cache fora: sem como saber se é repetição. Falha fechada.
             logger.exception("cache indisponível ao gravar o jti da asserção")

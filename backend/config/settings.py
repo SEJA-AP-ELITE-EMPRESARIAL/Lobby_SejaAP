@@ -151,17 +151,45 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # rota pública. `LocMemCache` é POR PROCESSO — com gunicorn em 3 workers, o teto
 # real fica ~3× o configurado e zera a cada deploy.
 #
-# Nem o CRM nem o Formulários definem `CACHES`, e por isso os limites deles são
-# aproximados. Aqui a variável existe para que dar um Redis ao app seja uma linha
-# no .env, não uma refatoração. O Conecta ID já roda Redis nesta mesma VPS.
+# Desde a TSK-1059 o cache compartilhado deixou de ser opcional para uma coisa:
+# a asserção do Conecta guarda nele o `jti` contra repetição (ADR-002 §4.6), e
+# sem Redis a integração fica DESLIGADA em produção (503 INTEGRACAO_DESLIGADA).
+# Em produção `LOBBY_REDIS_URL` aponta para o Redis do Conecta ID, num índice
+# próprio — ver o .env.example e o deploy/RUNBOOK.md.
+#
+# DOIS ALIASES PARA O MESMO REDIS, de propósito:
+#   default   os throttles. Falha ABERTA (`config/cache.py`): Redis fora não
+#             pode virar 500 no lobby do consultor por causa de um contador.
+#   assercao  o `jti`. Falha FECHADA: sem Redis não há como saber se a asserção
+#             é repetida, e a integração responde 503.
+# Tempo curto de conexão nos dois: um Redis que não responde não pode segurar a
+# requisição do consultor por segundos.
 _redis = os.environ.get("LOBBY_REDIS_URL", "").strip()
-CACHES = {
-    "default": (
-        {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": _redis}
-        if _redis
-        else {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}
-    )
-}
+_opcoes_do_redis = {"socket_connect_timeout": 1, "socket_timeout": 1}
+CACHES = (
+    {
+        "default": {
+            "BACKEND": "config.cache.RedisQueNaoDerrubaAVenda",
+            "LOCATION": _redis,
+            "KEY_PREFIX": "lobby",
+            "OPTIONS": _opcoes_do_redis,
+        },
+        "assercao": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": _redis,
+            "KEY_PREFIX": "lobby",
+            "OPTIONS": _opcoes_do_redis,
+        },
+    }
+    if _redis
+    else {
+        "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+        "assercao": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "assercao",
+        },
+    }
+)
 
 
 # === Autenticação ===
