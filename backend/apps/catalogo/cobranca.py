@@ -32,6 +32,15 @@ Desde 15/10/2026 cada categoria tem a sua regra. Dois corpos são aceitos:
         continuar funcionando sem mudar de semântica — ver o relatório da TSK.
 
 Os dois juntos são recusados: não há como saber qual a pessoa quis.
+
+O DIA FIXO (TSK-1077)
+
+Cada regra (de categoria e de exceção) leva `dia_fixo`, true ou false. Ele é
+OPCIONAL no corpo novo: ausente, a regra que já existe fica com o que tem, e a
+que nasce agora nasce ligada. No corpo do /admin antigo ele é IGNORADO, mesmo
+que venha: aquela tela não mostra o campo (devolve o que leu, e uma leitura
+velha desfaria o que o Conecta gravou depois), e a regra única dela não pode
+religar o dia fixo de uma categoria que o Conecta desligou.
 """
 from django.db import transaction
 from django.utils import timezone
@@ -64,8 +73,14 @@ def _inteiro(bruto, campo, minimo, maximo, rotulo) -> int:
     return valor
 
 
-def _regra_validada(bruto: dict, rotulo: str) -> dict:
-    """Os três campos de uma política, conferidos. Nada é gravado aqui."""
+def _regra_validada(bruto: dict, rotulo: str, *, com_dia_fixo=True) -> dict:
+    """Os campos de uma política, conferidos. Nada é gravado aqui.
+
+    `dia_fixo` só entra na regra quando veio (e `com_dia_fixo`): é o que faz a
+    gravação manter o valor guardado quando ele não vem. Desligado, o dia do
+    vencimento e a primeira parcela continuam obrigatórios — ficam guardados
+    para quando alguém religar.
+    """
     if not isinstance(bruto, dict):
         raise CobrancaInvalida(f"Configuração inválida em {rotulo}.")
 
@@ -75,7 +90,7 @@ def _regra_validada(bruto: dict, rotulo: str) -> dict:
             f"Regra da primeira parcela desconhecida em {rotulo}: {primeiro!r}."
         )
 
-    return {
+    regra = {
         "dia_vencimento": _inteiro(
             bruto.get("dia_vencimento"),
             "Dia do vencimento",
@@ -92,6 +107,15 @@ def _regra_validada(bruto: dict, rotulo: str) -> dict:
             rotulo,
         ),
     }
+    if com_dia_fixo and "dia_fixo" in bruto:
+        # Só booleano de verdade. `"false"` (texto) é verdadeiro em Python, e um
+        # `null` por engano não pode ligar nem desligar nada em silêncio.
+        if not isinstance(bruto["dia_fixo"], bool):
+            raise CobrancaInvalida(
+                f"Dia do vencimento fixo em {rotulo}: use true ou false."
+            )
+        regra["dia_fixo"] = bruto["dia_fixo"]
+    return regra
 
 
 def _aplica(politica: PoliticaCobranca, regra: dict) -> bool:
@@ -104,7 +128,7 @@ def _aplica(politica: PoliticaCobranca, regra: dict) -> bool:
     return mudou
 
 
-def _excecoes_validadas(brutas) -> list:
+def _excecoes_validadas(brutas, *, com_dia_fixo=True) -> list:
     if not isinstance(brutas, list):
         raise CobrancaInvalida("`excecoes` precisa ser uma lista.")
 
@@ -133,7 +157,9 @@ def _excecoes_validadas(brutas) -> list:
                 f'Produto "{produto_slug}" não existe em "{categoria_slug}". '
                 "Recarregue a página."
             )
-        excecoes.append((produto, _regra_validada(bruta, f'em "{produto.nome}"')))
+        excecoes.append(
+            (produto, _regra_validada(bruta, f'em "{produto.nome}"', com_dia_fixo=com_dia_fixo))
+        )
     # Mesma ordem canônica das categorias, pelo mesmo motivo.
     return sorted(excecoes, key=lambda par: par[0].pk)
 
@@ -154,12 +180,30 @@ def _categorias_validadas(brutas) -> list:
     return sorted(validadas, key=lambda par: par[0].pk)
 
 
-def _grava_da_categoria(categoria, regra, *, autor, quando):
-    politica, criada = PoliticaCobranca.objects.get_or_create(
-        categoria=categoria, defaults={"geral": False, **regra}
-    )
+def _travada(**alvo_e_defaults):
+    """A política do alvo, travada até o fim da publicação (ou criada).
+
+    Travada ANTES de comparar e gravar. Sem isso, duas publicações ao mesmo
+    tempo — uma desligando o dia fixo, outra mexendo no vencimento sem mandá-lo
+    — deixariam a segunda comparar com a cópia que leu antes: o banco ficaria
+    com o dia fixo desligado (o `update_fields` não o toca), e a linha do tempo
+    registraria um "religado" que não aconteceu. Travada, a segunda espera a
+    primeira terminar e lê o que ela gravou.
+
+    A ordem das travas é sempre a mesma (a geral, as categorias e as exceções
+    pelo id), para duas publicações não ficarem esperando uma pela outra.
+    """
+    return PoliticaCobranca.objects.select_for_update().get_or_create(**alvo_e_defaults)
+
+
+def _grava(alvo, regra, *, autor, quando):
+    politica, criada = _travada(**alvo, defaults={"geral": False, **regra})
     if criada or _aplica(politica, regra):
         registrar_politica(politica, autor=autor, quando=quando)
+
+
+def _grava_da_categoria(categoria, regra, *, autor, quando):
+    _grava({"categoria": categoria}, regra, autor=autor, quando=quando)
 
 
 @transaction.atomic
@@ -183,8 +227,9 @@ def publica_politica(dados, *, autor=None) -> dict:
         categorias = _categorias_validadas(dados.get("categorias"))
         regra_geral = None
     else:
-        # O corpo do /admin antigo: uma regra para o Lobby inteiro.
-        regra_geral = _regra_validada(dados.get("geral"), "na política geral")
+        # O corpo do /admin antigo: uma regra para o Lobby inteiro, sem o dia
+        # fixo (ver o cabeçalho).
+        regra_geral = _regra_validada(dados.get("geral"), "na política geral", com_dia_fixo=False)
         categorias = [(c, regra_geral) for c in Categoria.objects.order_by("pk")]
 
     if por_categoria and "excecoes" not in dados:
@@ -194,12 +239,12 @@ def publica_politica(dados, *, autor=None) -> dict:
         # manda `[]`. Um `null` por engano não pode apagar as exceções em silêncio.
         raise CobrancaInvalida("`excecoes` precisa ser uma lista (ou ficar de fora para não mudar).")
     else:
-        excecoes = _excecoes_validadas(dados.get("excecoes") or [])
+        excecoes = _excecoes_validadas(dados.get("excecoes") or [], com_dia_fixo=por_categoria)
 
     agora = timezone.now()
 
     if regra_geral is not None:
-        geral = PoliticaCobranca.geral_atual()
+        geral, _ = _travada(geral=True, defaults={"produto": None})
         if _aplica(geral, regra_geral):
             registrar_politica(geral, autor=autor, quando=agora)
 
@@ -209,14 +254,16 @@ def publica_politica(dados, *, autor=None) -> dict:
     if excecoes is None:
         return estado_atual()
 
+    # Todas as exceções de hoje travadas de uma vez, na ordem do produto — as
+    # que ficam e as que vão sair. Travadas uma a uma, na ordem da lista, duas
+    # publicações (uma mantendo uma exceção que a outra remove) poderiam travar
+    # as mesmas linhas em ordens opostas e esperar uma pela outra.
+    list(PoliticaCobranca.objects.select_for_update().filter(produto__isnull=False).order_by("produto_id"))
+
     mantidos = set()
     for produto, regra in excecoes:
-        politica, criada = PoliticaCobranca.objects.get_or_create(
-            produto=produto, defaults={"geral": False, **regra}
-        )
+        _grava({"produto": produto}, regra, autor=autor, quando=agora)
         mantidos.add(produto.pk)
-        if criada or _aplica(politica, regra):
-            registrar_politica(politica, autor=autor, quando=agora)
 
     # Exceções que a tela não mandou de volta deixaram de existir. A linha do
     # tempo fecha o período delas, com QUEM removeu — sem isso, a trilha diria
@@ -246,6 +293,14 @@ def regra_da_categoria(categoria, geral=None) -> dict:
     return (geral or PoliticaCobranca.geral_atual()).como_dicionario()
 
 
+# O que o corpo do /admin antigo (`geral`) aplica a todas as categorias.
+CAMPOS_DA_REGRA_UNICA = ("dia_vencimento", "primeiro_vencimento", "entrada_prazo_dias")
+
+
+def _da_regra_unica(regra: dict) -> dict:
+    return {campo: regra[campo] for campo in CAMPOS_DA_REGRA_UNICA}
+
+
 def estado_atual() -> dict:
     """As regras de cada categoria e as exceções, no formato que as telas leem."""
     geral = PoliticaCobranca.geral_atual()
@@ -263,10 +318,11 @@ def estado_atual() -> dict:
         "categorias": por_categoria,
         # Para o /admin de hoje, que só conhece uma regra. `categorias_divergem`
         # é o aviso de que ela não conta a história toda: alguma categoria está
-        # com regra própria, diferente desta, e salvar lá a sobrescreve.
+        # com regra própria, diferente desta, e salvar lá a sobrescreve. Conta
+        # só os campos que salvar lá sobrescreve — o `dia_fixo` não é um deles.
         "geral": regra_geral,
         "categorias_divergem": any(
-            {k: v for k, v in regra.items() if k != "nome"} != regra_geral
+            _da_regra_unica(regra) != _da_regra_unica(regra_geral)
             for regra in por_categoria.values()
         ),
         "excecoes": [

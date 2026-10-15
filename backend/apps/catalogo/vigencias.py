@@ -35,7 +35,25 @@ CAMPOS_DE_COBRANCA = (
     Vigencia.Campo.DIA_VENCIMENTO,
     Vigencia.Campo.PRIMEIRO_VENCIMENTO,
     Vigencia.Campo.ENTRADA_PRAZO_DIAS,
+    Vigencia.Campo.DIA_FIXO,
 )
+
+# Como um sim/não fica guardado: a mesma forma da trava de categoria.
+SIM, NAO = "sim", "não"
+
+ROTULO_MAX = Vigencia._meta.get_field("rotulo").max_length
+
+
+def cabe(rotulo: str) -> str:
+    """O rótulo no tamanho da coluna (120). Produto pode ter nome de 120, e
+    "NOME · cobrança" passaria — no Postgres, erro e publicação recusada.
+    Corta o NOME, e não o sufixo: é pelo " · " que o histórico separa os dois."""
+    if len(rotulo) <= ROTULO_MAX:
+        return rotulo
+    nome, separador, sufixo = rotulo.rpartition(" · ")
+    if not separador:
+        return rotulo[: ROTULO_MAX - 1] + "…"
+    return nome[: ROTULO_MAX - len(separador) - len(sufixo) - 1] + "…" + separador + sufixo
 
 
 def _pessoa(autor):
@@ -51,6 +69,8 @@ def texto(valor) -> str:
     com o registro anterior é textual, e `Decimal("12997")` contra
     `Decimal("12997.00")` viraria uma mudança que não houve.
     """
+    if isinstance(valor, bool):
+        return SIM if valor else NAO
     if isinstance(valor, Decimal):
         return f"{valor:.2f}"
     if valor is None:
@@ -62,6 +82,7 @@ def texto(valor) -> str:
 def registrar(chave, rotulo, campo, valor, *, autor=None, quando=None) -> Vigencia | None:
     """Fecha a vigência aberta deste campo e abre outra. `None` se nada mudou."""
     valor = texto(valor)
+    rotulo = cabe(rotulo)
     quando = quando or timezone.now()
 
     aberta = (
@@ -152,6 +173,7 @@ def registrar_politica(
             (Vigencia.Campo.DIA_VENCIMENTO, politica.dia_vencimento),
             (Vigencia.Campo.PRIMEIRO_VENCIMENTO, politica.primeiro_vencimento),
             (Vigencia.Campo.ENTRADA_PRAZO_DIAS, politica.entrada_prazo_dias),
+            (Vigencia.Campo.DIA_FIXO, politica.dia_fixo),
         )
     ]
     return [r for r in registros if r is not None]

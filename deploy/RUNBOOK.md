@@ -471,6 +471,46 @@ construir: para cada serviço (`backend`, `frontend`, `departamentos`,
 e então `sudo docker compose up -d --no-build --remove-orphans`. Depois,
 `git checkout main` antes do próximo `git pull`.
 
+### Dia do vencimento liga/desliga e criar produto fora do Conecta (TSK-1077)
+
+Roteiro [Com migration](#com-migration-a-ordem-importa): construir, migrar com a
+imagem nova, só então subir. **Front e backend juntos** (o `up -d` do passo 4 já
+troca os dois): é o `index.html` novo que sabe montar o cronograma com o dia fixo
+desligado.
+
+| Migration | O que faz | Desfazer |
+|---|---|---|
+| `catalogo/0017` | Esquema e dado: `PoliticaCobranca.dia_fixo`, **ligado** em toda regra que existe (a geral, cada categoria, cada exceção), com o padrão também no banco; abre a linha do tempo do `dia_fixo` em "sim", sem autor, na data de início de cada regra | Sim. Apaga a coluna e toda a linha do tempo do `dia_fixo`. Regra que estiver **desligada** volta a cobrar no dia do vencimento guardado |
+
+No dia do deploy **nenhuma venda muda**: tudo nasce ligado, e ligado é o
+comportamento de hoje. Para conferir, antes e depois:
+
+```bash
+curl -s https://lobby.sejaap.com.br/api/catalogo | python3 -c "import json,sys; d=json.load(sys.stdin); [print(c['id'], c['cobranca']) for c in d['cats']]; [print(' ', c['id'], p['id'], p['cobranca']) for c in d['cats'] for p in c['products'] if 'cobranca' in p]"
+# depois: os mesmos valores de antes, cada um com 'dia_fixo': True a mais
+```
+
+Duas coisas mudam para o Conecta, e nada para o consultor:
+
+- `GET`/`PUT /api/cobranca` e o `cobranca` do catálogo levam `dia_fixo` em cada
+  categoria e em cada exceção. É o Admin Lobby (TSK-1078) quem o desliga. **Não
+  desligue antes de o `index.html` novo estar no ar**: o antigo ignora o campo e
+  seguiria cobrando no dia fixo. O HTML é servido com `no-cache`, mas uma aba
+  aberta antes do deploy só pega o novo ao recarregar.
+- `POST /api/produtos` saiu da lista liberada: com a asserção, 403
+  `ROTA_NAO_LIBERADA`. O `/admin` antigo continua criando, com o JWT de sessão.
+
+O `/admin` antigo não mostra o campo e, ao salvar, não o muda — nem nas
+categorias (a regra única dele não leva o `dia_fixo`) nem nas exceções.
+
+**Volta só de imagem** (sem desfazer a migration) é segura: o backend de antes
+não lê a coluna, e o padrão no banco deixa ele criar exceção. Só que ele não
+sabe do dia desligado — todo produto volta ao dia fixo enquanto a imagem antiga
+estiver no ar. E exceção que ele criar ou remover nesse meio-tempo fica sem a
+linha do tempo do `dia_fixo` (ou com ela aberta): só o histórico sai torto — a
+primeira mudança depois mostra "dia do vencimento fixo: ligado" sem o "de" —,
+as datas não.
+
 ### Integração com o Conecta (TSK-1059): deploy, e só depois ligar
 
 São dois momentos, e o primeiro não liga nada:

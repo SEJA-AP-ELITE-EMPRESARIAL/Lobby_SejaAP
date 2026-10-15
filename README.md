@@ -241,6 +241,8 @@ com o papel que ela tem **aqui**: só a diretoria publica, como no `/admin`.
   método (`apps/contas/autenticacao_conecta.py`, `ROTAS_LIBERADAS`). Fora dela,
   403 `ROTA_NAO_LIBERADA` — inclusive o `PUT /api/catalogo` e o `PATCH` de produto,
   que o Conecta substitui pela publicação abaixo. Venda, sessão e senha nunca.
+  Criar produto (`POST /api/produtos`) também ficou fora, desde a TSK-1077: produto
+  novo entra por desenvolvimento, e a rota segue só para o `/admin` antigo.
 - **"Entrar como usuário"** (`imp`) só lê; escrever é 403.
 - **Sem a chave pública, ou sem Redis em produção, fica desligada** (503
   `INTEGRACAO_DESLIGADA`) — e só para quem manda o cabeçalho. O consultor e o
@@ -375,7 +377,7 @@ sete abas — e tudo o que se faz por lá fica registrado com autor e período:
 | **Departamentos** | Se o consultor escolhe o departamento da venda (Elite e APN) na lista do Omie ou se toda venda sai com um departamento fixo. |
 | **Categorias** | A mesma escolha para a categoria financeira da venda da APN: lista completa ou categoria fixa. |
 | **DH - Avaliação** | O valor com que Relatório e Devolutiva abrem na venda do DH - Avaliação, e se cada um fica livre ou fixo (travado no lobby e recusado pelo comprovante se vier diferente). |
-| **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — por categoria (desde a TSK-1059) e por produto. A exceção do produto vence a da categoria; categoria nova começa pela regra geral. Pelo `/admin` de hoje, a regra salva vale para todas as categorias. |
+| **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — por categoria (desde a TSK-1059) e por produto. A exceção do produto vence a da categoria; categoria nova começa pela regra geral. Pelo `/admin` de hoje, a regra salva vale para todas as categorias. O dia fixo (`dia_fixo`, TSK-1077) se desliga pelo Admin Lobby do Conecta (ou, para conserto, pelo `/django-admin/`, que também registra quem mudou): desligado, as parcelas vencem no dia do mês da venda (no último dia, em mês que não o tem); salvar aqui não o muda. |
 | **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
 | **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |
 
@@ -410,7 +412,10 @@ sete abas — e tudo o que se faz por lá fica registrado com autor e período:
 - **Vencimento das parcelas:** travado no **dia 15** (`DIA_VENCIMENTO`). A entrada é
   no dia da venda e cobre aquele mês; a 1ª parcela cai no dia 15 do **mês seguinte**
   e as demais seguem uma por mês — um pagamento por mês, sempre. Sem autorização o
-  consultor não edita esse campo: vê a data travada.
+  consultor não edita esse campo: vê a data travada. Com o dia fixo **desligado**
+  na regra do produto (TSK-1077), as parcelas vencem no dia do mês da venda — venda
+  em 14/10, parcelas em 14/11, 14/12…; venda em 31/01, em 28/02 (29/02 no
+  bissexto), 31/03, 30/04… —, e a entrada segue o prazo dela.
 - **Quantas parcelas:** o padrão é entrada + `vigência − 1` parcelas (`mesesDeCobranca`),
   ou seja, uma cobrança por mês de contrato. Nos planos Elite de 12 meses são as
   conhecidas 11; um plano de 24 meses abre com 23.

@@ -83,6 +83,8 @@ CENTAVO = Decimal("0.01")
 # O dia do vencimento para em 28 de propósito. O ponto de fixar um dia é ter UMA
 # data de cobrança em lote; 29, 30 e 31 não existem em todo mês e reintroduziriam
 # a regra de "cair no último dia" que a mudança de 17/08/2026 justamente eliminou.
+# Quem quer cobrar no dia da venda (e aceita o último dia) desliga o
+# `PoliticaCobranca.dia_fixo` (TSK-1077) — não sobe este teto.
 DIA_VENCIMENTO_MIN = 1
 DIA_VENCIMENTO_MAX = 28
 # Teto do adiamento da entrada. Entrada é o ato de fechar a venda: prazo longo
@@ -531,6 +533,16 @@ class PoliticaCobranca(models.Model):
     vale para todas as vendas seguintes — por isso é da diretoria, mesmo alcance
     da tabela de preços. Mudar a data de UMA venda continua sendo autorização de
     gerente, na própria tela do consultor.
+
+    O DIA FIXO PODE SER DESLIGADO (TSK-1077, 15/10/2026)
+
+    `dia_fixo` ligado (o padrão, e o de toda regra que já existia) é o que está
+    escrito acima: toda parcela no `dia_vencimento`. Desligado, as parcelas caem
+    no dia do mês em que a venda foi feita — venda em 14/10, parcelas em 14/11,
+    14/12… —, e no último dia do mês quando ele não tem aquele dia (venda em
+    31/01, parcela em 28/02 e de novo em 31/03). Desligado, `dia_vencimento` e
+    `primeiro_vencimento` ficam guardados mas não valem; a entrada segue o
+    `entrada_prazo_dias` dos dois jeitos. Quem monta as datas é o `index.html`.
     """
 
     geral = models.BooleanField(
@@ -569,6 +581,18 @@ class PoliticaCobranca(models.Model):
         help_text=f"Dia do mês em que TODA parcela vence ({DIA_VENCIMENTO_MIN} a "
         f"{DIA_VENCIMENTO_MAX}). Para em 28 porque 29, 30 e 31 não existem em "
         "todo mês, e o ponto de fixar o dia é ter uma data única de cobrança.",
+    )
+    # `db_default` além do `default`: o padrão fica também no banco, e assim o
+    # backend de ANTES da TSK-1077 (que não conhece a coluna) continua criando
+    # exceção — na janela do deploy entre migrar e subir a imagem nova, e numa
+    # volta de imagem sem desfazer a migration.
+    dia_fixo = models.BooleanField(
+        "dia do vencimento fixo",
+        default=True,
+        db_default=True,
+        help_text="Ligado: as parcelas vencem no dia do vencimento. Desligado: "
+        "no dia do mês em que a venda foi feita (no último dia, em mês que não "
+        "tem aquele dia), e o dia do vencimento e a primeira parcela não valem.",
     )
     primeiro_vencimento = models.CharField(
         "primeira parcela",
@@ -619,7 +643,8 @@ class PoliticaCobranca(models.Model):
             alvo = f"categoria {self.categoria.nome}"
         else:
             alvo = "regra geral (início de toda categoria)"
-        return f"dia {self.dia_vencimento} · {alvo}"
+        dia = f"dia {self.dia_vencimento}" if self.dia_fixo else "dia da venda"
+        return f"{dia} · {alvo}"
 
     @classmethod
     def geral_atual(cls) -> "PoliticaCobranca":
@@ -637,6 +662,7 @@ class PoliticaCobranca(models.Model):
             "dia_vencimento": self.dia_vencimento,
             "primeiro_vencimento": self.primeiro_vencimento,
             "entrada_prazo_dias": self.entrada_prazo_dias,
+            "dia_fixo": self.dia_fixo,
         }
 
 
@@ -728,6 +754,8 @@ class Vigencia(models.Model):
         DIA_VENCIMENTO = "dia_vencimento", "Dia do vencimento"
         PRIMEIRO_VENCIMENTO = "primeiro_vencimento", "Primeira parcela"
         ENTRADA_PRAZO_DIAS = "entrada_prazo_dias", "Prazo da entrada (dias)"
+        # "sim"/"não", como a trava. Desde a TSK-1077.
+        DIA_FIXO = "dia_fixo", "Dia do vencimento fixo"
         # Categoria fora do lobby ("em implementação"), por `Categoria.travada`.
         # Até a TSK-1059 só mudava pelo /django-admin/, sem rastro.
         TRAVADA = "travada", "Fora do Lobby (em implementação)"

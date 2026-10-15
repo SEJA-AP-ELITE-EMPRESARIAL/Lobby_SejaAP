@@ -8,9 +8,9 @@ aqui morava em cinco lugares (ADR-002 §13.3, item 5):
     catalogo               PublicacaoCatalogo — e as vigências de preço de antes
                            da TSK-1059 que não têm publicação (o PATCH de produto
                            não gravava uma)
-    cobranca               Vigencia dos três campos da regra de cobrança: a
-                           geral, a de cada categoria, as exceções por produto e
-                           a remoção delas (com quem removeu)
+    cobranca               Vigencia dos campos da regra de cobrança: a geral, a
+                           de cada categoria, as exceções por produto e a
+                           remoção delas (com quem removeu)
     categorias             Vigencia da trava de categoria (liberar/tirar do Lobby)
     departamento           ConfiguracaoDepartamento
     categoria_financeira   ConfiguracaoCategoriaFinanceira
@@ -59,6 +59,7 @@ CAMPOS_DE_COBRANCA = {
     Vigencia.Campo.DIA_VENCIMENTO: "dia do vencimento",
     Vigencia.Campo.PRIMEIRO_VENCIMENTO: "primeira parcela",
     Vigencia.Campo.ENTRADA_PRAZO_DIAS: "prazo da entrada",
+    Vigencia.Campo.DIA_FIXO: "dia do vencimento fixo",
 }
 CAMPOS_DE_PRECO = {
     Vigencia.Campo.MENSALIDADE: "mensalidade",
@@ -102,6 +103,8 @@ def _valor(campo, texto) -> str:
         return "no dia da venda" if texto in ("0", "") else f"{texto} dias"
     if campo == Vigencia.Campo.TRAVADA:
         return rotulo_da_trava(texto)
+    if campo == Vigencia.Campo.DIA_FIXO:
+        return "ligado" if texto == SIM else "desligado (parcelas no dia da venda)"
     return texto
 
 
@@ -177,6 +180,22 @@ def _anterior(linhas_da_chave, vigencia):
     return None
 
 
+def _semente_do_dia_fixo(v, anterior) -> bool:
+    """O `dia_fixo` que a migration 0017 abriu em toda regra que já existia.
+
+    Não é evento: o dia sempre foi fixo até a TSK-1077, e a semente existe só
+    para a primeira mudança de verdade dizer "ligado → desligado". Mostrada,
+    ela poria uma linha nova em eventos antigos (ou um evento sem autor no dia
+    do deploy) sem nada ter mudado.
+    """
+    return (
+        v.campo == Vigencia.Campo.DIA_FIXO
+        and anterior is None
+        and v.autor_id is None
+        and not v.autor_email
+    )
+
+
 def _vigencias(campos, area, titulo_de, categoria_de, *, cobertas=None):
     """Agrupa as vigências em eventos: mesma chave, mesmo instante, mesma pessoa.
 
@@ -205,8 +224,12 @@ def _vigencias(campos, area, titulo_de, categoria_de, *, cobertas=None):
     eventos = []
     for (chave, quando, autor), grupo in grupos.items():
         alteracoes, primeira = [], True
+        anteriores = {v.pk: _anterior(por_chave_campo[(v.chave, v.campo)], v) for v in grupo}
+        grupo = [v for v in grupo if not _semente_do_dia_fixo(v, anteriores[v.pk])]
+        if not grupo:
+            continue
         for v in grupo:
-            anterior = _anterior(por_chave_campo[(v.chave, v.campo)], v)
+            anterior = anteriores[v.pk]
             primeira = primeira and anterior is None
             alteracoes.append(
                 _de_para(campos[v.campo], v.campo, anterior.valor if anterior else None, v.valor)

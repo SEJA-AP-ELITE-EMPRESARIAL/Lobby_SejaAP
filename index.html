@@ -533,8 +533,16 @@ function ymd(iso) {
  *
  * O dia do vencimento é limitado a 28 no backend: 29, 30 e 31 não existem em todo
  * mês, e trariam de volta o "cair no último dia" que esta regra eliminou.
+ *
+ * `dia_fixo` (TSK-1077) desliga tudo isso: desligado, as parcelas vencem no dia
+ * do mês em que a venda foi feita, a partir do mês seguinte, e no último dia do
+ * mês quando ele não tem aquele dia. `dia_vencimento` e `primeiro_vencimento`
+ * não valem; a entrada segue o prazo dela dos dois jeitos.
+ *
+ *   venda 14/10 → P1 14/11 · P2 14/12 · P3 14/01 …
+ *   venda 31/01 → P1 28/02 (29/02 no bissexto) · P2 31/03 · P3 30/04 · P4 31/05 …
  * ========================================================================== */
-let COBRANCA = { dia_vencimento: 15, primeiro_vencimento: 'mes_seguinte', entrada_prazo_dias: 0 };
+let COBRANCA = { dia_vencimento: 15, primeiro_vencimento: 'mes_seguinte', entrada_prazo_dias: 0, dia_fixo: true };
 
 // Um campo faltando é pior do que a resposta inteira faltar: `dia_vencimento:
 // undefined` viraria `Invalid Date` em todo o cronograma, sem erro nenhum na
@@ -550,6 +558,9 @@ function normalizaCobranca(bruta, padrao) {
     dia_vencimento: inteiro(bruta && bruta.dia_vencimento, 1, 28, base.dia_vencimento),
     primeiro_vencimento: (regra === 'mes_seguinte' || regra === 'proximo') ? regra : base.primeiro_vencimento,
     entrada_prazo_dias: inteiro(bruta && bruta.entrada_prazo_dias, 0, 90, base.entrada_prazo_dias),
+    // Só booleano de verdade; um backend de antes, que não manda o campo, fica
+    // com o dia fixo — que é o que ele faz.
+    dia_fixo: typeof (bruta && bruta.dia_fixo) === 'boolean' ? bruta.dia_fixo : base.dia_fixo !== false,
   };
 }
 
@@ -564,10 +575,19 @@ const cobrancaDoProduto = (product, cat) => {
   return (product && product.cobranca) ? normalizaCobranca(product.cobranca, daCategoria) : daCategoria;
 };
 
-// Vencimento da parcela `idx` (0-based), a partir da data da entrada.
+// Vencimento da parcela `idx` (0-based), a partir de `inicioDasParcelas`.
 function parcelaVencimento(baseISO, idx, cobranca) {
   const cob = cobranca || COBRANCA;
   const [ano, mes, dia] = ymd(baseISO);
+  if (!cob.dia_fixo) {
+    // O dia da venda, no mês seguinte e nos outros. `mes` (1-based) já é o
+    // índice do mês seguinte no Date (0-based); o dia 0 do mês depois dele é o
+    // último dia dele. A conta parte sempre da venda: depois de um 28/02, o
+    // 31/03 volta ao dia 31.
+    const ultimo = new Date(ano, mes + idx + 1, 0).getDate();
+    const dt = new Date(ano, mes + idx, Math.min(dia, ultimo));
+    return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+  }
   // `mes` é 1-based e o Date é 0-based, então `mes` já aponta para o mês
   // SEGUINTE ao da venda. Em 'proximo', volta um mês quando o dia do vencimento
   // ainda não passou.
@@ -576,11 +596,28 @@ function parcelaVencimento(baseISO, idx, cobranca) {
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(cob.dia_vencimento)}`;
 }
 
-// Data em que a entrada é paga: o dia da venda, salvo prazo configurado.
-function dataDaEntrada(cobranca) {
+// De que data as parcelas partem. Com o dia fixo, da data da entrada: é ela que
+// decide o MÊS da primeira parcela, e mudá-la refaz o cronograma. Sem ele, do
+// dia da VENDA (`vendaData`, o dia em que o cronograma foi montado) — a entrada
+// segue o prazo dela e pode cair até depois da primeira parcela, mas não arrasta
+// as parcelas junto. Guardada no estado, e não lida do relógio a cada ação: uma
+// venda aberta antes da meia-noite não ganha parcela nova em outro dia.
+const inicioDasParcelas = (entradaISO, cobranca, vendaISO) =>
+  ((cobranca || COBRANCA).dia_fixo ? (entradaISO || todayISO()) : (vendaISO || todayISO()));
+
+// O dia do mês em que as parcelas vencem, para os textos da tela.
+const diaDasParcelas = (cobranca, vendaISO) => {
   const cob = cobranca || COBRANCA;
-  if (!cob.entrada_prazo_dias) return todayISO();
-  const [ano, mes, dia] = ymd(todayISO());
+  return cob.dia_fixo ? cob.dia_vencimento : ymd(vendaISO || todayISO())[2];
+};
+
+// Data em que a entrada é paga: o dia da venda, salvo prazo configurado. A venda
+// é hoje, salvo `vendaISO` (a da venda em curso, com o dia fixo desligado).
+function dataDaEntrada(cobranca, vendaISO) {
+  const cob = cobranca || COBRANCA;
+  const venda = vendaISO || todayISO();
+  if (!cob.entrada_prazo_dias) return venda;
+  const [ano, mes, dia] = ymd(venda);
   const dt = new Date(ano, mes - 1, dia + cob.entrada_prazo_dias);
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
@@ -1082,14 +1119,19 @@ const mesesDeCobranca = (product) => (product && product.recurring ? (product.vi
 
 // Monta o cronograma padrão de um produto (entrada + parcelas, total = price),
 // pela regra de cobrança que vale para ele — a exceção dele, ou a da categoria.
-function initPayment(product, cat) {
+// `vendaAtual`: a data da venda em curso, quando o cronograma é REFEITO (sair da
+// edição, encerrar a autorização); sem ela, a venda começa hoje.
+function initPayment(product, cat, vendaAtual) {
   const total = product.price;
   const meses = mesesDeCobranca(product);
   const cob = cobrancaDoProduto(product, cat);
   const entrada = product.recurring ? product.monthly : round2(total / meses);
-  const entradaData = dataDaEntrada(cob);
-  const parcelas = buildSchedule(meses - 1, total, entrada, entradaData, cob);
-  return { entradaForma: 'pix', entradaValor: entrada, entradaData, parcelas, editMode: false };
+  const vendaData = vendaAtual || todayISO();
+  // Com o dia fixo desligado a venda inteira parte da data dela, a entrada
+  // também; ligado, a entrada é a de hoje, como sempre foi.
+  const entradaData = dataDaEntrada(cob, cob.dia_fixo ? undefined : vendaData);
+  const parcelas = buildSchedule(meses - 1, total, entrada, inicioDasParcelas(entradaData, cob, vendaData), cob);
+  return { entradaForma: 'pix', entradaValor: entrada, entradaData, vendaData, parcelas, editMode: false };
 }
 
 /* ===== Logo ===== */
@@ -1347,7 +1389,7 @@ function App() {
     cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
-    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
+    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', vendaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0,
     observacao: '',
     // Departamento da venda (código do Omie) e o aviso de quando ele saiu da
@@ -1585,7 +1627,7 @@ function App() {
       product: p, priceEdit: false, editMode: false, dhAdiantamentoEdit: false, autorizacao: null, observacao: '',
       ...(trocouDeFluxo ? { step: etapaDoProduto(fluxoNovo, cat) } : {}),
       ...(p.flow
-        ? { unitValue: 0, entradaValor: 0, entradaData: '', parcelas: [] }
+        ? { unitValue: 0, entradaValor: 0, entradaData: '', vendaData: '', parcelas: [] }
         : { unitValue: p.recurring ? p.monthly : p.price, ...initPayment(p, cat) }),
     };
   });
@@ -1647,13 +1689,15 @@ function App() {
   // parcelas continuam no dia configurado, mas o MÊS da primeira depende da data
   // da venda (ver `parcelaVencimento`). Vencimento editado à mão é reescrito aqui
   // — mudar a data da venda refaz o cronograma, é o que se espera dela.
-  const setEntradaData = (v) => patch((d) => ({
+  // Com o dia fixo desligado as parcelas partem do dia da venda, e não da
+  // entrada (`inicioDasParcelas`): mudar a data da entrada não as mexe.
+  const setEntradaData = (v) => patch((d) => (cobranca.dia_fixo ? {
     entradaData: v,
     parcelas: d.parcelas.map((p, i) => ({ ...p, data: parcelaVencimento(v || todayISO(), i, cobranca) })),
-  }));
+  } : { entradaData: v }));
   const setCount = (raw) => patch((d) => {
     const n = Math.max(0, Math.min(60, Math.round(Number(raw) || 0)));
-    const start = d.entradaData || todayISO();
+    const start = inicioDasParcelas(d.entradaData, cobranca, d.vendaData);
     const arr = Array.from({ length: n }, (_, i) => d.parcelas[i] ? { ...d.parcelas[i] } : { valor: 0, data: parcelaVencimento(start, i, cobranca), forma: 'boleto', manual: false });
     return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) };
   });
@@ -1666,7 +1710,7 @@ function App() {
   const resetSchedule = () => patch((d) => { const arr = d.parcelas.map((p) => ({ ...p, manual: false })); return { parcelas: redistributeSchedule(arr, total, Number(d.entradaValor)) }; });
   const toggleEdit = () => {
     if (!s.editMode && !autorizado) { patch({ pedindoAutorizacao: 'pagamento' }); return; }
-    if (s.editMode) patch({ editMode: false, ...initPayment(product, cat) });
+    if (s.editMode) patch({ editMode: false, ...initPayment(product, cat, s.vendaData) });
     else patch({ editMode: true });
   };
 
@@ -1709,7 +1753,7 @@ function App() {
     // A observação é a justificativa da negociação: descartada a negociação,
     // ela não pode continuar escrita no cadastro.
     observacao: '',
-    ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product, getCat(d.catId)) } : {}),
+    ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product, getCat(d.catId), d.vendaData) } : {}),
   }));
 
   // ----- Igualar parcelas: ao alterar a 1ª parcela, oferecer aplicar o valor às demais -----
@@ -1722,7 +1766,7 @@ function App() {
   const rebuildDefault = (newTotal) => {
     const meses = mesesDeCobranca(product);
     const entrada = round2(newTotal / meses);
-    return { entradaValor: entrada, parcelas: buildSchedule(meses - 1, newTotal, entrada, s.entradaData || dataDaEntrada(cobranca), cobranca), editMode: false };
+    return { entradaValor: entrada, parcelas: buildSchedule(meses - 1, newTotal, entrada, inicioDasParcelas(s.entradaData || dataDaEntrada(cobranca), cobranca, s.vendaData), cobranca), editMode: false };
   };
   const setUnitValue = (n) => patch(() => {
     const val = Number.isFinite(n) ? n : 0;
@@ -2444,7 +2488,7 @@ function App() {
     cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
     repNome: '', repNascimento: '', repCpf: '', repMesmoEndereco: true, repEndereco: '', repEmail: '', repTelefone: '',
-    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', parcelas: [],
+    priceEdit: false, unitValue: 0, editMode: false, entradaForma: 'pix', entradaValor: 0, entradaData: '', vendaData: '', parcelas: [],
     omie: true, conecta: true, d4: true, showDivergencia: false, showEqualizar: false, equalizarValor: 0, observacao: '', departamento: '', departamentoAviso: '',
     categoriaFin: '', categoriaFinAviso: '',
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
@@ -2892,7 +2936,7 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
           <div>
             <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Configuração de pagamento</h2>
-            <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada {cobranca.entrada_prazo_dias ? `em ${cobranca.entrada_prazo_dias} dias` : 'no dia da venda'} + {Math.max(0, mesesDeCobranca(product) - 1)} parcelas iguais, todas no dia {cobranca.dia_vencimento}. Habilite a edição para personalizar.</p>
+            <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Padrão: entrada {cobranca.entrada_prazo_dias ? `em ${cobranca.entrada_prazo_dias} dias` : 'no dia da venda'} + {Math.max(0, mesesDeCobranca(product) - 1)} parcelas iguais, todas no dia {diaDasParcelas(cobranca, s.vendaData)}{cobranca.dia_fixo ? '' : ` (dia da venda${diaDasParcelas(cobranca, s.vendaData) > 28 ? '; no último dia do mês que não o tiver' : ''})`}. Habilite a edição para personalizar.</p>
           </div>
           <EditToggle on={s.editMode} onToggle={toggleEdit} label="Editar valores" restrito={!autorizado} />
         </div>
@@ -2930,7 +2974,7 @@ function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>event_repeat</span>
               <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Parcelas</span>
-              <span title={product && product.cobranca ? 'Este produto tem regra própria de cobrança' : 'Regra de cobrança da categoria'} style={{ font: '500 11px var(--font-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-light)', borderRadius: 6, padding: '3px 8px' }}>vencimento todo dia {cobranca.dia_vencimento}</span>
+              <span title={(product && product.cobranca ? 'Este produto tem regra própria de cobrança' : 'Regra de cobrança da categoria') + (cobranca.dia_fixo ? '' : ' — parcelas no dia do mês da venda')} style={{ font: '500 11px var(--font-secondary)', color: 'var(--text-muted)', border: '1px solid var(--border-light)', borderRadius: 6, padding: '3px 8px' }}>{cobranca.dia_fixo ? 'vencimento' : 'parcelas'} todo dia {diaDasParcelas(cobranca, s.vendaData)}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ font: '500 12px var(--font-secondary)', color: 'var(--text-muted)' }}>Quantidade</span>
@@ -2962,7 +3006,7 @@ function App() {
                 {/* Vencimento travado no dia 15. Só quem tem autorização (que é o
                     que liga `editMode`) pode mexer, igual aos valores. */}
                 {notEdit ? (
-                  <div title={`Vencimento travado no dia ${cobranca.dia_vencimento}`} style={{ display: 'flex', alignItems: 'center', gap: 5, height: 40, font: "500 13px 'Roboto'", color: 'var(--text-secondary)' }}>
+                  <div title={`Vencimento travado no dia ${diaDasParcelas(cobranca, s.vendaData)}`} style={{ display: 'flex', alignItems: 'center', gap: 5, height: 40, font: "500 13px 'Roboto'", color: 'var(--text-secondary)' }}>
                     <span className="ms-icon" style={{ fontSize: 15, color: 'var(--text-muted)' }}>lock</span>{dmy(p.data)}
                   </div>
                 ) : (

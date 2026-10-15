@@ -275,6 +275,13 @@ class HistoricoTest(Base):
         self.assertEqual(resposta.status_code, 200, resposta.content)
         confere(self, resposta.json(), "historico_cobranca_elite")
 
+    def test_dia_fixo_desligado_com_de_para(self):
+        """TSK-1077. A semente da migration não aparece: o evento é só a mudança."""
+        self.como("put", "/api/cobranca", {"categorias": {"elite": {**self.GERAL, "dia_fixo": False}}})
+        resposta = self.historico(area="cobranca", categoria="elite")
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        confere(self, resposta.json(), "historico_cobranca_elite_dia_fixo")
+
     def test_remocao_de_excecao_aparece_com_quem_removeu(self):
         excecao = {"categoria_id": "elite", "produto_id": "pro", **self.GERAL, "dia_vencimento": 5}
         self.como("put", "/api/cobranca", {"categorias": {}, "excecoes": [excecao]})
@@ -352,6 +359,20 @@ class ContratoDasConfiguracoesTest(Base):
     def test_cobranca_por_categoria(self):
         confere(self, self.como("get", "/api/cobranca").json(), "cobranca")
 
+    def test_cobranca_com_o_dia_fixo_desligado(self):
+        """TSK-1077: `dia_fixo` em cada regra de `categorias.<slug>` e em cada item
+        de `excecoes` — o que o Admin Lobby do Conecta grava e lê (TSK-1078)."""
+        regra = {"dia_vencimento": 15, "primeiro_vencimento": "mes_seguinte", "entrada_prazo_dias": 0}
+        resposta = self.como("put", "/api/cobranca", {
+            "categorias": {"elite": {**regra, "dia_fixo": False}},
+            "excecoes": [
+                {"categoria_id": "elite", "produto_id": "pro", **regra, "dia_vencimento": 5, "dia_fixo": False},
+                {"categoria_id": "elite", "produto_id": "evo", **regra, "dia_vencimento": 10},
+            ],
+        })
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        confere(self, self.como("get", "/api/cobranca").json(), "cobranca_dia_fixo_desligado")
+
     def test_departamentos_por_categoria(self):
         sincronizar([dep("1001", "Consultoria", "001.001"), dep("1002", "Comercial", "001.002")])
         resposta = self.como(
@@ -403,11 +424,25 @@ class AchadosDaRevisaoTest(Base):
                                                   "recorrente": False, "valor": "NaN"}, format="json")
         self.assertEqual(resposta.status_code, 400)
 
-    def test_post_de_produto_pela_assercao_grava_a_pessoa_do_sub(self):
-        resposta = self.como("post", "/api/produtos", {
+    def test_post_de_produto_saiu_da_lista_e_o_admin_antigo_ainda_cria(self):
+        """TSK-1077: produto novo entra por desenvolvimento, não pelo Conecta."""
+        corpo = {
             "categoria_id": "elite", "nome": "ELITE MASTER", "sigla": "MAS",
             "recorrente": True, "mensalidade": "39997", "vigencia_meses": 12,
-        })
+        }
+        publicacoes = PublicacaoCatalogo.objects.count()
+        resposta = self.como("post", "/api/produtos", corpo)
+        self.assertRecusa(resposta, 403, "ROTA_NAO_LIBERADA")
+        confere(self, resposta.json(), "erro_rota_nao_liberada")
+        self.assertFalse(Produto.objects.filter(slug="elite-master").exists())
+        self.assertEqual(PublicacaoCatalogo.objects.count(), publicacoes)
+
+        # O /admin antigo, com o JWT de sessão de hoje, continua criando.
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        cliente = APIClient()
+        cliente.credentials(HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(self.bruna).access_token}")
+        resposta = cliente.post("/api/produtos", corpo, format="json")
         self.assertEqual(resposta.status_code, 201, resposta.content)
         publicacao = PublicacaoCatalogo.objects.order_by("-publicado_em", "-id").first()
         self.assertEqual(publicacao.autor, self.bruna)
