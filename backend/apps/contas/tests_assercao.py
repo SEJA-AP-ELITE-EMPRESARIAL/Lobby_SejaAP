@@ -19,14 +19,19 @@ produção.
 import base64
 import json
 import logging
+import os
+import subprocess
+import sys
+import textwrap
 import time
 import uuid
 import warnings
-from unittest import mock
+from unittest import mock, skipUnless
 
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -535,3 +540,73 @@ class AchadosDaRevisaoTest(BaseAssercao):
         with self.assertLogs("lobby.integracao", level=logging.ERROR):
             resposta = self.get()
         self.assertRecusa(resposta, 503, "INTEGRACAO_DESLIGADA")
+
+
+# O outro worker do gunicorn, num processo de verdade: grava o `jti` do token
+# pelo mesmo caminho da autenticação e diz o que aconteceu.
+_GRAVA_EM_OUTRO_PROCESSO = textwrap.dedent(
+    """
+    import sys
+
+    import django
+
+    django.setup()
+
+    import jwt
+
+    from apps.contas.autenticacao_conecta import AssercaoConecta, AssercaoRecusada, AutenticacaoConecta
+
+    claims = jwt.decode(sys.argv[1], options={"verify_signature": False})
+    assercao = AssercaoConecta(
+        kid="outro-processo", jti=claims["jti"], sub=claims["sub"], aud=claims["aud"],
+        exp=claims["exp"], impersonacao=False,
+    )
+    try:
+        AutenticacaoConecta()._grava_jti(assercao)
+    except AssercaoRecusada as recusa:
+        print(recusa.codigo)
+    else:
+        print("GRAVOU")
+    """
+)
+
+
+@skipUnless(
+    os.environ.get("LOBBY_REDIS_URL"),
+    "precisa de LOBBY_REDIS_URL apontando para um Redis DESCARTÁVEL (a suíte o "
+    "esvazia); o CI sobe um — ver .github/workflows/ci.yml",
+)
+class JtiEntreProcessosTest(BaseAssercao):
+    """A razão de o Lobby ter um Redis (TSK-1068): o mesmo `jti` em dois workers.
+
+    O `test_jti_repetido` repete no MESMO processo, e passaria com o
+    `LocMemCache`. Aqui o outro worker é outro processo Python, com o settings
+    de verdade e o `LOBBY_REDIS_URL` do ambiente — se o cache não fosse
+    compartilhado, ele gravaria o `jti` de novo sem saber da primeira chamada.
+
+    Pulado sem Redis, e o CI reprova teste pulado: lá ele sempre roda.
+    """
+
+    def outro_processo(self, token):
+        ambiente = {**os.environ, "DJANGO_SETTINGS_MODULE": "config.settings"}
+        feito = subprocess.run(
+            [sys.executable, "-c", _GRAVA_EM_OUTRO_PROCESSO, token],
+            cwd=settings.BASE_DIR, env=ambiente, capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(feito.returncode, 0, feito.stderr)
+        return feito.stdout.strip().splitlines()[-1]
+
+    def test_o_settings_usa_o_redis(self):
+        """Sem isto, os dois abaixo poderiam passar por outro motivo."""
+        self.assertEqual(settings.CACHES["assercao"]["BACKEND"], "django.core.cache.backends.redis.RedisCache")
+        self.assertTrue(autenticacao_conecta.cache_compartilhado())
+
+    def test_outro_worker_usou_primeiro(self):
+        token = self.par.assina()
+        self.assertEqual(self.outro_processo(token), "GRAVOU")
+        self.assertRecusa(self.chama("get", QUEM_SOU, token), 401, "JTI_REPETIDO")
+
+    def test_este_worker_usou_primeiro(self):
+        token = self.par.assina()
+        self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
+        self.assertEqual(self.outro_processo(token), "JTI_REPETIDO")
