@@ -146,15 +146,26 @@ test('initPayment: refazer o cronograma depois da meia-noite mantém o dia da ve
   assert.equal(refeita.vendaData, '2026-10-31');
   assert.deepEqual(refeita.parcelas.map((p) => p.data), aberta.parcelas.map((p) => p.data));
   assert.equal(refeita.parcelas.length, 11);
+  // Com prazo, a entrada também parte da venda de 31/10, e não do relógio.
+  const comPrazo = { cobranca: { ...DESLIGADO, entrada_prazo_dias: 10 } };
+  hoje = '2026-10-31T23:50:00';
+  const abertaComPrazo = lobby.initPayment(produto, comPrazo);
+  assert.equal(abertaComPrazo.entradaData, '2026-11-10');
+  hoje = '2026-11-01T00:05:00';
+  const refeitaComPrazo = lobby.initPayment(produto, comPrazo, abertaComPrazo.vendaData);
+  assert.equal(refeitaComPrazo.entradaData, '2026-11-10');
+  assert.deepEqual(refeitaComPrazo.parcelas.map((p) => p.data), abertaComPrazo.parcelas.map((p) => p.data));
   // Venda nova (sem data anterior) começa no dia de hoje.
   assert.deepEqual(lobby.initPayment(produto, desligada).parcelas[0].data, '2026-12-01');
   // Ligado, a data da venda não entra: igual a antes, pela entrada de hoje.
-  const ligada = { cobranca: PADRAO };
+  const ligada = { cobranca: { ...PADRAO, entrada_prazo_dias: 10 } };
+  assert.equal(lobby.initPayment(produto, ligada, '2026-10-31').entradaData, '2026-11-11');
   assert.deepEqual(
     lobby.initPayment(produto, ligada, '2026-10-31').parcelas.map((p) => p.data),
     lobby.initPayment(produto, ligada).parcelas.map((p) => p.data),
   );
   assert.equal(lobby.initPayment(produto, ligada).parcelas[0].data, '2026-12-15');
+  assert.equal(lobby.initPayment(produto, { cobranca: PADRAO }, '2026-10-31').entradaData, '2026-11-01');
 });
 
 test('sem dia_fixo no JSON (backend de antes) ou com texto, fica ligado', () => {

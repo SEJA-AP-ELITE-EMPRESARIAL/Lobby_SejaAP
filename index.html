@@ -611,11 +611,13 @@ const diaDasParcelas = (cobranca, vendaISO) => {
   return cob.dia_fixo ? cob.dia_vencimento : ymd(vendaISO || todayISO())[2];
 };
 
-// Data em que a entrada é paga: o dia da venda, salvo prazo configurado.
-function dataDaEntrada(cobranca) {
+// Data em que a entrada é paga: o dia da venda, salvo prazo configurado. A venda
+// é hoje, salvo `vendaISO` (a da venda em curso, com o dia fixo desligado).
+function dataDaEntrada(cobranca, vendaISO) {
   const cob = cobranca || COBRANCA;
-  if (!cob.entrada_prazo_dias) return todayISO();
-  const [ano, mes, dia] = ymd(todayISO());
+  const venda = vendaISO || todayISO();
+  if (!cob.entrada_prazo_dias) return venda;
+  const [ano, mes, dia] = ymd(venda);
   const dt = new Date(ano, mes - 1, dia + cob.entrada_prazo_dias);
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
@@ -1124,8 +1126,10 @@ function initPayment(product, cat, vendaAtual) {
   const meses = mesesDeCobranca(product);
   const cob = cobrancaDoProduto(product, cat);
   const entrada = product.recurring ? product.monthly : round2(total / meses);
-  const entradaData = dataDaEntrada(cob);
   const vendaData = vendaAtual || todayISO();
+  // Com o dia fixo desligado a venda inteira parte da data dela, a entrada
+  // também; ligado, a entrada é a de hoje, como sempre foi.
+  const entradaData = dataDaEntrada(cob, cob.dia_fixo ? undefined : vendaData);
   const parcelas = buildSchedule(meses - 1, total, entrada, inicioDasParcelas(entradaData, cob, vendaData), cob);
   return { entradaForma: 'pix', entradaValor: entrada, entradaData, vendaData, parcelas, editMode: false };
 }
