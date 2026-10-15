@@ -516,6 +516,25 @@ class CacheVazioTest(BaseAssercao):
     def test_esvaziar_logo_depois_de_gravar_o_jti_nao_deixa_repetir(self):
         self.assertRecusa(self.repete_com_esvaziamento("depois"), 401, "JTI_REPETIDO")
 
+    def test_marco_usa_o_relogio_da_gravacao_e_nao_o_do_inicio(self):
+        """Worker que leu o relógio, ficou parado e só gravou o marco depois de
+        um esvaziamento não pode gravar um marco de antes dele."""
+        relogio = {"agora": float(int(time.time()))}
+        real = autenticacao_conecta._cache_do_jti()
+        proxy = mock.Mock(wraps=real)
+
+        def add(chave, *args, **kwargs):
+            if chave.startswith("assercao:jti:lobby:"):
+                relogio["agora"] += 20  # parado entre ler o relógio e gravar
+            return real.add(chave, *args, **kwargs)
+
+        proxy.add.side_effect = add
+        self.esvazia()
+        with mock.patch.object(autenticacao_conecta, "_cache_do_jti", return_value=proxy), \
+                mock.patch.object(autenticacao_conecta.time, "time", side_effect=lambda: relogio["agora"]):
+            self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        self.assertGreaterEqual(real.get(autenticacao_conecta.MARCO_DO_CACHE), int(relogio["agora"]))
+
     def test_a_janela_cobre_a_vida_maxima_com_a_tolerancia_do_teto(self):
         """Aceita até exp+tol, exp até 70 s depois do iat, iat até tol no futuro
         — com o teto da tolerância, seja ele qual for."""

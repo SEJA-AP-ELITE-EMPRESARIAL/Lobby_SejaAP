@@ -128,6 +128,12 @@ CACHE_LOCAL = "django.core.cache.backends.locmem.LocMemCache"
 # tolerância é a do teto (`CONECTA_ASSERCAO_TOLERANCIA_TETO`), não a
 # configurada, para não depender dela. Fecha enquanto `agora - marco <= janela`.
 MARCO_DO_CACHE = "assercao:jti:contando-desde"
+# O marco é gravado com o relógio lido NA HORA, mais esta folga: entre ler o
+# relógio e o Redis gravar cabem a conexão e a resposta (1 s cada, no settings)
+# e o arredondamento para inteiro. Marco adiantado só alonga a janela, e é o
+# lado seguro; atrasado, de um worker que leu o relógio antes do esvaziamento,
+# a encurtaria.
+FOLGA_DO_MARCO = 3
 
 
 def janela_depois_de_cache_vazio() -> int:
@@ -622,7 +628,7 @@ class AutenticacaoConecta(BaseAuthentication):
             # o marco junto, e o marco lido aqui é posterior a ele — cai na
             # janela. Lido antes, um FLUSHDB entre a leitura e a gravação
             # deixaria a repetição passar com o marco velho.
-            cache.add(MARCO_DO_CACHE, agora, timeout=None)
+            cache.add(MARCO_DO_CACHE, int(time.time()) + FOLGA_DO_MARCO, timeout=None)
             desde = cache.get(MARCO_DO_CACHE)
             na_janela = not isinstance(desde, int) or agora - desde <= janela
             if gravou and na_janela:
