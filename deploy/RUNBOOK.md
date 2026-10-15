@@ -314,6 +314,10 @@ Como ele está configurado, e por quê (os detalhes estão no `docker-compose.ym
 **`sudo docker compose config` imprime a senha.** Não cole a saída dele em
 chamado, PR nem chat.
 
+**Nunca rode a suíte (`manage.py test`) dentro de um container de produção.** Ela
+esvazia o Redis apontado em `LOBBY_REDIS_URL` (`cache.clear()` é FLUSHDB): os
+`jti` somem, o que abre uma janela de repetição de ~1 min, e os tetos zeram.
+
 #### Primeiro deploy com o Redis
 
 Uma vez só. Sem migration: é o roteiro [Front + backend](#front--backend), com a
@@ -348,8 +352,8 @@ sudo grep '^LOBBY_RATE_' /opt/conecta/env/lobby.env
 
 O alvo é **3× o que estiver lá hoje** (veja *Os tetos* abaixo). Se o `grep`
 mostrou os valores padrão do `.env.example` antigo (ou nenhum), este comando os
-grava; se algum estiver diferente do padrão antigo, ajuste aquele à mão para o
-triplo dele:
+grava. Se algum estiver diferente do padrão antigo, **não rode o bloco**: ele
+sobrescreve sem perguntar. Edite o arquivo à mão, com o triplo de cada valor.
 
 ```bash
 sudo sh -c '
@@ -387,7 +391,7 @@ sudo docker port lobby-redis                                 # vazio: nenhuma po
 sudo docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' lobby-redis
 #   lobby-sejaap_default        (só ela: nada de identidade-net)
 sudo docker compose exec redis redis-cli ping                # PONG (autentica pelo REDISCLI_AUTH)
-sudo docker compose exec redis sh -c 'REDISCLI_AUTH= redis-cli ping'   # NOAUTH: a senha vale
+sudo docker compose exec redis env -u REDISCLI_AUTH redis-cli ping     # NOAUTH: sem senha, não entra
 sudo docker compose exec backend python manage.py shell -c \
   "from django.core.cache import caches; c=caches['assercao']; c.set('tsk1068', 1, 10); print(type(c).__name__, c.get('tsk1068'))"
 #   RedisCache 1
@@ -439,13 +443,17 @@ novo não sobe nada.
 cd /opt/conecta/app/Lobby_SejaAP
 sudo cp -p /opt/conecta/env/lobby.env.antes-tsk1068 /opt/conecta/env/lobby.env
 git checkout --detach <o SHA do ANTES>
-sudo docker compose up -d --remove-orphans    # o compose velho não conhece o redis: ele sai
-sudo docker compose ps                         # sem lobby-redis
+# --build é obrigatório: sem ele o compose reaproveita o :latest, que é a imagem
+# NOVA do passo 4, e o código "voltado" seguiria no ar.
+sudo docker compose up -d --build --remove-orphans   # o compose velho não conhece o redis: ele sai
+sudo docker compose ps                                # sem lobby-redis
 ```
 
-As imagens tagueadas no passo 4 servem se o build do código velho falhar
-(`sudo docker tag lobby-sejaap-backend:<SHA> lobby-sejaap-backend:latest` e
-`up -d --no-build`). Depois, `git checkout main` antes do próximo `git pull`.
+Se o build do código velho falhar, use as imagens tagueadas no passo 4 em vez de
+construir: para cada serviço (`backend`, `frontend`, `departamentos`,
+`categorias`), `sudo docker tag lobby-sejaap-<serviço>:<SHA> lobby-sejaap-<serviço>:latest`,
+e então `sudo docker compose up -d --no-build --remove-orphans`. Depois,
+`git checkout main` antes do próximo `git pull`.
 
 ### Integração com o Conecta (TSK-1059): deploy, e só depois ligar
 
@@ -515,7 +523,7 @@ tolerância.
 ## Verificações
 
 ```bash
-sudo docker compose ps                                                           # backend, frontend, redis e db-tunnel healthy + departamentos e categorias running
+sudo docker compose ps                                                           # backend, frontend e redis healthy + db-tunnel, departamentos e categorias running
 sudo docker compose logs --tail 3 departamentos                                  # "Departamentos sincronizados: N ativos…"
 curl -s https://lobby.sejaap.com.br/api/departamentos | head -c 200              # JSON público, só os ativos
 sudo docker compose logs --tail 3 categorias                                     # "Categorias financeiras sincronizadas: N ativas…"

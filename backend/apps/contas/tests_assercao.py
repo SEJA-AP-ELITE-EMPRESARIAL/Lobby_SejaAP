@@ -594,7 +594,9 @@ class JtiEntreProcessosTest(BaseAssercao):
             cwd=settings.BASE_DIR, env=ambiente, capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(feito.returncode, 0, feito.stderr)
-        return feito.stdout.strip().splitlines()[-1]
+        linhas = feito.stdout.strip().splitlines()
+        self.assertTrue(linhas, f"o outro processo não respondeu nada: {feito.stderr}")
+        return linhas[-1]
 
     def test_o_settings_usa_o_redis(self):
         """Sem isto, os dois abaixo poderiam passar por outro motivo."""
