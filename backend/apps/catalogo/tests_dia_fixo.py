@@ -12,7 +12,8 @@ O que estes testes guardam, em ordem de dano:
    "ligado → desligado"; a semente da migration não aparece como evento.
 
 As datas que o desligado produz são do `index.html` (o backend confere só os
-valores da venda) — conferidas no QA de tela da TSK.
+valores da venda) — conferidas em `tests/front/cronograma.test.mjs`, no CI, e no
+QA de tela da TSK.
 """
 from datetime import timedelta
 
@@ -290,7 +291,11 @@ class HistoricoUnificadoTest(Base):
         pedido = RequestFactory().post("/")
         pedido.user = self.diretoria
         formulario = type("Form", (), {"changed_data": ["dia_fixo"]})()
-        django_admin.site._registry[PoliticaCobranca].save_model(pedido, politica, formulario, True)
+        modelo_admin = django_admin.site._registry[PoliticaCobranca]
+        modelo_admin.save_model(pedido, politica, formulario, True)
+        # O alvo não se troca depois de criada a regra.
+        self.assertEqual(modelo_admin.get_readonly_fields(pedido, politica), ("geral", "produto", "categoria"))
+        self.assertEqual(modelo_admin.get_readonly_fields(pedido, None), ())
 
         aberta = Vigencia.objects.get(chave="categoria:elite", campo="dia_fixo", vigente_ate__isnull=True)
         self.assertEqual((aberta.valor, aberta.autor), ("não", self.diretoria))
@@ -300,6 +305,19 @@ class HistoricoUnificadoTest(Base):
         self.assertEqual(
             evento["alteracoes"], ["dia do vencimento fixo: desligado (parcelas no dia da venda) → ligado"]
         )
+
+    def test_pagina_do_django_admin_abre_com_o_alvo_so_leitura(self):
+        from django.contrib.auth.models import User
+
+        admin_local = User.objects.create_superuser("conserto", "conserto@sejaap.com.br", "x")
+        cliente = APIClient()
+        cliente.force_login(admin_local)
+        politica = PoliticaCobranca.objects.get(categoria__slug="elite")
+        resposta = cliente.get(f"/django-admin/catalogo/politicacobranca/{politica.pk}/change/")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertContains(resposta, 'name="dia_fixo"')
+        self.assertNotContains(resposta, 'name="categoria"')
+        self.assertEqual(cliente.get("/django-admin/catalogo/politicacobranca/add/").status_code, 200)
 
     def test_historico_antigo_mostra_o_campo_com_rotulo(self):
         """O `/api/historico` do /admin antigo: o registro novo sai com rótulo, sem quebrar."""

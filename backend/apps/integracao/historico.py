@@ -188,7 +188,12 @@ def _semente_do_dia_fixo(v, anterior) -> bool:
     ela poria uma linha nova em eventos antigos (ou um evento sem autor no dia
     do deploy) sem nada ter mudado.
     """
-    return v.campo == Vigencia.Campo.DIA_FIXO and anterior is None and not v.autor_email
+    return (
+        v.campo == Vigencia.Campo.DIA_FIXO
+        and anterior is None
+        and v.autor_id is None
+        and not v.autor_email
+    )
 
 
 def _vigencias(campos, area, titulo_de, categoria_de, *, cobertas=None):

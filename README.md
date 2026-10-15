@@ -377,7 +377,7 @@ sete abas — e tudo o que se faz por lá fica registrado com autor e período:
 | **Departamentos** | Se o consultor escolhe o departamento da venda (Elite e APN) na lista do Omie ou se toda venda sai com um departamento fixo. |
 | **Categorias** | A mesma escolha para a categoria financeira da venda da APN: lista completa ou categoria fixa. |
 | **DH - Avaliação** | O valor com que Relatório e Devolutiva abrem na venda do DH - Avaliação, e se cada um fica livre ou fixo (travado no lobby e recusado pelo comprovante se vier diferente). |
-| **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — por categoria (desde a TSK-1059) e por produto. A exceção do produto vence a da categoria; categoria nova começa pela regra geral. Pelo `/admin` de hoje, a regra salva vale para todas as categorias. O dia fixo (`dia_fixo`, TSK-1077) se desliga só pelo Admin Lobby do Conecta: desligado, as parcelas vencem no dia do mês da venda (no último dia, em mês que não o tem); salvar aqui não o muda. |
+| **Cobrança** | Dia do vencimento, mês da 1ª parcela, prazo da entrada — por categoria (desde a TSK-1059) e por produto. A exceção do produto vence a da categoria; categoria nova começa pela regra geral. Pelo `/admin` de hoje, a regra salva vale para todas as categorias. O dia fixo (`dia_fixo`, TSK-1077) se desliga pelo Admin Lobby do Conecta (ou, para conserto, pelo `/django-admin/`, que também registra quem mudou): desligado, as parcelas vencem no dia do mês da venda (no último dia, em mês que não o tem); salvar aqui não o muda. |
 | **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
 | **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |
 

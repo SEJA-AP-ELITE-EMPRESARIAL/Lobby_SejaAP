@@ -1,6 +1,6 @@
 // As datas do cronograma do `index.html` (TSK-1077), sem navegador.
 //
-//     node --test tests/front/
+//     node --test tests/front/cronograma.test.mjs
 //
 // As datas vão com a venda para o n8n e o Omie, e o servidor do Lobby confere
 // só os valores — um erro aqui não para em lugar nenhum antes de virar cobrança.

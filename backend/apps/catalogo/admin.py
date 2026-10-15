@@ -147,6 +147,15 @@ class PoliticaCobrancaAdmin(admin.ModelAdmin):
         if form.changed_data:
             registrar_politica(obj, autor=request.user)
 
+    def get_readonly_fields(self, request, obj=None):
+        # De quem a regra é não muda depois de criada: trocar o produto (ou a
+        # categoria) abriria a linha do tempo no alvo novo e deixaria a do antigo
+        # aberta, dizendo que ele ainda tem a regra. Para mudar de alvo, remove-se
+        # a exceção pelo /admin (que fecha a linha do tempo) e cria-se outra.
+        if obj is not None:
+            return ("geral", "produto", "categoria")
+        return ()
+
     def has_delete_permission(self, request, obj=None):
         # A política geral não pode sumir: sem ela o front não monta cronograma.
         # Exceção de produto se remove no /admin, que fecha a vigência junto. A

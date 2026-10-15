@@ -127,10 +127,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-node@v4
+        with:
+          # O do PC e o da VPS de desenvolvimento.
+          node-version: "24"
+
       - name: Datas do cronograma (index.html)
         # As datas vão com a venda para o n8n e o Omie, e o servidor confere só
         # os valores (TSK-1077). O teste roda as funções do próprio index.html,
-        # sem navegador e sem dependência: o Node que já vem no runner basta.
+        # sem navegador e sem dependência.
         # Dois fusos, porque é no Date local que a conta é feita.
         run: |
           node --version
