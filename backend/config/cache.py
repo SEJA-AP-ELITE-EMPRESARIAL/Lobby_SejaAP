@@ -28,12 +28,17 @@ logger = logging.getLogger("lobby.cache")
 # Um aviso por minuto por processo: com o Redis fora, toda requisição passaria
 # por aqui, e o log viraria só isto.
 _INTERVALO_DO_AVISO = 60
-_ultimo_aviso = {"quando": 0.0}
+# `None` = ainda não avisou neste processo. NÃO é `0.0`: o `time.monotonic()`
+# conta desde o boot da máquina, e com `0.0` o primeiro aviso de uma máquina
+# ligada há menos de um minuto era engolido — foi assim que o teste passou na
+# VPS (ligada há meses) e falhou no runner do GitHub, recém-ligado.
+_ultimo_aviso = {"quando": None}
 
 
 def _avisa(operacao, erro):
     agora = time.monotonic()
-    if agora - _ultimo_aviso["quando"] >= _INTERVALO_DO_AVISO:
+    ultimo = _ultimo_aviso["quando"]
+    if ultimo is None or agora - ultimo >= _INTERVALO_DO_AVISO:
         _ultimo_aviso["quando"] = agora
         logger.warning(
             "Redis indisponível no cache default (%s: %s); os tetos de chamada "

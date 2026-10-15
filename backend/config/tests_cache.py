@@ -6,6 +6,7 @@ contar no Redis. Se ele cair, o contador falha aberto e a rota responde; o `jti`
 da asserção, no outro alias, continua falhando fechado.
 """
 import time
+from unittest import mock
 
 from django.core.cache import caches
 from django.test import TestCase, override_settings
@@ -24,10 +25,14 @@ OPCOES = {"socket_connect_timeout": 1, "socket_timeout": 1}
 )
 class RedisForaTest(TestCase):
     def setUp(self):
-        # O aviso sai uma vez por minuto por processo; cada teste começa do zero.
+        # O aviso sai uma vez por minuto por processo; cada teste começa como um
+        # processo que ainda não avisou — e volta ao que estava no fim, para não
+        # vazar para o teste seguinte.
         from config import cache
 
-        cache._ultimo_aviso["quando"] = 0.0
+        antes = cache._ultimo_aviso["quando"]
+        cache._ultimo_aviso["quando"] = None
+        self.addCleanup(cache._ultimo_aviso.__setitem__, "quando", antes)
 
     def test_get_e_set_falham_aberto(self):
         cache = caches["default"]
@@ -40,6 +45,26 @@ class RedisForaTest(TestCase):
         with self.assertLogs("lobby.cache", level="WARNING"):
             resposta = APIClient().get("/api/catalogo")
         self.assertEqual(resposta.status_code, 200)
+
+    def test_o_aviso_sai_mesmo_com_a_maquina_ligada_ha_segundos(self):
+        """O relógio do aviso é o `monotonic`, que conta desde o boot. Num runner
+        de CI recém-ligado ele vale poucos segundos, e o primeiro aviso não pode
+        depender disso."""
+        with mock.patch("config.cache.time.monotonic", return_value=5.0):
+            with self.assertLogs("lobby.cache", level="WARNING"):
+                resposta = APIClient().get("/api/catalogo")
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_um_aviso_por_minuto_e_nao_um_por_requisicao(self):
+        with mock.patch("config.cache.time.monotonic", return_value=1000.0):
+            with self.assertLogs("lobby.cache", level="WARNING") as logs:
+                caches["default"].get("x")
+                caches["default"].get("y")
+                caches["default"].set("z", 1, 10)
+        self.assertEqual(len(logs.output), 1)
+        with mock.patch("config.cache.time.monotonic", return_value=1061.0):
+            with self.assertLogs("lobby.cache", level="WARNING"):
+                caches["default"].get("x")
 
     def test_alias_do_jti_continua_falhando_fechado(self):
         with self.assertRaises(Exception):
