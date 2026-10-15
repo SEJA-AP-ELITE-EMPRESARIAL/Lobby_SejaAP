@@ -126,6 +126,11 @@ const { useState, useEffect, useMemo, useCallback } = React;
  * Em 01/10/2026 (TSK-877) entrou a sexta, logo depois de Departamentos:
  *
  *   Categorias — a mesma escolha para a categoria financeira da venda da APN.
+ *
+ * Em 14/10/2026 (TSK-1056) entrou a sétima, logo depois de Categorias:
+ *
+ *   DH - Avaliação — o valor com que Relatório e Devolutiva abrem no lobby, e se
+ *               cada um fica fixo (travado) ou livre.
  * ========================================================================== */
 const CHAVE_TOKEN = 'lobby_sessao_diretoria';
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -483,7 +488,9 @@ function AbaValores({ api, catalogo, atualizadoEm, ultimaPublicacao, aoPublicar 
                     </div>
                   </div>
                   <div style={{ gridColumn: 'span 2', font: '400 13px var(--font-secondary)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
-                    Sem valor de tabela — o consultor preenche o formulário do produto, venda a venda.
+                    {p.flow === 'dh_avaliacao'
+                      ? 'Sem valor de tabela — o valor de Relatório e Devolutiva fica na aba DH - Avaliação.'
+                      : 'Sem valor de tabela — o consultor preenche o formulário do produto, venda a venda.'}
                   </div>
                 </div>
               );
@@ -868,6 +875,151 @@ function AbaCategorias({ api }) {
         <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
           <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
             {podeSalvar ? 'Categoria da venda alterada, ainda não salva.' : 'Escolha qual categoria fica fixa.'}
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button className="btn-ghost" onClick={descartar} disabled={estado === 'salvando'}>Descartar</button>
+            <button className="btn-prim" onClick={salvar} disabled={estado === 'salvando' || !podeSalvar}>
+              {estado === 'salvando'
+                ? <><span className="ms-icon rot" style={{ fontSize: 19 }}>progress_activity</span>Salvando…</>
+                : <><span className="ms-icon" style={{ fontSize: 19 }}>check</span>Salvar</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===== Aba 2c: valores do DH - Avaliação ================================= */
+
+/* Valor de Relatório e de Devolutiva, livre ou fixo (TSK-1056).
+ *
+ * O consultor digita o valor unitário de cada modalidade na venda; daqui sai o
+ * valor com que o campo ABRE e, se a diretoria quiser, a TRAVA. É o desenho da
+ * aba Departamentos: quem aplica é o backend (`/api/dh-avaliacao/valores`, que o
+ * lobby lê, e o comprovante, que recusa outro valor na modalidade fixa), cada
+ * gravação é uma linha nova com autor, e os lobbies abertos pegam a mudança na
+ * reconsulta seguinte, sem perder a venda em andamento. */
+const MODALIDADES_AVALIACAO = [
+  { id: 'relatorio', nome: 'Relatório', da: 'do Relatório', icone: 'description' },
+  { id: 'devolutiva', nome: 'Devolutiva', da: 'da Devolutiva', icone: 'record_voice_over' },
+];
+
+function AbaDhAvaliacao({ api }) {
+  const [dados, setDados] = useState(null);
+  const [escolha, setEscolha] = useState({});
+  const [estado, setEstado] = useState('carregando');
+  const [msg, setMsg] = useState('');
+
+  const aplica = (d) => {
+    setDados(d);
+    setEscolha(Object.fromEntries(d.modalidades.map((m) => [m.id, { valor: m.valor, fixo: m.fixo }])));
+  };
+
+  const carregar = useCallback(async () => {
+    setEstado('carregando'); setMsg('');
+    try {
+      aplica(await api('/api/dh-avaliacao/valores/configuracao'));
+      setEstado('pronto');
+    } catch (err) { setMsg(err.message); setEstado('erro'); }
+  }, [api]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  if (estado === 'carregando') return <Carregando />;
+  if (estado === 'erro') return <Falhou msg={msg} aoTentar={carregar} />;
+
+  const salvoDe = (id) => dados.modalidades.find((m) => m.id === id) || {};
+  const mudouValor = (id) => escolha[id]?.valor !== salvoDe(id).valor;
+  const mudouTrava = (id) => escolha[id]?.fixo !== salvoDe(id).fixo;
+  const sujo = MODALIDADES_AVALIACAO.some((m) => mudouValor(m.id) || mudouTrava(m.id));
+  const semValor = MODALIDADES_AVALIACAO.filter((m) => !(Number(escolha[m.id]?.valor) > 0));
+  const podeSalvar = semValor.length === 0;
+
+  const muda = (id, parcial) => { setEscolha((e) => ({ ...e, [id]: { ...e[id], ...parcial } })); setMsg(''); };
+  const descartar = () => { aplica(dados); setMsg(''); };
+
+  const salvar = async () => {
+    if (!sujo || !podeSalvar) return;
+    // Só a trava pede confirmação: um valor fixo errado sai em TODA venda
+    // seguinte, e o consultor não consegue corrigir na hora.
+    const fixando = MODALIDADES_AVALIACAO.filter((m) => escolha[m.id].fixo && (mudouTrava(m.id) || mudouValor(m.id)));
+    if (fixando.length && !confirm(
+      `Fixar ${fixando.map((m) => `o valor ${m.da} em ${fmt(escolha[m.id].valor)}`).join(' e ')}?\n\n` +
+      'Toda venda do DH - Avaliação passa a sair com esse valor, e o consultor não consegue trocar.'
+    )) return;
+    setEstado('salvando'); setMsg('');
+    try {
+      const corpo = { modalidades: Object.fromEntries(MODALIDADES_AVALIACAO.map((m) => [m.id, { valor: Number(escolha[m.id].valor), fixo: !!escolha[m.id].fixo }])) };
+      aplica(await api('/api/dh-avaliacao/valores/configuracao', { method: 'PUT', body: JSON.stringify(corpo) }));
+      setMsg('ok');
+    } catch (err) { setMsg(err.message); }
+    finally { setEstado('pronto'); }
+  };
+
+  const iniciais = dados.valores_iniciais || {};
+  return (
+    <div style={{ paddingBottom: sujo ? 90 : 0 }}>
+      <Aviso tipo="info">
+        No <strong>DH - Avaliação</strong> o consultor informa quantos relatórios e quantas devolutivas
+        vende, e o valor unitário de cada um. Aqui você decide com que valor cada campo abre e se ele
+        fica <strong>fixo</strong> — travado no lobby e recusado pelo servidor se vier diferente.
+        <br /><span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>
+          {dados.alterado_em
+            ? (dados.alterado_por
+              ? <>Última alteração por <strong style={{ color: 'var(--text-secondary)' }}>{dados.alterado_por}</strong> em {dataHora(dados.alterado_em)}</>
+              : <>Última alteração: {dataHora(dados.alterado_em)}</>)
+            : `Nunca alterado: valem os valores iniciais (Relatório ${fmt(iniciais.relatorio)} e Devolutiva ${fmt(iniciais.devolutiva)}), livres.`}
+        </span>
+      </Aviso>
+
+      {msg === 'ok' && <Aviso tipo="ok">Salvo. As próximas vendas já saem assim, e os lobbies que estão abertos se atualizam em até 5 minutos, sem perder a venda em andamento.</Aviso>}
+      {msg && msg !== 'ok' && <Aviso tipo="erro">{msg}</Aviso>}
+
+      {MODALIDADES_AVALIACAO.map((m) => {
+        const e = escolha[m.id] || {};
+        return (
+          <div className="card" key={m.id} style={{ marginBottom: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <span className="ms-icon" style={{ color: 'var(--primary)', fontSize: 21 }}>{m.icone}</span>
+              <h2 style={{ font: '700 16px var(--font-primary)', margin: 0 }}>{m.nome}</h2>
+              <span className="chip neutro">{salvoDe(m.id).fixo ? 'Fixo' : 'Livre'}</span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 18, alignItems: 'start' }}>
+              <div>
+                <label className="lbl">Valor unitário</label>
+                <MoneyInput value={e.valor || 0} mudou={mudouValor(m.id)} onChange={(v) => muda(m.id, { valor: v })} />
+                {!(Number(e.valor) > 0) && (
+                  <div style={{ font: '400 12px var(--font-secondary)', color: '#F1969E', marginTop: 6 }}>Informe um valor maior que zero.</div>
+                )}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+                <OpcaoDeModo ativo={!e.fixo} icone="edit" titulo="Valor sugerido" onClick={() => muda(m.id, { fixo: false })}>
+                  O campo abre com este valor, e o consultor pode alterá-lo venda a venda.
+                </OpcaoDeModo>
+                <OpcaoDeModo ativo={!!e.fixo} icone="push_pin" titulo="Valor fixo" onClick={() => muda(m.id, { fixo: true })}>
+                  Toda venda sai com este valor. O consultor vê o campo preenchido e não consegue trocar.
+                </OpcaoDeModo>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 18, padding: '14px 16px', borderRadius: 10, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)' }}>
+              <div className="sec-title" style={{ marginBottom: 10 }}>Como o consultor vê</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <span className="ms-icon" style={{ fontSize: 18, color: e.fixo ? 'var(--primary)' : 'var(--text-muted)' }}>{e.fixo ? 'lock' : 'edit'}</span>
+                Valor unitário {m.da}: <strong style={{ color: 'var(--text)' }}>{Number(e.valor) > 0 ? fmt(e.valor) : '—'}</strong>
+                <span style={{ color: 'var(--text-muted)' }}>· {e.fixo ? 'definido pela diretoria' : 'editável'}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {sujo && (
+        <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '16px 28px', background: 'rgba(30,30,28,.97)', backdropFilter: 'blur(10px)', borderTop: '1px solid rgba(199,164,68,.35)' }}>
+          <div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            {podeSalvar ? 'Valores do DH - Avaliação alterados, ainda não salvos.' : 'Informe o valor de cada modalidade.'}
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <button className="btn-ghost" onClick={descartar} disabled={estado === 'salvando'}>Descartar</button>
@@ -1531,6 +1683,7 @@ const ABAS = [
   { id: 'valores', rotulo: 'Valores', icone: 'sell' },
   { id: 'departamentos', rotulo: 'Departamentos', icone: 'apartment' },
   { id: 'categorias', rotulo: 'Categorias', icone: 'category' },
+  { id: 'dh-avaliacao', rotulo: 'DH - Avaliação', icone: 'psychology' },
   { id: 'cobranca', rotulo: 'Cobrança', icone: 'event_repeat' },
   { id: 'produtos', rotulo: 'Produtos', icone: 'inventory_2' },
   { id: 'historico', rotulo: 'Histórico', icone: 'history' },
@@ -1624,6 +1777,7 @@ function Editor({ sessao: sess, aoSair }) {
             {aba === 'valores' && <AbaValores api={api} catalogo={catalogo} atualizadoEm={atualizadoEm} ultimaPublicacao={ultimaPublicacao} aoPublicar={aoPublicar} />}
             {aba === 'departamentos' && <AbaDepartamentos api={api} />}
             {aba === 'categorias' && <AbaCategorias api={api} />}
+            {aba === 'dh-avaliacao' && <AbaDhAvaliacao api={api} />}
             {aba === 'cobranca' && <AbaCobranca api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'produtos' && <AbaProdutos api={api} catalogo={catalogo} aoPublicar={aoPublicar} />}
             {aba === 'historico' && <AbaHistorico api={api} catalogo={catalogo} />}

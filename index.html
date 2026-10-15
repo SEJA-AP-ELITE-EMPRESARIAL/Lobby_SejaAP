@@ -193,6 +193,19 @@ const APN_MAX_PARCELAS_CREDITO = 12;
 // consultor para cá é o `flow: 'dh'` do Recrutamento e Seleção, dentro da
 // categoria Produtos — que continua livre para receber produtos de tabela.
 const DH_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/lobby-dh';
+// Venda DH - Avaliação (TSK-1056) — o PROFILER vendido em itens (Relatório e
+// Devolutiva), com contratante PJ ou PF. Webhook próprio, pelo motivo da APN e
+// do DH: o payload é outro, e segue o JSON combinado com o n8n (ver
+// `buildDhAvaliacaoPayload`). Mesma exigência de CORS dos demais.
+//
+// VAZIA DE PROPÓSITO (14/10/2026): o endereço do fluxo no n8n ainda não foi
+// definido. Sem ele, o DH - Avaliação abre e preenche, mas "Finalizar" trava no
+// resumo com aviso — a mesma regra da APN e do DH. Antes desta tarefa o
+// Avaliações vendia pelo webhook do Elite; publicar o front sem esta URL para
+// as vendas dele.
+const DH_AVALIACAO_SEND_WEBHOOK_URL = '';
+// Parcelamento do DH - Avaliação: só no cartão, até 12×. Pix e boleto à vista.
+const DH_AVALIACAO_MAX_PARCELAS_CARTAO = 12;
 // Cobrança Pix da entrada (EasyFlow), em 2 endpoints:
 //  - CRIAR  : POST PIX_CREATE_URL  -> { orderId, ... }
 //  - STATUS : GET  PIX_STATUS_URL + orderId  -> { status: pending|qr_ready|paid, qrCodeBase64, copyAndPasteCode, expireAt }
@@ -727,6 +740,7 @@ async function postCadastro(url, payload) {
 const sendPreContrato = (payload) => postCadastro(SEND_WEBHOOK_URL, payload);
 const sendVendaApn = (payload) => postCadastro(APN_SEND_WEBHOOK_URL, payload);
 const sendVendaDh = (payload) => postCadastro(DH_SEND_WEBHOOK_URL, payload);
+const sendVendaDhAvaliacao = (payload) => postCadastro(DH_AVALIACAO_SEND_WEBHOOK_URL, payload);
 
 // ===== Cobrança Pix da entrada =====
 // Gera a imagem do QR a partir do código copia-e-cola (EMV) com qrcode-generator.
@@ -810,16 +824,17 @@ function normalizePixResponse(raw) {
  *  de produtos, e só depois pede os dados de quem contrata (ver
  *  `stepsDoFluxo`).
  *
- *  `flow` num PRODUTO (hoje só 'dh') quer dizer que ele não tem preço: o
- *  consultor cai num formulário próprio e os valores saem de lá. É por isso que
- *  o Recrutamento e Seleção aparece aqui sem `price` — a ausência é o contrato,
- *  não esquecimento.
+ *  `flow` num PRODUTO ('dh' e 'dh_avaliacao') quer dizer que ele não tem preço:
+ *  o consultor cai num formulário próprio e os valores saem de lá. É por isso
+ *  que o Recrutamento e Seleção e o DH - Avaliação aparecem aqui sem `price` — a
+ *  ausência é o contrato, não esquecimento.
  * ========================================================================== */
 let CATS = [
   // Gerado por `manage.py exportar_cats_do_front`. Ativas: Elite (planos de
   // tabela), APN (fluxo próprio de categoria) e Produtos (com o Recrutamento e
-  // Seleção, de fluxo próprio de produto, e começando pela escolha do produto).
-  // Treinamentos fica "Em implementação" (locked) e sem produtos.
+  // Seleção e o DH - Avaliação, os dois de fluxo próprio de produto, e
+  // começando pela escolha do produto). Treinamentos fica "Em implementação"
+  // (locked) e sem produtos.
   { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
     desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
     products: [
@@ -840,6 +855,7 @@ let CATS = [
     desc: 'Produtos e serviços avulsos — cada um com o seu formulário de contratação.',
     products: [
       { id: 'recrutamento-selecao', name: 'Recrutamento e Seleção', sigla: 'RES', desc: 'Processo seletivo conduzido pela Seja AP, vaga a vaga', duration: 'por vaga', flow: 'dh', icon: 'person_search' },
+      { id: 'avaliacoes', name: 'DH - Avaliação', sigla: 'LBA', desc: 'Avaliação comportamental PROFILER — relatório e devolutiva', duration: 'por avaliação', flow: 'dh_avaliacao', icon: 'psychology' },
     ] },
 ];
 const COLORS = {
@@ -862,11 +878,17 @@ const STEPS_APN = ['Cliente', 'Pagamento', 'Resumo'];
 // escolha do consultor que decide para onde ele vai. Depois vêm os dados da
 // contratante e o quadro de vagas — que faz o papel do cronograma de parcelas.
 const STEPS_DH = ['Produto', 'Contratante', 'Quadro comercial', 'Resumo'];
+// O DH - Avaliação (TSK-1056) também é fluxo do PRODUTO, e começa por ele pelo
+// mesmo motivo. O contratante pode ser PJ ou PF; os Itens (quantidade e valor
+// de Relatório e Devolutiva) fazem o papel do quadro de vagas, e o Pagamento é
+// uma forma só para a venda inteira.
+const STEPS_DH_AVALIACAO = ['Produto', 'Contratante', 'Itens', 'Pagamento', 'Resumo'];
 
 /* O fluxo de uma venda vem de dois lugares, nesta ordem:
  *
  *   1. a CATEGORIA (`cat.flow`), como na APN: nem chega a haver produto;
- *   2. o PRODUTO escolhido (`product.flow`), como no Recrutamento e Seleção.
+ *   2. o PRODUTO escolhido (`product.flow`), como no Recrutamento e Seleção
+ *      (`dh`) e no DH - Avaliação (`dh_avaliacao`).
  *
  * Enquanto nada foi escolhido, vale o fluxo dos produtos da categoria QUANDO
  * TODOS concordam — é o que mantém o stepper honesto na primeira tela de uma
@@ -888,11 +910,12 @@ const comecaPeloProduto = (c) => !!(c && c.produtoPrimeiro);
 const stepsDoFluxo = (fluxo, c) => (
   fluxo === 'apn' ? STEPS_APN
     : fluxo === 'dh' ? STEPS_DH
-      : comecaPeloProduto(c) ? STEPS_PRODUTO_PRIMEIRO : STEPS
+      : fluxo === 'dh_avaliacao' ? STEPS_DH_AVALIACAO
+        : comecaPeloProduto(c) ? STEPS_PRODUTO_PRIMEIRO : STEPS
 );
 // Em que etapa fica a lista de produtos, no fluxo de cada um. É por ela que
 // `onProduct` reposiciona quando a escolha do produto muda o próprio fluxo.
-const etapaDoProduto = (fluxo, c) => (fluxo === 'dh' || comecaPeloProduto(c) ? 0 : 1);
+const etapaDoProduto = (fluxo, c) => (fluxo === 'dh' || fluxo === 'dh_avaliacao' || comecaPeloProduto(c) ? 0 : 1);
 // E a da empresa, no fluxo padrão: a outra das duas primeiras.
 const etapaDaEmpresa = (c) => (comecaPeloProduto(c) ? 1 : 0);
 
@@ -923,6 +946,102 @@ const adiantamentoDaRemuneracao = (salario) => {
 const vagasSemAdiantamentoNegociado = (vagas) => (vagas || []).map(
   (v) => (v.adiantamentoManual ? { ...v, adiantamento: NaN, adiantamentoManual: false } : v)
 );
+
+/* ============================================================================
+ * DH - AVALIAÇÃO (TSK-1056, 14/10/2026) — o PROFILER vendido em itens.
+ *
+ * Duas modalidades, Relatório e Devolutiva, cada uma com quantidade e valor
+ * unitário. O valor é DIGITADO pelo consultor; o que a diretoria decide, na aba
+ * DH - Avaliação do /admin, é com que valor cada uma abre e se ele é FIXO.
+ *
+ * Quem aplica a trava é o backend (`GET /api/dh-avaliacao/valores`, e o
+ * comprovante, que recusa outro valor na modalidade fixa); aqui só se lê. É o
+ * desenho do departamento fixo, inclusive na reconsulta: a tela pega a trava sem
+ * recarregar (a cada DEPARTAMENTOS_RECONSULTA_MS, ao voltar para a aba e antes
+ * de enviar), porque recarregar apagaria a venda em andamento.
+ *
+ * Sem resposta do backend, valem os valores iniciais do pedido, LIVRES — pelo
+ * motivo do CATS embutido: consultor em campo não perde venda por infra.
+ * ========================================================================== */
+const VALORES_AVALIACAO_URL = '/api/dh-avaliacao/valores';
+// Na ordem do formulário. `id` é a chave `modalidade` do payload do n8n.
+const MODALIDADES_AVALIACAO = [
+  { id: 'relatorio', nome: 'Relatório', plural: 'Relatórios', icone: 'description' },
+  { id: 'devolutiva', nome: 'Devolutiva', plural: 'Devolutivas', icone: 'record_voice_over' },
+];
+const VALORES_AVALIACAO_PADRAO = {
+  relatorio: { valor: 150, fixo: false },
+  devolutiva: { valor: 450, fixo: false },
+};
+// Tetos contra dedo escorregando — os mesmos que o comprovante confere.
+const AVALIACAO_QUANTIDADE_MAX = 10000;
+const AVALIACAO_VALOR_MAX = 1000000;
+// "do Relatório", "da Devolutiva": os avisos falam das duas.
+const DA_MODALIDADE = { relatorio: 'do Relatório', devolutiva: 'da Devolutiva' };
+// As formas de pagamento. `id` é o que vai em `pagamento.forma`; `protocolo` é a
+// forma do PAYMENT_METHODS cujo dígito entra no protocolo da venda (o cartão
+// daqui é o de crédito: é o que parcela).
+const FORMAS_AVALIACAO = [
+  { id: 'pix', label: 'Pix', icone: 'pix', protocolo: 'pix' },
+  { id: 'cartao', label: 'Cartão de crédito', icone: 'credit_card', protocolo: 'cartao_credito' },
+  { id: 'boleto', label: 'Boleto', icone: 'receipt_long', protocolo: 'boleto' },
+];
+const formaAvaliacao = (id) => FORMAS_AVALIACAO.find((f) => f.id === id) || null;
+
+// Devolve { versao, valores } ou lança. Modalidade ausente ou sem número cai no
+// padrão LIVRE: nunca se trava um campo num valor que não veio.
+async function buscaValoresAvaliacao() {
+  const r = await fetch(VALORES_AVALIACAO_URL, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  if (!d || !Array.isArray(d.modalidades)) throw new Error('resposta sem modalidades');
+  const valores = {};
+  for (const m of MODALIDADES_AVALIACAO) {
+    const x = d.modalidades.find((y) => y && y.id === m.id);
+    const valor = x ? Number(x.valor) : NaN;
+    valores[m.id] = Number.isFinite(valor) && valor > 0
+      ? { valor: round2(valor), fixo: !!x.fixo }
+      : { ...VALORES_AVALIACAO_PADRAO[m.id] };
+  }
+  return { versao: String(d.versao || ''), valores };
+}
+
+// Um item do formulário. `valor` nasce NaN (campo em branco) e `editado` diz se
+// o consultor já digitou nele: o que ele digitou não muda sozinho quando a
+// diretoria troca o valor sugerido.
+const novoItemAvaliacao = () => ({ quantidade: 0, valor: NaN, editado: false, observacoes: '' });
+const novosItensAvaliacao = () => Object.fromEntries(MODALIDADES_AVALIACAO.map((m) => [m.id, novoItemAvaliacao()]));
+const qtdItemAvaliacao = (item) => Math.max(0, Math.round(Number(item && item.quantidade) || 0));
+
+// Leva os valores da diretoria aos itens: o fixo sempre (é o que vale), o livre
+// só onde o consultor ainda não digitou.
+function aplicaValoresAvaliacao(itens, valores) {
+  const out = {};
+  for (const m of MODALIDADES_AVALIACAO) {
+    const item = (itens && itens[m.id]) || novoItemAvaliacao();
+    const cfg = valores[m.id] || VALORES_AVALIACAO_PADRAO[m.id];
+    if (cfg.fixo) out[m.id] = { ...item, valor: cfg.valor, editado: false };
+    else if (!item.editado) out[m.id] = { ...item, valor: cfg.valor };
+    else out[m.id] = item;
+  }
+  return out;
+}
+
+// As modalidades VENDIDAS cujo valor na tela muda com os valores novos da
+// diretoria: a que ficou fixa (ou mudou de fixo), e a livre em que o consultor
+// não digitou e cujo valor sugerido mudou. Vazio = o total que ele viu continua
+// valendo.
+const valoresQueMudaram = (itens, valores) => MODALIDADES_AVALIACAO.filter((m) => {
+  const cfg = valores[m.id];
+  const item = itens && itens[m.id];
+  if (!cfg || qtdItemAvaliacao(item) === 0 || (!cfg.fixo && item.editado)) return false;
+  return round2(Number(item.valor)) !== round2(cfg.valor);
+});
+const avisoDosValores = (mudaram, valores) => mudaram
+  .map((m) => (valores[m.id].fixo
+    ? `A diretoria fixou o valor ${DA_MODALIDADE[m.id]} em ${fmtBRL(valores[m.id].valor)}.`
+    : `A diretoria mudou o valor sugerido ${DA_MODALIDADE[m.id]} para ${fmtBRL(valores[m.id].valor)}.`))
+  .join(' ') + ' Confira o total antes de seguir.';
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
@@ -1223,6 +1342,18 @@ function App() {
     // `dhAdiantamentoEdit` é o irmão do `priceEdit` do Elite: o adiantamento
     // nasce calculado e travado, e só destrava com autorização.
     dhVagas: [novaVagaDh()], dhAdiantamentoEdit: false,
+    // ----- Fluxo DH - Avaliação (produto de fluxo próprio, TSK-1056) -----
+    // Na PJ, CNPJ, razão social, endereço e representante reaproveitam os campos
+    // do Elite e do DH, pelo mesmo motivo de lá. O que é só daqui: o tipo de
+    // pessoa, o nome e o CPF da PF, o e-mail do CONTRATANTE (na PJ ele é outro
+    // que o do representante), os itens e o pagamento. `avalItens` nasce com os
+    // valores iniciais do pedido; a reconsulta troca pelos da diretoria.
+    avalTipoPessoa: 'PJ', avalNome: '', avalCpf: '', avalEmail: '',
+    avalItens: aplicaValoresAvaliacao(novosItensAvaliacao(), VALORES_AVALIACAO_PADRAO), avalAviso: '',
+    avalForma: 'pix', avalParcelas: 1, avalData: '',
+    // Retrato do que saiu no envio, para a tela de sucesso: a reconsulta segue
+    // rodando depois da venda e poderia mudar os itens que ela mostraria.
+    avalEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
     // Negociação: `autorizacao` é { token, nome, email, papel } de quem liberou,
@@ -1323,6 +1454,41 @@ function App() {
     document.addEventListener('visibilitychange', aoVoltar);
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
   }, []);
+
+  // Valores das modalidades do DH - Avaliação: o mesmo que `deps`. Fora do `s`
+  // porque são referência, não dado da venda — o `restart` não os apaga.
+  // `estado`: 'carregando' até a 1ª resposta; 'ok' ou 'erro' (vale o padrão).
+  const [valsAval, setValsAval] = useState({ versao: null, valores: VALORES_AVALIACAO_PADRAO, estado: 'carregando' });
+
+  // Reconsulta e leva os valores aos itens. Se o valor de uma modalidade vendida
+  // mudou (ver `valoresQueMudaram`), deixa o aviso. Falha de rede não apaga
+  // nada. Devolve o que veio, ou null se a consulta falhou.
+  const atualizaValoresAvaliacao = async () => {
+    let novo;
+    try {
+      novo = await buscaValoresAvaliacao();
+    } catch (e) {
+      console.warn('[lobby] valores do DH - Avaliação indisponíveis; mantendo os atuais.', e);
+      setValsAval((v) => (v.estado === 'carregando' ? { ...v, estado: 'erro' } : v));
+      return null;
+    }
+    setValsAval((v) => (v.versao === novo.versao ? { ...v, estado: 'ok' } : { versao: novo.versao, valores: novo.valores, estado: 'ok' }));
+    patch((d) => {
+      const mudaram = valoresQueMudaram(d.avalItens, novo.valores);
+      return {
+        avalItens: aplicaValoresAvaliacao(d.avalItens, novo.valores),
+        ...(mudaram.length ? { avalAviso: avisoDosValores(mudaram, novo.valores) } : {}),
+      };
+    });
+    return novo;
+  };
+  useEffect(() => {
+    atualizaValoresAvaliacao();
+    const id = setInterval(atualizaValoresAvaliacao, DEPARTAMENTOS_RECONSULTA_MS);
+    const aoVoltar = () => { if (document.visibilityState === 'visible') atualizaValoresAvaliacao(); };
+    document.addEventListener('visibilitychange', aoVoltar);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
+  }, []);
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' }); }, [s.step, s.screen]);
 
   // Espelha o endereço da empresa no representante quando "mesmo endereço".
@@ -1339,6 +1505,8 @@ function App() {
   // (ver `fluxoDaVenda`), então vale já na lista de produtos da categoria.
   const fluxo = fluxoDaVenda(cat, product);
   const isDh = fluxo === 'dh';
+  // Fluxo DH - Avaliação: produto → contratante → itens → pagamento → resumo.
+  const isDhAval = fluxo === 'dh_avaliacao';
   const steps = stepsDoFluxo(fluxo, cat);
   const ultimoStep = steps.length - 1;
   // Fluxo padrão: Empresa e Produto trocam de lugar em categoria `produtoPrimeiro`.
@@ -1389,7 +1557,7 @@ function App() {
   // ----- Campos -----
   const onField = (k, v) => {
     if (k === 'cnpj') v = maskCNPJ(v);
-    else if (k === 'repCpf' || k === 'apnCpf') v = maskCPF(v);
+    else if (k === 'repCpf' || k === 'apnCpf' || k === 'avalCpf') v = maskCPF(v);
     else if (k === 'repTelefone') v = maskPhone(v);
     else if (k === 'cep') v = maskCEP(v);
     else if (k === 'estado') v = maskUF(v);
@@ -1746,6 +1914,72 @@ function App() {
     patch((d) => ({ dhAdiantamentoEdit: !d.dhAdiantamentoEdit, dhVagas: vagasSemAdiantamentoNegociado(d.dhVagas) }));
   };
 
+  /* ----- DH - Avaliação: contratante PJ/PF, itens e pagamento -----
+   *
+   * O valor da venda é a soma dos itens: quantidade × valor unitário de cada
+   * modalidade. Modalidade com quantidade zero não é vendida e não vai no
+   * payload. O valor unitário vale o que o consultor digitou — ou, na
+   * modalidade que a diretoria fixou, o fixo de AGORA (como o departamento fixo:
+   * lido da reconsulta, e não do `s`).
+   */
+  const avalPf = s.avalTipoPessoa === 'PF';
+  const avalCfg = (id) => valsAval.valores[id] || VALORES_AVALIACAO_PADRAO[id];
+  const avalFixo = (id) => !!avalCfg(id).fixo;
+  const avalItem = (id) => (s.avalItens && s.avalItens[id]) || novoItemAvaliacao();
+  const avalQtd = (id) => qtdItemAvaliacao(avalItem(id));
+  // Arredondado como o servidor o assina: "150,555" vale 150,56 na tela, na
+  // soma e no comprovante — senão o total enviado não fecharia com os itens.
+  const avalValor = (id) => (avalFixo(id) ? avalCfg(id).valor : round2(Number(avalItem(id).valor)));
+  const avalSubtotal = (id) => {
+    const v = avalValor(id);
+    return round2(avalQtd(id) * (Number.isFinite(v) ? v : 0));
+  };
+  const avalVendidos = MODALIDADES_AVALIACAO.filter((m) => avalQtd(m.id) > 0);
+  const avalTotal = round2(avalVendidos.reduce((soma, m) => soma + avalSubtotal(m.id), 0));
+  const avalItemValido = (id) => {
+    const v = avalValor(id);
+    return avalQtd(id) <= AVALIACAO_QUANTIDADE_MAX && Number.isFinite(v) && v > 0 && v <= AVALIACAO_VALOR_MAX;
+  };
+  // Pelo menos uma modalidade vendida, e toda vendida com valor.
+  const avalItensValid = avalVendidos.length > 0 && avalVendidos.every((m) => avalItemValido(m.id));
+  const avalNomeContratante = ((avalPf ? s.avalNome : s.razaoSocial) || '').trim();
+
+  // Endereço completo nos dois tipos de pessoa; complemento é o único opcional.
+  const avalEnderecoValid = (
+    (s.endereco || '').trim().length > 2 && (s.numero || '').trim().length > 0 &&
+    (s.bairro || '').trim().length > 1 && (s.cidade || '').trim().length > 1 &&
+    isUF(s.estado) && isCEP(s.cep)
+  );
+  const avalContratanteValid = isEmail(s.avalEmail) && avalEnderecoValid && (avalPf
+    ? (s.avalNome || '').trim().length > 3 && isCPF(s.avalCpf)
+    : (isCNPJ(s.cnpj) && (s.razaoSocial || '').trim().length > 2 &&
+       (s.repNome || '').trim().length > 3 && isCPF(s.repCpf) && isEmail(s.repEmail)));
+
+  // Parcelado só no cartão; Pix e boleto saem à vista, com `parcelas: 1`.
+  const avalCartao = s.avalForma === 'cartao';
+  const avalParcelas = avalCartao
+    ? Math.min(DH_AVALIACAO_MAX_PARCELAS_CARTAO, Math.max(1, Math.round(Number(s.avalParcelas) || 1)))
+    : 1;
+  const avalValorParcela = avalParcelas > 0 ? round2(avalTotal / avalParcelas) : 0;
+  // O `<input type="date">` devolve AAAA-MM-DD, e é o formato que o n8n espera.
+  const avalDataValid = /^\d{4}-\d{2}-\d{2}$/.test(s.avalData || '');
+  const avalPagamentoValid = !!formaAvaliacao(s.avalForma) && avalDataValid;
+  const dhAvaliacaoEnvioConfigurado = !!DH_AVALIACAO_SEND_WEBHOOK_URL;
+
+  const setAvalItem = (id, campo, valor) => patch((d) => ({
+    avalAviso: '',
+    avalItens: { ...d.avalItens, [id]: {
+      ...((d.avalItens && d.avalItens[id]) || novoItemAvaliacao()),
+      ...(campo === 'valor'
+        ? { valor: Number.isFinite(valor) ? round2(valor) : NaN, editado: true }
+        : { [campo]: valor }),
+    } },
+  }));
+  const setAvalForma = (forma) => patch((d) => ({
+    avalForma: forma,
+    avalParcelas: forma === 'cartao' ? Math.max(1, Number(d.avalParcelas) || 1) : 1,
+  }));
+
   // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
   const buildPayload = (departamento) => {
     const nowIso = new Date().toISOString();
@@ -2017,6 +2251,111 @@ function App() {
     }
   };
 
+  /* ----- Payload + envio do DH - Avaliação (webhook próprio) -----
+   * A forma é o JSON combinado com o n8n (TSK-1056) — não renomeie nem tire
+   * chave. Os tipos seguem o modelo: `quantidade` e `parcelas` inteiros,
+   * `valor_unitario` número. Documento, CPF e CEP vão MASCARADOS, como o lobby
+   * já manda nos outros fluxos (`cnpj`, `cpf`, `cep` do Elite, da APN e do DH).
+   *
+   * A única coisa a mais são as três chaves do comprovante (`comprovante`,
+   * `comprovante_valores`, `comprovante_erro`), acrescentadas em
+   * `finalizeDhAvaliacao`, como no DH — é com elas que o n8n chama
+   * `/api/venda/validar`.
+   */
+  const buildDhAvaliacaoPayload = (protocolo) => {
+    const nome = avalNomeContratante;
+    const documento = (avalPf ? s.avalCpf : s.cnpj) || '';
+    const email = (s.avalEmail || '').trim();
+    return {
+      id_venda: protocolo,
+      produto: 'PROFILER',
+      contratante: {
+        tipo_pessoa: avalPf ? 'PF' : 'PJ',
+        nome, documento, email,
+        endereco: {
+          logradouro: (s.endereco || '').trim(),
+          numero: (s.numero || '').trim(),
+          complemento: (s.complemento || '').trim(),
+          bairro: (s.bairro || '').trim(),
+          cidade: (s.cidade || '').trim(),
+          uf: (s.estado || '').toUpperCase(),
+          cep: s.cep || '',
+        },
+      },
+      // Na PF o representante é a própria pessoa (decisão do dono, 14/10/2026):
+      // o bloco vai preenchido com os dados do contratante, nunca vazio.
+      representante: avalPf
+        ? { nome, cpf: documento, email }
+        : { nome: (s.repNome || '').trim(), cpf: s.repCpf || '', email: (s.repEmail || '').trim() },
+      itens: avalVendidos.map((m) => ({
+        modalidade: m.id,
+        quantidade: avalQtd(m.id),
+        valor_unitario: round2(avalValor(m.id)),
+        observacoes: (avalItem(m.id).observacoes || '').trim(),
+      })),
+      pagamento: { forma: s.avalForma, parcelas: avalParcelas, data: s.avalData },
+    };
+  };
+
+  const finalizeDhAvaliacao = async () => {
+    if (!avalContratanteValid || !avalItensValid || !avalPagamentoValid || !dhAvaliacaoEnvioConfigurado || s.sendState === 'sending') return;
+    patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
+    // Última conferência dos valores, no momento que importa. Se a diretoria
+    // fixou (ou mudou) o valor de uma modalidade vendida, a reconsulta já levou o
+    // valor novo aos itens e deixou o aviso: o envio para e volta para a etapa
+    // Itens, em vez de mandar um total que o consultor não viu. Consulta que
+    // falha segue com o que a tela mostra — o comprovante confere no servidor.
+    const novo = await atualizaValoresAvaliacao();
+    if (novo && valoresQueMudaram(s.avalItens, novo.valores).length) {
+      patch({ sendState: 'idle', step: 2 });
+      return;
+    }
+    // Mesmo formato de protocolo dos demais (SSS-YYMMDDPRRRRR), com a sigla do
+    // produto (LBA) e o dígito da forma de pagamento.
+    const forma = formaAvaliacao(s.avalForma);
+    const protocolo = buildProtocol(product, forma ? forma.protocolo : s.avalForma, new Date());
+    try {
+      const payload = buildDhAvaliacaoPayload(protocolo);
+
+      // O que o servidor assina: os itens e o total, como na APN (o total na
+      // entrada, sem cronograma). Valor livre passa; o da modalidade fixa só
+      // passa se for o fixo. Sem credencial: este formulário não negocia.
+      const valores = {
+        fluxo: 'dh_avaliacao',
+        categoria_id: cat ? cat.id : '',
+        produto_id: product ? product.id : '',
+        negociado: false,
+        valor_total: avalTotal,
+        valor_mensal: null,
+        entrada: avalTotal,
+        cronograma: [],
+        protocolo,
+        itens: payload.itens.map((i) => ({ modalidade: i.modalidade, quantidade: i.quantidade, valor_unitario: i.valor_unitario })),
+      };
+      const atestado = await pedeComprovante(valores);
+      payload.comprovante = atestado.comprovante;
+      payload.comprovante_valores = valores;
+      payload.comprovante_erro = atestado.erro;
+
+      const response = await sendVendaDhAvaliacao(payload);
+      patch({
+        screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null,
+        avalEnviado: {
+          nome: payload.contratante.nome,
+          itens: avalVendidos.map((m) => ({ nome: m.nome, plural: m.plural, quantidade: avalQtd(m.id) })),
+          total: avalTotal,
+          forma: forma ? forma.label : '',
+          parcelas: avalParcelas,
+        },
+      });
+    } catch (e) {
+      patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
+      // Recusa do servidor (um valor fixo que a reconsulta não pegou, por
+      // exemplo): reconsulta de novo, para a etapa Itens já mostrar o certo.
+      if (e && e.handled) atualizaValoresAvaliacao();
+    }
+  };
+
   const finalize = async () => {
     if (!pagamentoValid || !departamentoOk || s.sendState === 'sending') return;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
@@ -2068,6 +2407,9 @@ function App() {
     categoriaFin: '', categoriaFinAviso: '',
     apnTipoPessoa: 'PJ', apnCpf: '', apnValor: NaN, apnForma: 'pix', apnParcelas: 1, apnOrigem: '',
     dhVagas: [novaVagaDh()], dhAdiantamentoEdit: false,
+    avalTipoPessoa: 'PJ', avalNome: '', avalCpf: '', avalEmail: '',
+    avalItens: aplicaValoresAvaliacao(novosItensAvaliacao(), valsAval.valores), avalAviso: '',
+    avalForma: 'pix', avalParcelas: 1, avalData: '', avalEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
   }); };
@@ -2258,7 +2600,7 @@ function App() {
                 {p.flow ? (
                   <>
                     <div style={{ font: '600 13px var(--font-primary)', color: 'var(--primary)', whiteSpace: 'nowrap' }}>Formulário próprio</div>
-                    <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>valores por vaga</div>
+                    <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{p.flow === 'dh_avaliacao' ? 'valores por item' : 'valores por vaga'}</div>
                   </>
                 ) : (
                   <>
@@ -3174,6 +3516,393 @@ function App() {
     </>
   );
 
+  /* ===================================================================== */
+  /* ==========  DH - AVALIAÇÃO — fluxo próprio do produto (5 etapas)  ==== */
+  /* ===================================================================== */
+  /* Produto → Contratante → Itens → Pagamento → Resumo. A etapa Produto é a
+   * lista da categoria (`renderProduto`), como no DH.
+   */
+
+  // Aviso de validação de CPF — só depois que o CPF está completo, para não
+  // ficar piscando erro enquanto se digita.
+  const avisoCpfInvalido = (cpf) => (onlyDigits(cpf).length === 11 && !isCPF(cpf) && (
+    <div style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+      <span className="ms-icon" style={{ fontSize: 16 }}>error</span>CPF inválido — confira os números.
+    </div>
+  ));
+
+  // Etapa 2 — Contratante: PJ (CNPJ com a busca na Receita, e-mail e
+  // representante) ou PF (nome, CPF e e-mail). Endereço com CEP nos dois.
+  const renderDhAvalContratante = () => {
+    const cnpjBtnLabel = s.cnpjStatus === 'loading' ? 'Buscando…' : s.cnpjStatus === 'done' ? 'Revalidar' : 'Validar CNPJ';
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: colors.iconFg }}>{product ? product.name : cat.name}</span>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '6px 0 6px', color: 'var(--text)' }}>Dados do contratante</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>{avalPf ? 'Contratação no CPF — a própria pessoa é a representante.' : 'Informe o CNPJ para trazer os dados da empresa da Receita.'}</p>
+        </div>
+
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="sec-title" style={{ marginBottom: 12 }}>Identificação</div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+            {[{ k: 'PJ', t: 'Empresa', d: 'CNPJ', i: 'apartment' }, { k: 'PF', t: 'Pessoa física', d: 'CPF', i: 'person' }].map((o) => {
+              const on = s.avalTipoPessoa === o.k;
+              return (
+                <button key={o.k} type="button" onClick={() => patch({ avalTipoPessoa: o.k })} aria-pressed={on}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 10, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (on ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
+                  <span className="ms-icon" style={{ fontSize: 19, color: on ? 'var(--primary)' : 'var(--text-muted)' }}>{o.i}</span>
+                  <span style={{ font: '600 13.5px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{o.t}</span>
+                  <span style={{ font: '600 10.5px var(--font-primary)', letterSpacing: '.05em', color: 'var(--text-muted)', background: 'var(--surface-light)', padding: '3px 7px', borderRadius: 5 }}>{o.d}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {avalPf ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+                <Field label="Nome completo" required value={s.avalNome} onChange={(v) => onField('avalNome', v)} placeholder="Nome de quem está contratando" />
+                <Field label="CPF" required value={s.avalCpf} onChange={(v) => onField('avalCpf', v)} mask={maskCPF} placeholder="000.000.000-00" inputMode="numeric" />
+                <Field span={2} label="E-mail" required type="email" value={s.avalEmail} onChange={(v) => onField('avalEmail', v)} placeholder="email@exemplo.com.br" />
+              </div>
+              {avisoCpfInvalido(s.avalCpf)}
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <label className="lbl">CNPJ<span style={{ color: 'var(--primary)' }}> *</span></label>
+                  <input className="inp lg" value={s.cnpj} placeholder="00.000.000/0000-00" inputMode="numeric"
+                    onChange={(e) => onField('cnpj', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') validateCnpj(); }} />
+                </div>
+                <button className="btn-prim" onClick={validateCnpj} disabled={s.cnpjStatus === 'loading'} style={{ height: 46 }}>
+                  {s.cnpjStatus === 'loading' ? <span className="spin" /> : <span className="ms-icon" style={{ fontSize: 18 }}>search</span>}
+                  {cnpjBtnLabel}
+                </button>
+              </div>
+              {s.cnpjStatus === 'done' && (
+                <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: '#4ADE80', background: 'rgba(40,167,69,.12)', border: '1px solid rgba(40,167,69,.3)', padding: '7px 12px', borderRadius: 8 }}>
+                  <span className="ms-icon" style={{ fontSize: 16 }}>verified</span>Dados encontrados na Receita Federal e preenchidos abaixo.
+                </div>
+              )}
+              {(s.cnpjStatus === 'manual' || s.cnpjStatus === 'error') && (
+                <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+                  <span className="ms-icon" style={{ fontSize: 16 }}>error</span>{s.cnpjErr}
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 16 }}>
+                <Field span={2} label="Razão social" required value={s.razaoSocial} onChange={(v) => onField('razaoSocial', v)} placeholder="Nome registrado da empresa" />
+                <Field span={2} label="E-mail da empresa" required type="email" value={s.avalEmail} onChange={(v) => onField('avalEmail', v)} placeholder="financeiro@empresa.com.br" />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Endereço — nos dois tipos. A Receita preenche o da empresa; tudo
+            continua editável, porque o do contrato às vezes é outro. */}
+        <div className="card" style={{ marginBottom: avalPf ? 0 : 18 }}>
+          <div className="sec-title" style={{ marginBottom: 16 }}>Endereço</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+            <Field label="CEP" required value={s.cep} onChange={(v) => onField('cep', v)} mask={maskCEP} placeholder="00000-000" inputMode="numeric"
+              action={{ icon: 'search', label: 'Buscar endereço pelo CEP', onClick: validateCep, loading: s.cepStatus === 'loading', disabled: !isCEP(s.cep) || s.cepStatus === 'loading' }} />
+            <div />
+            <Field label="Endereço (logradouro)" required value={s.endereco} onChange={(v) => onField('endereco', v)} placeholder="Rua, avenida, etc." />
+            <Field label="Número" required value={s.numero} onChange={(v) => onField('numero', v)} placeholder="123" />
+            <Field label="Complemento" optional value={s.complemento} onChange={(v) => onField('complemento', v)} placeholder="Sala, andar…" />
+            <Field label="Bairro" required value={s.bairro} onChange={(v) => onField('bairro', v)} placeholder="Bairro" />
+            <Field label="Cidade" required value={s.cidade} onChange={(v) => onField('cidade', v)} placeholder="Cidade" />
+            <Field label="Estado (UF)" required value={s.estado} onChange={(v) => onField('estado', v)} mask={maskUF} placeholder="SP" />
+          </div>
+          {s.cepStatus === 'error' && (
+            <div style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>error</span>Não foi possível consultar o CEP. Preencha o endereço manualmente.
+            </div>
+          )}
+        </div>
+
+        {/* Representante — só na PJ. Na PF ele é o próprio contratante, e o
+            payload o preenche com os dados de cima. */}
+        {!avalPf && (
+          <div className="card">
+            <div className="sec-title" style={{ marginBottom: 16 }}>Representante</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+              <Field label="Nome do representante" required value={s.repNome} onChange={(v) => onField('repNome', v)} placeholder="Quem assina pela empresa" />
+              <Field label="CPF do representante" required value={s.repCpf} onChange={(v) => onField('repCpf', v)} mask={maskCPF} placeholder="000.000.000-00" inputMode="numeric" />
+              <Field span={2} label="E-mail do representante" required type="email" value={s.repEmail} onChange={(v) => onField('repEmail', v)} placeholder="nome@empresa.com.br" />
+            </div>
+            {avisoCpfInvalido(s.repCpf)}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  // Etapa 3 — Itens: quantidade e valor unitário de cada modalidade. É de onde
+  // sai o valor da venda.
+  const renderDhAvalItens = () => (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Itens</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Quantidade e valor unitário de cada modalidade. Modalidade com quantidade zero não entra na venda.</p>
+      </div>
+
+      {s.avalAviso && (
+        <div role="status" style={{ marginBottom: 14, display: 'flex', alignItems: 'flex-start', gap: 8, font: '500 13px/1.5 var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '10px 14px', borderRadius: 10 }}>
+          <span className="ms-icon" style={{ fontSize: 18 }}>sync_problem</span>{s.avalAviso}
+        </div>
+      )}
+      {valsAval.estado === 'erro' && (
+        <div role="status" style={{ marginBottom: 14, display: 'flex', alignItems: 'flex-start', gap: 8, font: '400 12.5px/1.5 var(--font-secondary)', color: 'var(--text-muted)', background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', padding: '10px 14px', borderRadius: 10 }}>
+          <span className="ms-icon" style={{ fontSize: 17 }}>cloud_off</span>Não foi possível carregar os valores definidos pela diretoria agora. Os campos abrem com os valores padrão e seguem editáveis.
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {MODALIDADES_AVALIACAO.map((m) => {
+          const item = avalItem(m.id);
+          const fixo = avalFixo(m.id);
+          const cfg = avalCfg(m.id);
+          const qtd = avalQtd(m.id);
+          const valor = avalValor(m.id);
+          const semValor = qtd > 0 && !avalItemValido(m.id);
+          return (
+            <div className="card" key={m.id} style={{ padding: '20px 22px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>{m.icone}</span>
+                  <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>{m.nome}</span>
+                </div>
+                {fixo && <span className="chip"><span className="ms-icon" style={{ fontSize: 13 }}>lock</span>Valor fixo</span>}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: 14, alignItems: 'start' }}>
+                <div>
+                  <label className="lbl" htmlFor={'qtd-' + m.id}>Quantidade</label>
+                  <input id={'qtd-' + m.id} className="inp" type="number" min="0" max={AVALIACAO_QUANTIDADE_MAX} step="1" inputMode="numeric" value={item.quantidade}
+                    onChange={(e) => setAvalItem(m.id, 'quantidade', e.target.value)}
+                    onBlur={(e) => setAvalItem(m.id, 'quantidade', Math.min(AVALIACAO_QUANTIDADE_MAX, Math.max(0, Math.round(Number(e.target.value) || 0))))} />
+                </div>
+                <div>
+                  <label className="lbl">Valor unitário{qtd > 0 && <span style={{ color: 'var(--primary)' }}> *</span>}</label>
+                  {fixo ? (
+                    // Um texto travado, e não um campo desabilitado: campo cinza
+                    // convida a tentar trocar, e aqui não há o que trocar.
+                    <div className="inp" role="status" aria-label={`Valor unitário ${DA_MODALIDADE[m.id]}: ${fmt(cfg.valor)}, definido pela diretoria`}
+                      style={{ height: 46, display: 'flex', alignItems: 'center', gap: 8, cursor: 'default' }}>
+                      <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>lock</span>
+                      <span style={{ fontWeight: 600 }}>{fmt(cfg.valor)}</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', height: 46, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid ' + (semValor ? 'rgba(255,193,7,.55)' : 'var(--border-light)'), padding: '0 12px', gap: 6 }}>
+                      <span style={{ font: "600 13px 'Roboto'", color: 'var(--text-muted)' }}>R$</span>
+                      <MoneyInput className="" value={item.valor} onChangeNumber={(n) => setAvalItem(m.id, 'valor', n)} placeholder="0,00" />
+                    </div>
+                  )}
+                  <div style={{ font: '400 11.5px var(--font-secondary)', color: fixo || round2(valor) === round2(cfg.valor) ? 'var(--text-muted)' : 'var(--primary)', marginTop: 6 }}>
+                    {fixo
+                      ? 'Definido pela diretoria.'
+                      : round2(valor) === round2(cfg.valor) || !Number.isFinite(valor)
+                        ? `Valor sugerido pela diretoria: ${fmt(cfg.valor)}.`
+                        : `Valor ajustado · sugerido: ${fmt(cfg.valor)}.`}
+                  </div>
+                </div>
+                <div>
+                  <div className="lbl">Subtotal</div>
+                  <div style={{ height: 46, display: 'flex', alignItems: 'center', font: '700 16px var(--font-primary)', color: qtd > 0 ? 'var(--primary)' : 'var(--text-muted)' }}>
+                    {fmt(avalSubtotal(m.id))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <Field label="Observações" optional value={item.observacoes} onChange={(v) => setAvalItem(m.id, 'observacoes', v.slice(0, 500))} placeholder={`Algo a registrar sobre ${m.plural.toLowerCase()} desta venda`} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="card" style={{ marginTop: 16, padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Total da venda</div>
+          <div style={{ font: '400 12px var(--font-secondary)', color: avalVendidos.length ? 'var(--text-muted)' : 'var(--warning)', marginTop: 2 }}>
+            {avalVendidos.length
+              ? avalVendidos.map((m) => `${avalQtd(m.id)} ${avalQtd(m.id) === 1 ? m.nome.toLowerCase() : m.plural.toLowerCase()}`).join(' · ')
+              : 'Informe a quantidade de pelo menos uma modalidade.'}
+          </div>
+        </div>
+        <div style={{ font: '700 22px var(--font-primary)', color: 'var(--primary)', letterSpacing: '-.01em' }}>{fmt(avalTotal)}</div>
+      </div>
+    </>
+  );
+
+  // Etapa 4 — Pagamento: uma forma para a venda inteira. Parcela só no cartão.
+  const renderDhAvalPagamento = () => (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Pagamento</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Forma de pagamento e vencimento. Pix e boleto são à vista; o cartão parcela em até {DH_AVALIACAO_MAX_PARCELAS_CARTAO}×.</p>
+      </div>
+
+      <div className="card" style={{ padding: '20px 22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>payments</span>
+          <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Forma de pagamento</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {FORMAS_AVALIACAO.map((f) => {
+            const on = s.avalForma === f.id;
+            return (
+              <button key={f.id} type="button" onClick={() => setAvalForma(f.id)} aria-pressed={on}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: 12, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (on ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
+                <span className="ms-icon" style={{ fontSize: 20, color: on ? 'var(--primary)' : 'var(--text-muted)' }}>{f.icone}</span>
+                <span style={{ font: '600 14px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{f.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 18, alignItems: 'end' }}>
+          {avalCartao ? (
+            <div>
+              <label className="lbl" htmlFor="aval-parcelas">Parcelas</label>
+              <select id="aval-parcelas" className="inp" style={{ height: 46 }} value={avalParcelas} onChange={(e) => patch({ avalParcelas: Math.min(DH_AVALIACAO_MAX_PARCELAS_CARTAO, Math.max(1, Math.round(Number(e.target.value) || 1))) })}>
+                {Array.from({ length: DH_AVALIACAO_MAX_PARCELAS_CARTAO }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>{n}× {n === 1 ? '(à vista)' : `de ${fmt(round2(avalTotal / n))}`}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div style={{ height: 46, display: 'flex', alignItems: 'center', gap: 7, font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>info</span>
+              À vista — o parcelamento vale só para cartão de crédito.
+            </div>
+          )}
+          <div>
+            <label className="lbl" htmlFor="aval-data">{avalCartao && avalParcelas > 1 ? 'Vencimento da 1ª parcela' : 'Data de vencimento'}<span style={{ color: 'var(--primary)' }}> *</span></label>
+            <input id="aval-data" className="inp" type="date" value={s.avalData} onChange={(e) => patch({ avalData: e.target.value })} />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)' }}>
+          <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            {avalParcelas > 1 ? `${avalParcelas}× de ${fmt(avalValorParcela)}` : 'Pagamento único'}
+          </span>
+          <span style={{ font: "700 15px 'Roboto'", color: 'var(--primary)' }}>{fmt(avalTotal)}</span>
+        </div>
+        {!avalDataValid && (
+          <div style={{ marginTop: 10, font: '400 12px var(--font-secondary)', color: 'var(--text-muted)' }}>Informe a data de vencimento para continuar.</div>
+        )}
+      </div>
+    </>
+  );
+
+  // Etapa 5 — Resumo do DH - Avaliação.
+  const renderDhAvalResumo = () => {
+    const forma = formaAvaliacao(s.avalForma);
+    const enderecoTexto = [
+      [(s.endereco || '').trim(), (s.numero || '').trim()].filter(Boolean).join(', '),
+      (s.complemento || '').trim(),
+      (s.bairro || '').trim(),
+      [(s.cidade || '').trim(), (s.estado || '').toUpperCase()].filter(Boolean).join('/'),
+      s.cep,
+    ].filter(Boolean).join(' - ') || '—';
+    const linhas = avalPf
+      ? [['Tipo', 'Pessoa física'], ['Nome', s.avalNome || '—'], ['CPF', s.avalCpf || '—'], ['E-mail', s.avalEmail || '—'], ['Endereço', enderecoTexto], ['Representante', 'O próprio contratante']]
+      : [['Tipo', 'Empresa'], ['Razão social', s.razaoSocial || '—'], ['CNPJ', s.cnpj || '—'], ['E-mail', s.avalEmail || '—'], ['Endereço', enderecoTexto],
+        ['Representante', [(s.repNome || '').trim() || '—', s.repCpf, (s.repEmail || '').trim()].filter(Boolean).join(' · ')]];
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Confirme o pedido</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Revise as informações antes de finalizar o cadastro.</p>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* O valor de uma modalidade mudou com a venda aberta (ver
+              `valoresQueMudaram`): o total abaixo já é o novo. */}
+          {s.avalAviso && (
+            <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, font: '500 13px/1.5 var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '10px 14px', borderRadius: 10 }}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>sync_problem</span>{s.avalAviso}
+            </div>
+          )}
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span className="sec-title" style={{ fontSize: 12 }}>Contratante</span>
+              <button className="linkbtn" onClick={() => goStep(1)}>Editar</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
+              {linhas.map(([k, v]) => (
+                <div key={k} style={{ gridColumn: k === 'Endereço' || k === 'Representante' ? 'span 2' : undefined }}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2, overflowWrap: 'anywhere' }}>{v}</div></div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span className="sec-title" style={{ fontSize: 12 }}>Itens</span>
+              <button className="linkbtn" onClick={() => goStep(2)}>Editar</button>
+            </div>
+            {avalVendidos.map((m, i) => (
+              <div key={m.id} style={{ padding: '12px 0', borderTop: i ? '1px solid var(--border-light)' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                  <span style={{ font: '600 14px var(--font-primary)', color: 'var(--text)' }}>
+                    {m.nome}
+                    <span style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)' }}> · {avalQtd(m.id)} × {fmt(avalValor(m.id))}{avalFixo(m.id) ? ' (fixo)' : ''}</span>
+                  </span>
+                  <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--primary)', whiteSpace: 'nowrap' }}>{fmt(avalSubtotal(m.id))}</span>
+                </div>
+                {(avalItem(m.id).observacoes || '').trim() && (
+                  <div style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3 }}>{avalItem(m.id).observacoes.trim()}</div>
+                )}
+              </div>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, marginTop: 6, borderTop: '1px solid var(--border)' }}>
+              <span style={{ font: '600 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Total</span>
+              <span style={{ font: "700 16px 'Roboto'", color: 'var(--primary)' }}>{fmt(avalTotal)}</span>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span className="sec-title" style={{ fontSize: 12 }}>Pagamento</span>
+              <button className="linkbtn" onClick={() => goStep(3)}>Editar</button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+              <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>Forma</span>
+              <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{forma ? forma.label : '—'}{avalParcelas > 1 ? ` · ${avalParcelas}× de ${fmt(avalValorParcela)}` : ' · à vista'}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
+              <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>{avalParcelas > 1 ? 'Vencimento da 1ª parcela' : 'Vencimento'}</span>
+              <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)' }}>{dmy(s.avalData)}</span>
+            </div>
+          </div>
+
+          {/* Envio bloqueado: a URL do webhook do DH - Avaliação ainda não foi definida. */}
+          {!dhAvaliacaoEnvioConfigurado && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)' }} role="alert">
+              <span className="ms-icon" style={{ fontSize: 20, color: 'var(--warning)' }}>warning</span>
+              <div style={{ font: '400 13px/1.5 var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text)', display: 'block' }}>Envio do DH - Avaliação ainda não configurado.</strong>
+                O webhook deste fluxo não foi definido nesta versão. Avise a equipe técnica — a venda não pode ser enviada até lá.
+              </div>
+            </div>
+          )}
+
+          {s.sendState === 'error' && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(220,53,69,.1)', border: '1px solid rgba(220,53,69,.35)' }} role="alert">
+              <span className="ms-icon" style={{ fontSize: 20, color: 'var(--danger)' }}>error</span>
+              <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text)', display: 'block' }}>{s.sendErrHandled ? 'Não foi possível enviar.' : 'Não conseguimos enviar.'}</strong>
+                {s.sendErrHandled ? s.sendErr : `${s.sendErr} Verifique a conexão e tente novamente.`}
+              </div>
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
   const renderResumo = () => {
     const parcelasLabel = s.parcelas.length === 0 ? 'Sem parcelas (à vista)' : s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
     return (
@@ -3338,6 +4067,23 @@ function App() {
                 <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', flexShrink: 0 }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>
               ))}
             </>
+          ) : (isDhAval && product) ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{product.icon}</span></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ font: '600 14.5px var(--font-primary)', color: 'var(--text)', lineHeight: 1.3 }}>{product.name}</div>
+                  <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{avalNomeContratante || 'Contratante a definir'}</div>
+                </div>
+              </div>
+              {MODALIDADES_AVALIACAO.map((m) => [m.plural, avalQtd(m.id) ? `${avalQtd(m.id)} × ${fmt(avalValor(m.id))}` : '—'])
+                .concat([
+                  ['Total', fmt(avalTotal)],
+                  ['Pagamento', `${(formaAvaliacao(s.avalForma) || {}).label || '—'}${avalParcelas > 1 ? ` · ${avalParcelas}×` : ''}`],
+                ]).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', flexShrink: 0 }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>
+              ))}
+            </>
           ) : (isDh && product) ? (
             <>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
@@ -3404,6 +4150,19 @@ function App() {
       primaryAction = finalizeDh;
       enabled = dhContratanteValid && dhQuadroValid && dhEnvioConfigurado && !sending;
     }
+  } else if (isDhAval) {
+    // DH - Avaliação: Produto → Contratante → Itens → Pagamento → Resumo. Sem
+    // Pix in-app, sem cronograma e sem autorização.
+    if (s.step === 0) enabled = !!product;
+    else if (s.step === 1) enabled = avalContratanteValid;
+    else if (s.step === 2) enabled = avalItensValid;
+    else if (s.step === 3) enabled = avalPagamentoValid;
+    else {
+      primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro';
+      primaryIcon = 'check';
+      primaryAction = finalizeDhAvaliacao;
+      enabled = avalContratanteValid && avalItensValid && avalPagamentoValid && dhAvaliacaoEnvioConfigurado && !sending;
+    }
   } else if (s.step === etapaEmpresa) enabled = empresaValid && departamentoOk;
   else if (s.step === etapaProduto) enabled = !!product;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
@@ -3421,7 +4180,7 @@ function App() {
       primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && departamentoOk && !sending;
     }
   }
-  const primaryBusy = (isApn || isDh)
+  const primaryBusy = (isApn || isDh || isDhAval)
     ? (s.step === ultimoStep && sending)
     : (s.step === 3 && (sending || s.pixState === 'generating' || s.pixState === 'awaiting'));
 
@@ -3452,6 +4211,14 @@ function App() {
                   {s.step === 1 && renderDhContratante()}
                   {s.step === 2 && renderDhQuadro()}
                   {s.step === 3 && renderDhResumo()}
+                </>
+              ) : isDhAval ? (
+                <>
+                  {s.step === 0 && renderProduto()}
+                  {s.step === 1 && renderDhAvalContratante()}
+                  {s.step === 2 && renderDhAvalItens()}
+                  {s.step === 3 && renderDhAvalPagamento()}
+                  {s.step === 4 && renderDhAvalResumo()}
                 </>
               ) : (
                 <>
@@ -3487,6 +4254,14 @@ function App() {
                   {cat.name} contratada por <strong style={{ color: 'var(--text)' }}>{apnNomeCliente}</strong>.<br />
                   Venda de {fmt(apnValorOk ? apnValor : 0)} registrada em {paymentLabel(s.apnForma).toLowerCase()}{apnParcelas > 1 ? ` em ${apnParcelas}×` : ''}.
                 </>
+              ) : isDhAval ? (
+                // O que foi ENVIADO, e não o estado atual dos itens.
+                s.avalEnviado && (
+                  <>
+                    {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{s.avalEnviado.nome}</strong>.<br />
+                    {s.avalEnviado.itens.map((i) => `${i.quantidade} ${i.quantidade === 1 ? i.nome.toLowerCase() : i.plural.toLowerCase()}`).join(' e ')} · total de {fmt(s.avalEnviado.total)} em {s.avalEnviado.forma.toLowerCase()}{s.avalEnviado.parcelas > 1 ? ` em ${s.avalEnviado.parcelas}×` : ''}.
+                  </>
+                )
               ) : isDh ? (
                 <>
                   {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />

@@ -186,3 +186,38 @@ Não faz sentido acrescentar validação num fluxo que ainda não existe. O
 comprovante da APN já é emitido pelo Lobby e vai no payload; quando o fluxo for
 construído, ele valida do mesmo jeito descrito acima, trocando o nome do nó de
 webhook nas expressões.
+
+---
+
+## À parte: o DH - Avaliação ainda não tem fluxo (TSK-1056)
+
+O DH - Avaliação (o antigo Avaliações, sigla LBA) manda a venda para um webhook
+próprio, que ainda não existe: a constante `DH_AVALIACAO_SEND_WEBHOOK_URL` do
+`index.html` está vazia, e sem ela o Lobby não envia. Quando o fluxo for
+construído, ele valida como descrito acima, com **uma conferência a mais**.
+
+O payload traz os itens em dois lugares:
+
+- `itens`, no topo — o JSON combinado (`modalidade`, `quantidade`,
+  `valor_unitario`, `observacoes`);
+- `comprovante_valores.itens` — os mesmos itens, sem as observações, que é o que
+  o Lobby ASSINOU.
+
+O `/api/venda/validar` confere só o segundo (é ele que vai em `valores`). Um POST
+montado à mão, com um comprovante legítimo e outro `valor_unitario` no topo,
+sai `valido: true`. É ali, no topo, que o valor fixo da diretoria pode ser
+burlado. Então, no fluxo:
+
+1. Fature a partir de `comprovante_valores.itens`; **ou**
+2. antes de faturar, compare `itens` com `comprovante_valores.itens`, modalidade a
+   modalidade (`quantidade` e `valor_unitario` iguais), e **bloqueie** quando
+   divergirem — a saída 2, *Bloquear*, e não a 1, *Conferir*, que deixa a venda
+   entrar. Divergência não tem causa inocente: o Lobby monta os dois blocos dos
+   mesmos itens. É o `valores_adulterados` da tabela de motivos.
+
+Venda que chega sem comprovante (o Lobby fora do ar no envio) segue pela saída
+1, como nos outros fluxos, por decisão de produto: nesse caso nada foi
+assinado, e a trava do valor fixo não tem como valer.
+
+É o mesmo desenho do Elite com o `valor_total`. O que muda aqui é que o valor
+unitário é digitado pelo consultor, salvo o que a diretoria fixou.
