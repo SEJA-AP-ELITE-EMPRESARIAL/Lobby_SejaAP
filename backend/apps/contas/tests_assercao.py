@@ -465,19 +465,19 @@ class CacheVazioTest(BaseAssercao):
         self.esvazia()
         with self.assertLogs("lobby.integracao", level=logging.WARNING) as logs:
             resposta = self.chama("get", QUEM_SOU, token)
-        self.assertRecusa(resposta, 503, "INTEGRACAO_DESLIGADA")
+        self.assertRecusa(resposta, 503, "INTEGRACAO_REINICIANDO")
         self.assertIn("recém-esvaziado", "\n".join(logs.output))
 
     def test_fecha_so_ate_a_vida_maxima_de_uma_assercao(self):
         self.esvazia()
-        self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        self.assertRecusa(self.get(), 503, "INTEGRACAO_REINICIANDO")
         # O marco que a chamada acima gravou, envelhecido até o fim da janela:
         cache_do_jti = autenticacao_conecta._cache_do_jti()
         marco = cache_do_jti.get(autenticacao_conecta.MARCO_DO_CACHE)
         janela = autenticacao_conecta.janela_depois_de_cache_vazio()
         # Folga de 30 s para dentro: não depende de quanto o teste demora.
         cache_do_jti.set(autenticacao_conecta.MARCO_DO_CACHE, marco - janela + 30, None)
-        self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+        self.assertRecusa(self.get(), 503, "INTEGRACAO_REINICIANDO")
         cache_do_jti.set(autenticacao_conecta.MARCO_DO_CACHE, int(time.time()) - janela - 1, None)
         self.assertEqual(self.get().status_code, 200)
 
@@ -485,7 +485,7 @@ class CacheVazioTest(BaseAssercao):
         """O Conecta pode tentar de novo com o mesmo token depois da janela."""
         token = self.par.assina()
         self.esvazia()
-        self.assertRecusa(self.chama("get", QUEM_SOU, token), 503, "INTEGRACAO_DESLIGADA")
+        self.assertRecusa(self.chama("get", QUEM_SOU, token), 503, "INTEGRACAO_REINICIANDO")
         cache_contando_ha_tempo()
         self.assertEqual(self.chama("get", QUEM_SOU, token).status_code, 200)
 
@@ -511,7 +511,7 @@ class CacheVazioTest(BaseAssercao):
             return self.chama("get", QUEM_SOU, token)
 
     def test_esvaziar_logo_antes_de_gravar_o_jti_nao_deixa_repetir(self):
-        self.assertRecusa(self.repete_com_esvaziamento("antes"), 503, "INTEGRACAO_DESLIGADA")
+        self.assertRecusa(self.repete_com_esvaziamento("antes"), 503, "INTEGRACAO_REINICIANDO")
 
     def test_esvaziar_logo_depois_de_gravar_o_jti_nao_deixa_repetir(self):
         self.assertRecusa(self.repete_com_esvaziamento("depois"), 401, "JTI_REPETIDO")
@@ -532,7 +532,7 @@ class CacheVazioTest(BaseAssercao):
         self.esvazia()
         with mock.patch.object(autenticacao_conecta, "_cache_do_jti", return_value=proxy), \
                 mock.patch.object(autenticacao_conecta.time, "time", side_effect=lambda: relogio["agora"]):
-            self.assertRecusa(self.get(), 503, "INTEGRACAO_DESLIGADA")
+            self.assertRecusa(self.get(), 503, "INTEGRACAO_REINICIANDO")
         self.assertGreaterEqual(real.get(autenticacao_conecta.MARCO_DO_CACHE), int(relogio["agora"]))
 
     def test_a_janela_cobre_a_vida_maxima_com_a_tolerancia_do_teto(self):
@@ -749,7 +749,7 @@ class JtiEntreProcessosTest(BaseAssercao):
         with passos:
             cache_do_jti.clear()
             token = self.par.assina()
-            self.assertRecusa(self.chama("get", QUEM_SOU, token), 503, "INTEGRACAO_DESLIGADA")
+            self.assertRecusa(self.chama("get", QUEM_SOU, token), 503, "INTEGRACAO_REINICIANDO")
             marco = cache_do_jti.get(autenticacao_conecta.MARCO_DO_CACHE)
             self.assertIsInstance(marco, int)
             self.assertLessEqual(abs(marco - time.time()), 5)

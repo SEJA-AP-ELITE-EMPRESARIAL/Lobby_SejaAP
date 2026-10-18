@@ -244,8 +244,12 @@ com o papel que ela tem **aqui**: só a diretoria publica, como no `/admin`.
   novo entra por desenvolvimento, e a rota segue só para o `/admin` antigo.
 - **"Entrar como usuário"** (`imp`) só lê; escrever é 403.
 - **Sem a chave pública, ou sem Redis em produção, fica desligada** (503
-  `INTEGRACAO_DESLIGADA`) — e só para quem manda o cabeçalho. O consultor e o
-  `/admin` de hoje não percebem nada.
+  `INTEGRACAO_DESLIGADA`) — e só para quem manda o cabeçalho. O consultor não
+  percebe nada.
+- **Redis recém-reiniciado fecha por até 130 s** (503 `INTEGRACAO_REINICIANDO`), a
+  contar do primeiro uso: o Redis não persiste, e a janela cobre a vida de uma
+  asserção usada antes do reinício. Passa sozinha; o Admin Lobby pede para tentar
+  de novo.
 
 Rotas novas, sob `/api/integracao/`:
 

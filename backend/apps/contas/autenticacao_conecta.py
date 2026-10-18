@@ -189,6 +189,7 @@ FRASES = {
     "SEM_PERMISSAO": "Sem permissão para isto no Lobby.",
     "MUITAS_CHAMADAS": "Muitas chamadas em pouco tempo.",
     "INTEGRACAO_DESLIGADA": "A integração com o Conecta não está ligada neste servidor.",
+    "INTEGRACAO_REINICIANDO": "A integração com o Conecta está reiniciando. Tente de novo em até 2 minutos.",
 }
 
 # Nível do log de cada recusa (§4.7). ERROR é tentativa ou configuração errada;
@@ -213,6 +214,8 @@ NIVEIS = {
     "SEM_PERMISSAO": logging.INFO,
     "MUITAS_CHAMADAS": logging.WARNING,
     "INTEGRACAO_DESLIGADA": logging.ERROR,
+    # A janela depois do cache vazio (ver MARCO_DO_CACHE): passa sozinha.
+    "INTEGRACAO_REINICIANDO": logging.WARNING,
 }
 
 
@@ -249,6 +252,22 @@ class IntegracaoDesligada(exceptions.APIException):
     def __init__(self):
         super().__init__()
         self.codigo = "INTEGRACAO_DESLIGADA"
+
+
+class IntegracaoReiniciando(IntegracaoDesligada):
+    """O 503 da janela depois do cache vazio (ver MARCO_DO_CACHE).
+
+    Código próprio porque, para quem lê a tela, é outra coisa: a integração está
+    ligada e volta sozinha em até `janela_depois_de_cache_vazio()` segundos. Com o
+    mesmo código da desligada, o Admin Lobby do Conecta dizia "ainda não foi
+    ligada" ao primeiro que abrisse a tela depois de um reinício do Redis.
+    """
+
+    default_detail = FRASES["INTEGRACAO_REINICIANDO"]
+
+    def __init__(self):
+        super().__init__()
+        self.codigo = "INTEGRACAO_REINICIANDO"
 
 
 class MuitasFalhas(exceptions.Throttled):
@@ -659,7 +678,7 @@ class AutenticacaoConecta(BaseAuthentication):
                 "fica fechada até %ss depois do primeiro uso",
                 janela,
             )
-            raise IntegracaoDesligada()
+            raise IntegracaoReiniciando()
 
     @staticmethod
     def _grava_no_redis(cache, chave, prazo, janela):
