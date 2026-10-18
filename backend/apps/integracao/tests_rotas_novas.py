@@ -17,6 +17,7 @@ from django.test import override_settings
 from rest_framework.test import APIClient
 
 from apps.catalogo.models import Categoria, Produto, PublicacaoCatalogo, Vigencia
+from apps.contas import autenticacao_conecta
 from apps.contas.models import Papel, VinculoIdentidade
 from apps.contas.tests_assercao import BaseAssercao, ParDeTeste
 from apps.departamentos.servicos import sincronizar
@@ -71,6 +72,9 @@ class ContratoDasRotasSimplesTest(Base):
         confere(self, self.como("post", PUBLICAR, {}, imp=True, act=9).json(), "erro_impersonacao")
         with override_settings(CONECTA_ASSERCAO_CHAVES=""):
             confere(self, APIClient().get("/api/integracao/quem-sou").json(), "erro_integracao_desligada")
+        # Redis recém-reiniciado: a janela do `jti` (ver MARCO_DO_CACHE).
+        autenticacao_conecta._cache_do_jti().clear()
+        confere(self, self.como("get", "/api/integracao/quem-sou").json(), "erro_integracao_reiniciando")
 
 
 class PublicarTest(Base):

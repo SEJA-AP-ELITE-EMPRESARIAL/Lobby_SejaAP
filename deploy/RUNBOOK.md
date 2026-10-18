@@ -681,8 +681,10 @@ container `categorias`.
 **Redis do Lobby fora do ar** (`lobby-redis` parado ou `unhealthy`) → o lobby
 segue vendendo: os tetos de chamada falham abertos, com um aviso por minuto no log
 (`Redis indisponível no cache default`). A integração com o Conecta responde 503
-`INTEGRACAO_DESLIGADA` até ele voltar — e por mais 130 s a partir da primeira
-chamada do Conecta depois disso, porque ele volta vazio (ver *Sem persistência* em [Redis do Lobby](#redis-do-lobby-tsk-1068)).
+`INTEGRACAO_DESLIGADA` (ERROR no log) até ele voltar — e depois 503
+`INTEGRACAO_REINICIANDO` (WARNING) por mais 130 s a partir da primeira chamada do
+Conecta, porque ele volta vazio (ver *Sem persistência* em [Redis do Lobby](#redis-do-lobby-tsk-1068)).
+A janela passa sozinha; o Admin Lobby mostra "reiniciando" com o "Tentar de novo".
 `sudo docker compose up -d redis` o traz de volta, e o backend reconecta sozinho,
 sem reiniciar. Só a SUBIDA do
 backend depende dele: com o Redis fora, um `up` que recrie o backend falha com
