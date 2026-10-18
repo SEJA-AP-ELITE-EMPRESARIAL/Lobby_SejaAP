@@ -16,7 +16,6 @@ reais da página de pré-contrato.
 | Arquivo | Descrição |
 |---|---|
 | **`index.html`** | **Página funcional** — o lobby do consultor. Autossuficiente (React 18 + Babel via CDN, tokens e logo embutidos). Não tem build. |
-| **`admin.html`** | **Painel de valores de tabela** (`/admin`) — onde a diretoria muda os preços sem deploy. |
 | **`backend/`** | API em Django: o catálogo, a publicação da tabela e a autorização de negociação. |
 | **`deploy/`** | Dockerfiles do nginx e do túnel do banco, mais o vhost do host. |
 | **`docker-compose.yml`** | A stack como ela roda na `prod.solucoes`. |
@@ -40,7 +39,7 @@ diferentes e mecanismos diferentes:
 
 |   | O que é | Quem pode | Onde | Como a credencial funciona |
 |---|---|---|---|---|
-| **Valor de tabela** | O preço padrão que todo consultor vê. | **Diretoria** | `/admin` | Sessão normal, no computador de quem publica. |
+| **Valor de tabela** | O preço padrão que todo consultor vê. | **Diretoria** | Admin Lobby do Conecta | Login do Conecta; o Lobby atende pela asserção (ver *Administração pelo Conecta*). |
 | **Valor negociado** | O desconto de UMA venda. Não altera a tabela. | **Gerente** ou diretoria | No próprio lobby | Autorização pontual, **válida só para aquela venda**. |
 
 ### Por que a autorização de negociação não é sessão
@@ -107,13 +106,13 @@ que o login funciona e **só então** revogue a antiga. Detalhe em
 ```text
 index.html  --GET /api/catalogo-->  Postgres `lobby` (db-sejaap, via túnel SSH)
    (anônimo)                                   ^
-                                               |  PUT /api/catalogo (exige diretoria)
-                                        admin.html  (/admin)
+                                               |  POST /api/integracao/... (asserção)
+                                        Admin Lobby do Conecta
 ```
 
 Cada publicação grava uma linha em `PublicacaoCatalogo` com o catálogo inteiro, o
 resumo do que mudou e **quem publicou** — algo que a implementação anterior, em KV,
-nunca teve. Essa trilha é lida na aba **Histórico** do `/admin` (`GET
+nunca teve. Essa trilha é lida na aba **Histórico** do Admin Lobby (`GET
 /api/publicacoes`, só diretoria), ao lado da linha do tempo de valores. São
 perguntas diferentes, e por isso as duas tabelas: a linha do tempo responde
 *"quanto custava em março"*, a lista de publicações responde *"quem mexeu na
@@ -297,7 +296,7 @@ A stack completa, igual à de produção:
 ```bash
 cp .env.example .env      # e preencha banco, IDENTIDADE_APP_KEY e a senha do Redis
 docker compose up -d --build
-# lobby: http://127.0.0.1:8095   ·   painel: http://127.0.0.1:8095/admin
+# lobby: http://127.0.0.1:8095   (a administração é o Admin Lobby do Conecta)
 ```
 
 A senha do Redis vai em duas linhas, `LOBBY_REDIS_SENHA` e `LOBBY_REDIS_URL`
@@ -368,8 +367,14 @@ Fecha três coisas: **forjar** (precisa da chave), **reusar** (nonce de uso úni
 
 ## Personalização rápida
 
-O **`/admin`** é a tela de configuração da diretoria (login do Conecta ID), com
-sete abas — e tudo o que se faz por lá fica registrado com autor e período:
+> **Desde a TSK-1062 o `/admin` do Lobby não existe mais:** o endereço leva ao
+> Admin Lobby do Conecta (https://conecta.sejaap.com.br/lobby-admin), e o `admin.html` saiu do repositório.
+> A tabela abaixo descreve as abas que ele tinha; o Admin Lobby cobre as mesmas
+> configurações, **menos criar produto**, que desde a TSK-1077 entra por
+> desenvolvimento (ou, para conserto, pelo `/django-admin/`).
+
+A antiga tela de configuração da diretoria tinha sete abas — e tudo o que se
+fazia por lá ficava registrado com autor e período:
 
 | Aba | O que configura |
 |---|---|
@@ -381,7 +386,7 @@ sete abas — e tudo o que se faz por lá fica registrado com autor e período:
 | **Produtos** | Criar e editar produto (nome, sigla, valores, vigência, ícone). |
 | **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |
 
-- **Preços e datas:** em **`/admin`**, com a credencial da diretoria. Não mexa no
+- **Preços e datas:** no **Admin Lobby do Conecta**, com a credencial da diretoria. Não mexa no
   `CATS` nem nas constantes do `index.html` (veja *O lobby é anônimo — a
   negociação não*, acima).
 - **Categorias novas, ou destravar uma:** ainda pelo **`/django-admin/`**, sem
@@ -429,7 +434,7 @@ financeiro e do Conecta ID. Mesmo desenho dos vizinhos:
 Cloudflare (proxied, Full strict)
    └── nginx do HOST  ── TLS com o Origin Certificate curinga *.sejaap.com.br
           └── 127.0.0.1:8095  →  container lobby-frontend (nginx)
-                 ├── /            index.html · admin.html
+                 ├── /            index.html  (/admin → Admin Lobby do Conecta)
                  └── /api/        →  lobby-backend (Django + gunicorn)
                                         ├── db-tunnel → Postgres na db-sejaap:5437
                                         └── lobby-redis (sem porta, só na rede do compose)
