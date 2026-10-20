@@ -22,6 +22,7 @@ reais da página de pré-contrato.
 | ~~`functions/`~~ | **Removida.** Era a implementação anterior em Cloudflare Pages Functions, com senha compartilhada e catálogo em KV. Nunca foi ao ar. Ficava no repo como referência, mas a documentação passou a mandar editar a APN lá — então virou armadilha. Está no histórico: `git show 338e932 -- functions/`. |
 | `Lobby de Produtos.dc.html` | Fonte de design (protótipo no framework DC). Apenas referência visual. |
 | `_ds/` | Design system Conecta AP (tokens de cor/tipografia). Referência. |
+| `glitchtip/` | Erros do navegador no GlitchTip (TSK-1142): o SDK, com versão fixa, e a limpeza do evento (`lobby.js`). Servidos pelo próprio Lobby, carregados antes do React. |
 | `assets/logo-sejaap.svg` | Logo (também já embutido inline na página funcional). |
 | `support.js` | Runtime do protótipo DC (só usado pelo `.dc.html`). |
 
@@ -491,6 +492,20 @@ Seis alertas no Grafana (pasta *Infra SEJA AP*, grupo `lobby`) e o painel
 Arquivos versionados em [`deploy/monitoramento/`](deploy/monitoramento/). Instalar
 **nesta ordem**: job de coleta → confirmar o alvo UP → alertas. Ao contrário, o
 alerta de "fora do ar" trata NoData como alerta e o Telegram toca à toa.
+
+### Erros no GlitchTip
+
+Desde a TSK-1142, a exceção não tratada do backend e das páginas do navegador vai
+ao projeto `lobby` do GlitchTip da SEJA AP (<https://erros.sejaap.com.br>), com o
+commit do deploy como release, pelo mesmo desenho do Conecta: sem dado pessoal
+(CNPJ, CPF, e-mail, senha, token, Authorization, cookie, corpo e query string
+saem mascarados ou nem saem), sem tracing e sem log virando evento. Liga com
+`SENTRY_DSN` no `.env`; vazio, nada é enviado, e a suíte nunca liga. A limpeza
+do backend mora em `backend/config/glitchtip.py`, a do navegador em
+`glitchtip/lobby.js` — mudou uma, mude a outra. Para conferir depois do deploy
+há a rota `POST /api/diagnostico/erro-de-teste` (só superusuário) e, no console
+do navegador, `lobbyErroDeTesteGlitchtip()`. Roteiro em
+[`deploy/RUNBOOK.md`](deploy/RUNBOOK.md), "GlitchTip".
 
 ### Se o backend cair
 

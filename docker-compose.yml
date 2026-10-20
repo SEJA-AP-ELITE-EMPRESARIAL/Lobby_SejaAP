@@ -29,7 +29,14 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # O commit do deploy, gravado na imagem: é o `release` dos erros no
+        # GlitchTip (TSK-1142). Passe-o no comando do build:
+        #   sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+        # Sem ele a imagem sobe igual, só que os eventos chegam sem release.
+        GIT_COMMIT: ${GIT_COMMIT:-}
     container_name: lobby-backend
     env_file: .env
     restart: unless-stopped
@@ -163,7 +170,10 @@ services:
     # Sem porta e sem a rede do Conecta ID: ele só fala com o banco (pelo túnel)
     # e com o Omie (pela internet). Precisa de OMIE_APP_KEY e OMIE_APP_SECRET no
     # .env; sem elas, cada rodada loga a falha e a lista do banco fica como está.
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
     container_name: lobby-departamentos
     command: ["python", "manage.py", "sincronizar_departamentos", "--a-cada", "3600"]
     env_file: .env
@@ -185,7 +195,10 @@ services:
     # Fala com o Omie (ListarCategorias) pela mesma chave dos departamentos, e só
     # traz as categorias sob CATEGORIAS_FINANCEIRAS_PREFIXOS (padrão 1.10, o grupo
     # "APN"). Ver apps/categorias_financeiras/fonte.py.
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
     container_name: lobby-categorias
     command: ["python", "manage.py", "sincronizar_categorias_financeiras", "--a-cada", "3600"]
     env_file: .env
@@ -204,7 +217,18 @@ services:
       # rollback durante a transição.
       context: .
       dockerfile: deploy/frontend/Dockerfile
+      args:
+        # O release dos erros do navegador, o mesmo commit do backend (TSK-1142).
+        GIT_COMMIT: ${GIT_COMMIT:-}
     container_name: lobby-frontend
+    environment:
+      # Erros do navegador no GlitchTip (TSK-1142): o DSN do projeto `lobby`, o
+      # mesmo do backend, lido do .env deste diretório (o link para o lobby.env).
+      # Vazio = SDK desligado. Na subida vira o /glitchtip/config.js (ver
+      # deploy/frontend/glitchtip-config.sh). O DSN de front é público por
+      # natureza: vai para o navegador de qualquer visitante.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
     depends_on:
       - backend
     restart: unless-stopped

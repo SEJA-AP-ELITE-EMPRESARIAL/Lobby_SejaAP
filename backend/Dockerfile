@@ -32,6 +32,14 @@ COPY . .
 RUN mkdir -p /app/staticfiles \
     && DJANGO_DEBUG=false DJANGO_SECRET_KEY=build python manage.py collectstatic --noinput
 
+# O commit desta imagem, que vira o `release` dos erros no GlitchTip (TSK-1142).
+# Vem do docker-compose.yml (`GIT_COMMIT=$(git rev-parse --short HEAD)` no
+# comando do deploy, ver deploy/RUNBOOK.md). Gravado na imagem, e não lido na
+# subida: o release é o do código que está nela, mesmo num `up` sem a variável.
+# Fica no fim para não invalidar o cache das camadas de cima. Vazio = sem release.
+ARG GIT_COMMIT=""
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 EXPOSE 8000
 
 CMD ["gunicorn", "config.wsgi:application", \

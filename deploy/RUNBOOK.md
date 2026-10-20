@@ -20,6 +20,7 @@ Operação do Lobby na **prod.solucoes (187.77.48.164)**.
 | Departamentos | `lobby-departamentos` — traz a lista do Omie para o dropdown do Elite e da APN, de hora em hora; sem porta |
 | Categorias | `lobby-categorias` — traz as categorias financeiras para o campo Categoria da APN, de hora em hora, pelo `ListarCategorias` do Omie com a mesma chave dos departamentos; sem porta |
 | Redis (TSK-1068) | `lobby-redis` — `redis:7-alpine` próprio do Lobby, com senha, só na rede interna do compose (sem porta no host, fora da `identidade-net`). Guarda o `jti` da asserção do Conecta e os tetos de chamada. É cache: não persiste. Ver [Redis do Lobby](#redis-do-lobby-tsk-1068) |
+| GlitchTip (TSK-1142) | Exceção não tratada do backend e do navegador vai ao projeto `lobby` (id 3) de <https://erros.sejaap.com.br>, sem dado pessoal. Liga com `SENTRY_DSN` no `lobby.env`; o release é o `GIT_COMMIT` do build. Ver [GlitchTip](#glitchtip-tsk-1142-erros-do-back-e-do-front) |
 | Conecta (TSK-1059) | O Admin Lobby do Conecta chama `/api/integracao/*` e algumas rotas de administração com a asserção `X-Conecta-Assercao` (ADR-002 §13). Precisa de `CONECTA_ASSERCAO_CHAVES` e de `LOBBY_REDIS_URL`; sem eles, 503 `INTEGRACAO_DESLIGADA` e nada mais muda |
 
 Portas vizinhas já tomadas nesta VPS — confira antes de mexer:
@@ -96,7 +97,7 @@ e, para os departamentos, `OMIE_APP_KEY` e `OMIE_APP_SECRET`.
 
 ```bash
 cd /opt/conecta/app/Lobby_SejaAP
-docker compose up -d --build
+GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build   # o commit é o release do GlitchTip
 docker compose exec backend python manage.py migrate     # à mão, sempre
 ```
 
@@ -157,11 +158,17 @@ cd /opt/conecta/app/Lobby_SejaAP
 `permission denied` antes de construir qualquer coisa. O usuário `deploy` está no
 grupo sudo e passa sem senha.
 
+**O `GIT_COMMIT=$(git rev-parse --short HEAD)` vai em todo comando que constrói**
+(TSK-1142): é gravado na imagem e vira o `release` dos erros no GlitchTip. Sem
+ele a imagem sobe igual, mas os eventos chegam sem release e não dá para saber
+de qual deploy é o erro. Não o ponha no `lobby.env`: lá ele ficaria parado no
+commit de quando foi escrito.
+
 ### Só o front
 
 ```bash
 git pull --ff-only origin main
-sudo docker compose up -d --build --no-deps frontend
+sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build --no-deps frontend
 ```
 
 O `--no-deps` evita recriar backend e túnel por nada. E o `--build` é obrigatório:
@@ -172,7 +179,7 @@ não montados por volume — editar o arquivo na VPS não muda o que o nginx ser
 
 ```bash
 git pull --ff-only origin main
-sudo docker compose up -d --build
+sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
 ```
 
 ### Com migration: a ordem importa
@@ -193,7 +200,7 @@ sudo docker tag lobby-sejaap-departamentos:latest lobby-sejaap-departamentos:$(g
 sudo docker tag lobby-sejaap-categorias:latest lobby-sejaap-categorias:$(git rev-parse --short HEAD@{1})
 
 # 2. Construir SEM trocar o que está servindo
-sudo docker compose build
+sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose build
 
 # 3. Migrar com a imagem NOVA, ainda sem trocar os containers
 sudo docker compose run --rm --no-deps backend python manage.py migrate
@@ -575,6 +582,104 @@ comprometido daqui e reiniciar vem PRIMEIRO.
 `sub`, url, método, status, `codigo`, tempo e IP — nunca a asserção. Recusa de
 relógio traz a diferença medida (`detalhe=venceu há 75s`): arrume o NTP, não a
 tolerância.
+
+### GlitchTip (TSK-1142): erros do back e do front
+
+O backend (o gunicorn e os dois laços do Omie) e as três páginas do navegador
+mandam a exceção NÃO tratada ao projeto `lobby` (id 3) do GlitchTip da SEJA AP,
+<https://erros.sejaap.com.br>, organização `seja-ap`. É o desenho do Conecta
+(TSK-1136): sem dado pessoal (CNPJ, CPF, e-mail, telefone, senha, token,
+Authorization, cookie, corpo e query string saem mascarados ou nem saem), sem
+tracing, sem sessões e sem log virando evento. O IP de quem usa quem tira é o
+`scrub_config` do projeto, no servidor do GlitchTip.
+
+| Variável | Onde | Efeito |
+|---|---|---|
+| `SENTRY_DSN` | `lobby.env` | DSN do projeto `lobby`. Vale para o backend (pelo `env_file`) e para o front (o compose o repassa ao container do nginx, que escreve o `/glitchtip/config.js` na subida). **Vazio = nada é enviado**, de lado nenhum. DSN fora do formato: o backend avisa `[GLITCHTIP] desligado: SENTRY_DSN inválido` e segue; o front avisa `front desligado: SENTRY_DSN fora do formato de DSN` e segue |
+| `SENTRY_ENVIRONMENT` | `lobby.env`, opcional | `production` se ausente |
+| `GIT_COMMIT` | **comando do deploy**, nunca no `lobby.env` | Gravado nas imagens pelo build: é o `release`. Ver [Deploy do dia a dia](#deploy-do-dia-a-dia) |
+
+O DSN de front é público por natureza: vai para o navegador de qualquer
+visitante, em `/glitchtip/config.js`. É o mesmo DSN do backend porque o projeto é
+um só; o evento do navegador chega com `platform: javascript`.
+
+**O front não tem build**, então não há source map: a pilha do erro do navegador
+aponta para o `index.html` (o código roda inline, transpilado pelo Babel). O SDK
+do navegador é o `glitchtip/sentry-browser-11.8.0.min.js`, servido pelo próprio
+Lobby, com versão fixa e sha256 conferido no teste
+(`tests/front/glitchtip.test.mjs`). O Lobby não tem CSP, então nada a liberar
+para `erros.sejaap.com.br`.
+
+**Ligar** (o deploy é o de [Front + backend](#front--backend), sem migration):
+
+```bash
+# 0. ANTES do DSN: no GlitchTip, projeto lobby, confira que o scrub_config que
+#    tira o IP está ligado (o mesmo dos outros projetos da seja-ap, TSK-1136).
+#    O SDK não manda IP, mas o servidor grava o da conexão; sem o scrub_config,
+#    o primeiro erro do navegador já guarda o IP de quem vende.
+
+# 1. O DSN no lobby.env (o valor vem do GlitchTip, projeto lobby > Settings >
+#    Client Keys). Uma linha: SENTRY_DSN=https://<chave>@erros.sejaap.com.br/3
+sudoedit /opt/conecta/env/lobby.env
+
+# 2. Construir e subir com o commit
+git pull --ff-only origin main
+sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
+
+# 3. Ligou?
+sudo docker compose logs backend | grep GLITCHTIP          # [GLITCHTIP] ligado (release=<commit>), um por worker
+sudo docker compose logs frontend | grep GLITCHTIP         # [GLITCHTIP] front ligado (release=<commit>)
+curl -s https://lobby.sejaap.com.br/glitchtip/config.js    # o DSN, o commit e production
+```
+
+**Conferir o backend** (passo 3 do contrato). A rota
+`POST /api/diagnostico/erro-de-teste` levanta `ErroDeTesteDoGlitchTip` de
+propósito; só superusuário (`is_superuser`), que nenhum fluxo do Lobby dá — a
+diretoria é só `is_staff`. Por isso o roteiro cria um usuário de diagnóstico sem
+senha, tira um token de 5 minutos para ele e o apaga no fim:
+
+```bash
+TOKEN=$(sudo docker compose exec -T backend python manage.py shell -c "
+from datetime import timedelta
+from django.contrib.auth.models import User
+from rest_framework_simplejwt.tokens import AccessToken
+u, _ = User.objects.get_or_create(username='diagnostico-glitchtip')
+u.is_superuser = True; u.is_active = True; u.set_unusable_password(); u.save()
+t = AccessToken.for_user(u); t.set_exp(lifetime=timedelta(minutes=5)); print(t)" | tail -1)
+
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://lobby.sejaap.com.br/api/diagnostico/erro-de-teste?cnpj=12.345.678/0001-95"   # 500
+
+sudo docker compose exec -T backend python manage.py shell -c "
+from django.contrib.auth.models import User
+User.objects.filter(username='diagnostico-glitchtip').delete()
+print('sobrou', User.objects.filter(username='diagnostico-glitchtip').count())"   # sobrou 0
+```
+
+Se a sessão cair entre o primeiro e o último comando, rode só o último: o
+`diagnostico-glitchtip` não tem senha, mas é superusuário e não deve ficar.
+
+No GlitchTip, projeto `lobby`: uma issue `ErroDeTesteDoGlitchTip` com **release =
+o commit do deploy** e environment `production`. Abra o evento: a URL sem a query
+(sem o CNPJ), nenhum `Authorization`, cookie, e-mail ou token, e sem bloco de
+usuário. Teto: 10 por hora por pessoa. Outra conta leva 403; sem token, 401.
+
+**Conferir o front.** Em <https://lobby.sejaap.com.br>, no console do navegador:
+`lobbyErroDeTesteGlitchtip()`. Chega uma issue `Error: Erro de teste do GlitchTip
+(TSK-1142), disparado no console`, com o mesmo release, `platform: javascript`,
+sem IP (o `scrub_config`) e sem query na URL. A função só existe com o SDK ligado:
+"is not defined" no console quer dizer `config.js` sem DSN. **IP no evento** (no
+bloco de usuário) quer dizer `scrub_config` desligado no projeto: desligue o envio
+(abaixo), apague o evento no GlitchTip e só religue depois de ajustar o projeto.
+
+**Desligar**: apague o `SENTRY_DSN` do `lobby.env` e
+`sudo docker compose up -d --force-recreate backend departamentos categorias frontend`.
+Nada mais muda; a rota de diagnóstico continua respondendo 500, só sem o envio.
+
+**Rollback pela Cloudflare Pages**: lá não existe o `/glitchtip/config.js` (é
+escrito pelo container), então o console mostra um erro de script ou de tipo
+MIME nessa URL. É inofensivo: a página segue e nada é enviado.
 
 ## Verificações
 

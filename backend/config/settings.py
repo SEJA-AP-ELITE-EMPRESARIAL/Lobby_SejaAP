@@ -333,6 +333,9 @@ REST_FRAMEWORK = {
         "integracao_leitura": os.environ.get("LOBBY_RATE_INTEGRACAO_LEITURA", "120/min"),
         "integracao_escrita": os.environ.get("LOBBY_RATE_INTEGRACAO_ESCRITA", "30/min"),
         "integracao_falhas": os.environ.get("LOBBY_RATE_INTEGRACAO_FALHAS", "60/min"),
+        # Erro de propósito para conferir o GlitchTip depois do deploy
+        # (TSK-1142), por superusuário. Cada chamada é uma issue a mais lá.
+        "diagnostico": "10/hour",
     },
     "UNAUTHENTICATED_USER": "django.contrib.auth.models.AnonymousUser",
 }
@@ -424,3 +427,14 @@ LOGGING = {
         "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
     },
 }
+
+
+# === GlitchTip (TSK-1142) ===
+# Exceção não tratada vai ao projeto `lobby` do GlitchTip da SEJA AP, sem dado
+# pessoal. Liga só com SENTRY_DSN no ambiente, e nunca na suíte (nem com o DSN
+# no .env). O `release` é o GIT_COMMIT gravado na imagem pelo build; o
+# `environment`, SENTRY_ENVIRONMENT ('production' se ausente). A regra e a
+# limpeza do evento moram em config/glitchtip.py.
+from .glitchtip import ligar_pelo_ambiente  # noqa: E402
+
+GLITCHTIP_ATIVO = ligar_pelo_ambiente()
