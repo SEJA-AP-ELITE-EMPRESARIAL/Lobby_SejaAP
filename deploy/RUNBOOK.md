@@ -97,7 +97,7 @@ e, para os departamentos, `OMIE_APP_KEY` e `OMIE_APP_SECRET`.
 
 ```bash
 cd /opt/conecta/app/Lobby_SejaAP
-docker compose up -d --build
+GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build   # o commit é o release do GlitchTip
 docker compose exec backend python manage.py migrate     # à mão, sempre
 ```
 
@@ -613,6 +613,11 @@ para `erros.sejaap.com.br`.
 **Ligar** (o deploy é o de [Front + backend](#front--backend), sem migration):
 
 ```bash
+# 0. ANTES do DSN: no GlitchTip, projeto lobby, confira que o scrub_config que
+#    tira o IP está ligado (o mesmo dos outros projetos da seja-ap, TSK-1136).
+#    O SDK não manda IP, mas o servidor grava o da conexão; sem o scrub_config,
+#    o primeiro erro do navegador já guarda o IP de quem vende.
+
 # 1. O DSN no lobby.env (o valor vem do GlitchTip, projeto lobby > Settings >
 #    Client Keys). Uma linha: SENTRY_DSN=https://<chave>@erros.sejaap.com.br/3
 sudoedit /opt/conecta/env/lobby.env
@@ -648,8 +653,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 
 sudo docker compose exec -T backend python manage.py shell -c "
 from django.contrib.auth.models import User
-print(User.objects.filter(username='diagnostico-glitchtip').delete())"
+User.objects.filter(username='diagnostico-glitchtip').delete()
+print('sobrou', User.objects.filter(username='diagnostico-glitchtip').count())"   # sobrou 0
 ```
+
+Se a sessão cair entre o primeiro e o último comando, rode só o último: o
+`diagnostico-glitchtip` não tem senha, mas é superusuário e não deve ficar.
 
 No GlitchTip, projeto `lobby`: uma issue `ErroDeTesteDoGlitchTip` com **release =
 o commit do deploy** e environment `production`. Abra o evento: a URL sem a query
@@ -660,11 +669,17 @@ usuário. Teto: 10 por hora por pessoa. Outra conta leva 403; sem token, 401.
 `lobbyErroDeTesteGlitchtip()`. Chega uma issue `Error: Erro de teste do GlitchTip
 (TSK-1142), disparado no console`, com o mesmo release, `platform: javascript`,
 sem IP (o `scrub_config`) e sem query na URL. A função só existe com o SDK ligado:
-"is not defined" no console quer dizer `config.js` sem DSN.
+"is not defined" no console quer dizer `config.js` sem DSN. **IP no evento** (no
+bloco de usuário) quer dizer `scrub_config` desligado no projeto: desligue o envio
+(abaixo), apague o evento no GlitchTip e só religue depois de ajustar o projeto.
 
 **Desligar**: apague o `SENTRY_DSN` do `lobby.env` e
 `sudo docker compose up -d --force-recreate backend departamentos categorias frontend`.
 Nada mais muda; a rota de diagnóstico continua respondendo 500, só sem o envio.
+
+**Rollback pela Cloudflare Pages**: lá não existe o `/glitchtip/config.js` (é
+escrito pelo container), então o console mostra um erro de script ou de tipo
+MIME nessa URL. É inofensivo: a página segue e nada é enviado.
 
 ## Verificações
 

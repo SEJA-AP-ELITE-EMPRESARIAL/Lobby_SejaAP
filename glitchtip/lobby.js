@@ -94,11 +94,13 @@
     [/\beyJ[\w-]+(?:\.[\w-]*)*/g, "[token]"],
     // Usuário e senha dentro de URL. Antes do e-mail, que comeria só um pedaço.
     [/(\b[A-Za-z][A-Za-z0-9+.-]{0,20}:\/\/)[^\s/@"'<>]{1,256}@/g, "$1[credencial]@"],
-    // Partes com teto (64 e 253, os do RFC): sem ele a regex fica quadrática.
-    [/[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}/g, "[e-mail]"],
+    // Partes com teto (64 e 253, os do RFC): sem ele a regex fica quadrática. Com
+    // a letra acentuada: com só A-Z, "joão@..." deixaria o "joã" para trás.
+    [/[\p{L}\p{N}_.%+-]{1,64}@[\p{L}\p{N}_.-]{1,253}\.[A-Za-z]{2,24}/gu, "[e-mail]"],
     [/\b[A-Z0-9]{2}\.[A-Z0-9]{3}\.[A-Z0-9]{3}\/[A-Z0-9]{4}-\d{2}\b/g, "[CNPJ]"],
     [/\b[A-Z0-9]{12}\d{2}\b/g, "[CNPJ]"],
     [/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, "[CPF]"],
+    [/\b\d{9}-\d{2}\b/g, "[CPF]"],
     [/\b\d{11}\b/g, "[CPF]"],
     [/\(\d{2}\)\s?\d{4,5}-?\d{4}\b/g, "[telefone]"],
     [/\+55\s?\(?\d{2}\)?\s?\d{4,5}-?\d{4}\b/g, "[telefone]"],

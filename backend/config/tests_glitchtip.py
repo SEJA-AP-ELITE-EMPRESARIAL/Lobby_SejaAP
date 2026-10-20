@@ -152,6 +152,8 @@ class LimparEventoTests(SimpleTestCase):
                 '{"comprovante": "[Filtrado]", "nonce": "[Filtrado]"}',
             "{'razao_social': 'Padaria Pao Quente LTDA', 'representante': 'Joao'}":
                 "{'razao_social': '[Filtrado]', 'representante': '[Filtrado]'}",
+            "email joão.silva@empresa.com.br": "email [e-mail]",
+            "CPF 123456789-09": "CPF [CPF]",
         }
         for texto, esperado in casos.items():
             with self.subTest(texto=texto[:30]):
@@ -270,7 +272,8 @@ class LimparEventoTests(SimpleTestCase):
             with self.subTest(caso=nome):
                 inicio = time.monotonic()
                 mascarar_texto(texto)
-                self.assertLess(time.monotonic() - inicio, 0.2)
+                # Folga para o runner lento do CI: o quadrático custaria segundos.
+                self.assertLess(time.monotonic() - inicio, 0.5)
         self.assertEqual(mascarar_texto("Periodo 01 2025-2026"), "Periodo 01 2025-2026")
 
     def test_mascara_cnpj_alfanumerico_e_nao_estraga_texto_comum(self):

@@ -115,13 +115,15 @@ _MASCARAS_DE_DADO = (
     # DSN. Antes do e-mail, que comeria só o pedaço depois dos dois pontos.
     (re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]{0,20}://)[^\s/@\"'<>]{1,256}@"), r"\1[credencial]@"),
     # Partes com teto (64 e 253, os do RFC): sem ele a regex reescaneia cada trecho
-    # longo sem `@` e fica quadrática (50 KB custavam segundos).
-    (re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}"), "[e-mail]"),
+    # longo sem `@` e fica quadrática (50 KB custavam segundos). `\w` pega a letra
+    # acentuada: com só A-Z, "joão@..." deixaria o "joã" para trás.
+    (re.compile(r"[\w.%+-]{1,64}@[\w.-]{1,253}\.[A-Za-z]{2,24}"), "[e-mail]"),
     # CNPJ com máscara, numérico ou alfanumérico (o novo, de 2026: 12 posições
     # de letra ou número e 2 dígitos verificadores).
     (re.compile(r"\b[A-Z0-9]{2}\.[A-Z0-9]{3}\.[A-Z0-9]{3}/[A-Z0-9]{4}-\d{2}\b"), "[CNPJ]"),
     (re.compile(r"\b[A-Z0-9]{12}\d{2}\b"), "[CNPJ]"),
     (re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b"), "[CPF]"),
+    (re.compile(r"\b\d{9}-\d{2}\b"), "[CPF]"),
     (re.compile(r"\b\d{11}\b"), "[CPF]"),
     (re.compile(r"\(\d{2}\)\s?\d{4,5}-?\d{4}\b"), "[telefone]"),
     (re.compile(r"\+55\s?\(?\d{2}\)?\s?\d{4,5}-?\d{4}\b"), "[telefone]"),

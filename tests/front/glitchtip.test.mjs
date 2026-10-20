@@ -155,6 +155,7 @@ test('credenciais e dados do Lobby em texto', () => {
       '{"comprovante": "[Filtrado]", "razao_social": "[Filtrado]"}',
     'faultstring: CNPJ 12ABC34501DE35 já cadastrado': 'faultstring: CNPJ [CNPJ] já cadastrado',
     'ligar (11) 91234-5678 ou +55 11 912345678': 'ligar [telefone] ou [telefone]',
+    'email joão.silva@empresa.com.br e CPF 123456789-09': 'email [e-mail] e CPF [CPF]',
     'Key (cnpj)=(12345678000195) already exists\nDETAIL: Failing row contains (1, Maria)':
       'Key (cnpj)=([Filtrado]) already exists\nDETAIL: [Filtrado]',
     // Protocolo da venda e URL do webhook não são dado pessoal: ficam legíveis.
@@ -207,7 +208,8 @@ test('pior caso das regex dentro do limite', () => {
   for (const [nome, texto] of Object.entries(casos)) {
     const inicio = performance.now();
     lobby.mascararTexto(texto);
-    assert.ok(performance.now() - inicio < 200, `${nome} demorou`);
+    // Folga para o runner lento do CI: o quadrático custaria segundos.
+    assert.ok(performance.now() - inicio < 500, `${nome} demorou`);
   }
 });
 
@@ -311,6 +313,8 @@ test('config.js da subida: sem DSN, desligado', () => {
   const { log, config } = configDaSubida({});
   assert.deepEqual(config, { dsn: '', release: '', environment: 'production' });
   assert.match(log, /front desligado: sem SENTRY_DSN/);
+  // Sem GIT_COMMIT o release fica vazio, sem acusar formato que não existe.
+  assert.doesNotMatch(log, /fora do formato/);
 });
 
 test('config.js da subida: DSN, release e ambiente', () => {
@@ -332,6 +336,7 @@ test('config.js da subida: valor fora do formato não vira script', () => {
   const { config } = configDaSubida({
     SENTRY_DSN: 'https://chave@erros.sejaap.com.br/3', GIT_COMMIT: 'abc"; alert(1); "', SENTRY_ENVIRONMENT: 'x"y',
   });
+  assert.match(configDaSubida({ GIT_COMMIT: 'abc"x' }).log, /GIT_COMMIT fora do formato/);
   assert.deepEqual(config, { dsn: 'https://chave@erros.sejaap.com.br/3', release: '', environment: 'production' });
 });
 

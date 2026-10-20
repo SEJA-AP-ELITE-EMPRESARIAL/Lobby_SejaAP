@@ -100,5 +100,12 @@ class RotaErroDeTesteTests(TestCase):
                 with self.assertRaises(ErroDeTesteDoGlitchTip):
                     cliente.post(ROTA)
             self.assertEqual(cliente.post(ROTA).status_code, 429)
-            # O 403 de quem não pode não gasta a cota de ninguém.
-            self.assertEqual(self._cliente(self.contas_barradas["gerente"]).post(ROTA).status_code, 403)
+
+    def test_a_permissao_vem_antes_do_teto(self):
+        """Quem não pode leva 403 sempre, nunca 429: as recusas não consomem a cota."""
+        gerente = self._cliente(self.contas_barradas["gerente"])
+        with self.assertLogs("django.request", "WARNING"):
+            respostas = {gerente.post(ROTA).status_code for _ in range(11)}
+        self.assertEqual(respostas, {403})
+        with self.assertLogs("django.request", "ERROR"), self.assertRaises(ErroDeTesteDoGlitchTip):
+            self._cliente(self.superusuario).post(ROTA)

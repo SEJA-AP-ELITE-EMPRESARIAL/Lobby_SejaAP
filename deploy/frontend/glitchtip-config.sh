@@ -26,7 +26,7 @@ if [ -n "$dsn" ] && ! printf '%s' "$dsn" | grep -Eq '^https?://[A-Za-z0-9]{1,64}
     echo "[GLITCHTIP] front desligado: SENTRY_DSN fora do formato de DSN"
     dsn=""
 fi
-if ! printf '%s' "$release" | grep -Eq '^[A-Za-z0-9._-]{0,64}$'; then
+if [ -n "$release" ] && ! printf '%s' "$release" | grep -Eq '^[A-Za-z0-9._-]{1,64}$'; then
     echo "[GLITCHTIP] GIT_COMMIT fora do formato: o front segue sem release"
     release=""
 fi
