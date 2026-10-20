@@ -9,6 +9,13 @@
 <link rel="icon" href="data:,">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet">
 
+<!-- Erros do navegador no GlitchTip (TSK-1142), antes de tudo para pegar até o
+     erro do React e do Babel. Servidos pelo próprio Lobby; sem SENTRY_DSN no
+     container, o config.js vem vazio e nada é enviado. Ver glitchtip/lobby.js. -->
+<script src="/glitchtip/config.js"></script>
+<script src="/glitchtip/sentry-browser-11.8.0.min.js"></script>
+<script src="/glitchtip/lobby.js"></script>
+
 <!-- React + Babel (mesmas versões usadas na página de negociação que está no ar) -->
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>

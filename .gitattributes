@@ -8,3 +8,8 @@
 *.py   text eol=lf
 Dockerfile text eol=lf
 *.yml  text eol=lf
+
+# SDK do GlitchTip de terceiros, minificado (TSK-1142): cópia byte a byte do
+# arquivo oficial, conferida por sha256 no teste. Sem diff de texto nem troca de
+# fim de linha.
+glitchtip/sentry-browser-*.min.js -text -diff

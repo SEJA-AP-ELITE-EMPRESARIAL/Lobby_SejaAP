@@ -141,3 +141,10 @@ jobs:
           node --version
           TZ=America/Sao_Paulo node --test tests/front/cronograma.test.mjs
           TZ=UTC node --test tests/front/cronograma.test.mjs
+
+      - name: Erros do navegador no GlitchTip, sem dado pessoal
+        # TSK-1142: o SDK versionado é o oficial (sha256), os HTMLs o carregam
+        # antes do React, a limpeza do evento mascara CNPJ, senha e Authorization,
+        # sem DSN nada liga e o config.js da subida não vira injeção de script.
+        # Roda o SDK de verdade numa VM do Node, sem rede.
+        run: node --test tests/front/glitchtip.test.mjs

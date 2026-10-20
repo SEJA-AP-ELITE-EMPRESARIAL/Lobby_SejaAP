@@ -217,7 +217,18 @@ services:
       # rollback durante a transição.
       context: .
       dockerfile: deploy/frontend/Dockerfile
+      args:
+        # O release dos erros do navegador, o mesmo commit do backend (TSK-1142).
+        GIT_COMMIT: ${GIT_COMMIT:-}
     container_name: lobby-frontend
+    environment:
+      # Erros do navegador no GlitchTip (TSK-1142): o DSN do projeto `lobby`, o
+      # mesmo do backend, lido do .env deste diretório (o link para o lobby.env).
+      # Vazio = SDK desligado. Na subida vira o /glitchtip/config.js (ver
+      # deploy/frontend/glitchtip-config.sh). O DSN de front é público por
+      # natureza: vai para o navegador de qualquer visitante.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
     depends_on:
       - backend
     restart: unless-stopped
