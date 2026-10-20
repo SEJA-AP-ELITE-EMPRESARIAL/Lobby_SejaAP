@@ -6,8 +6,8 @@ Serve para conferir, depois de um deploy, que o erro chega ao GlitchTip (projeto
 manda o evento. Sem SENTRY_DSN, só devolve o 500. O roteiro está no
 deploy/RUNBOOK.md, "GlitchTip".
 
-Só superusuário do Django (`is_superuser`), que no Lobby ninguém é por padrão:
-nem a diretoria, que é só `is_staff`. Qualquer outra conta leva 403 sem a
+Só superusuário do Django (`is_superuser`), que nenhum fluxo do Lobby dá: a
+diretoria é só `is_staff`. Qualquer outra conta leva 403 sem a
 exceção acontecer, para ninguém mais conseguir encher o GlitchTip de issues
 falsas. POST, e não GET, para um link ou um <img> não dispararem a rota por
 engano. Teto de 10 por hora por pessoa. A asserção do Conecta não chega aqui: a
