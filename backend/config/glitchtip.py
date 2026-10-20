@@ -147,8 +147,9 @@ _MARCA_DO_SDK = "..."
 # e e-mail literais no código), mas não pelas de chave em texto.
 _CONTEXTO_DE_CODIGO = {"pre_context", "context_line", "post_context"}
 
-# Caracteres de que CPF, CNPJ, e-mail, JWT e URL são feitos.
-_PONTUACAO_DE_DADO = frozenset("._%+-@/=:")
+# Caracteres de que CPF, CNPJ, e-mail, JWT e URL são feitos. Com o `_`, que o
+# e-mail aceita: num corte em "fulana_x@empre", o "fulana_" não pode sobrar.
+_PONTUACAO_DE_DADO = frozenset("._%+-@/=:_")
 
 
 def _sem_resto_cortado(texto):
