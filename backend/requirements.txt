@@ -40,3 +40,9 @@ cryptography==50.0.2
 # cache. Com a asserção, o cache compartilhado deixou de ser opcional: é nele que
 # o `jti` fica guardado contra repetição (ADR-002 §4.6).
 redis==8.1.0
+
+# Erros em produção no GlitchTip da SEJA AP (TSK-1142), que fala o protocolo do
+# Sentry. Só liga com SENTRY_DSN no ambiente, e nunca na suíte (ver
+# config/glitchtip.py). A mesma versão do Conecta (TSK-1136). Depende só de
+# certifi e urllib3.
+sentry-sdk==2.72.0
