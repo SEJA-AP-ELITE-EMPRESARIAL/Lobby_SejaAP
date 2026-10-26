@@ -105,6 +105,40 @@ class RevalidacaoDoTokenTest(TestCase):
         self.assertEqual(resposta.status_code, 422)
         self.assertIn("exigem a autorização", resposta.json()["erro"])
 
+    def test_reativada_e_logada_de_novo_o_token_novo_vale_na_hora(self):
+        """Recusa → reativação → novo login → token novo, sem limpar o cache.
+
+        O login aceito pelo /api/sessao conta como revalidação (como no
+        `BackendIdentidade`): sem isso, a recusa guardada valeria para o token
+        novo pelo resto dos 5 minutos, e a venda negociada seria recusada logo
+        depois de o modal dizer "autorizado".
+        """
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.obter.return_value = {"ativo": False}
+            self.assertEqual(self.sessao().status_code, 401)
+
+        with patch("apps.contas.views.ClienteIdentidade") as Login:
+            Login.return_value.verificar.return_value = {
+                "identidade_id": str(self.identidade_id),
+                "email": "gerente@sejaap.com.br",
+                "nome": "Gerente",
+                "precisa_trocar_senha": False,
+            }
+            resposta = APIClient().post(
+                "/api/sessao", {"email": "gerente@sejaap.com.br", "senha": "x"}, format="json"
+            )
+        self.assertEqual(resposta.status_code, 200)
+
+        novo = APIClient(HTTP_AUTHORIZATION=f"Bearer {resposta.json()['token']}")
+        with patch(ALVO) as Cliente:
+            self.assertEqual(novo.get("/api/sessao/atual").status_code, 200)
+            self.assertEqual(
+                novo.post("/api/venda/comprovante", _venda_negociada(), format="json").status_code,
+                200,
+            )
+        # Valeu pelo login, sem perguntar de novo ao Conecta.
+        Cliente.return_value.obter.assert_not_called()
+
     # ----- o que NÃO derruba ---------------------------------------------
 
     def test_identidade_ativa_segue_e_so_pergunta_uma_vez_a_cada_5_minutos(self):
