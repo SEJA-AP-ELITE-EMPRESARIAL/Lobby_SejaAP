@@ -148,3 +148,11 @@ jobs:
         # sem DSN nada liga e o config.js da subida não vira injeção de script.
         # Roda o SDK de verdade numa VM do Node, sem rede.
         run: node --test tests/front/glitchtip.test.mjs
+
+      - name: Login central em manutenção (index, esqueci e definir senha)
+        # TSK-1238: o 503 `erro: manutencao` vira o aviso "Temporariamente
+        # indisponível / Em manutenção", com a previsão no horário de Brasília.
+        # Dois fusos, porque o texto da previsão sai do Date.
+        run: |
+          TZ=America/Sao_Paulo node --test tests/front/manutencao.test.mjs
+          TZ=UTC node --test tests/front/manutencao.test.mjs
