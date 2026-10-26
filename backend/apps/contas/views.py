@@ -82,7 +82,9 @@ MSG_BLOQUEADO = "Muitas tentativas. Aguarde alguns minutos e tente de novo."
 MSG_INDISPONIVEL = (
     "O sistema de login está indisponível no momento. Tente em instantes."
 )
-# Só quando o aviso de manutenção do Conecta chega sem texto nenhum.
+# Rede de segurança, quase nunca usada: o Conecta manda sempre a `mensagem`, e
+# sem ela o cliente já põe o `detalhe` (ou a frase genérica dele) no lugar. Só
+# entra se as duas vierem vazias.
 MSG_MANUTENCAO = "O login central está em manutenção. Tente de novo mais tarde."
 MSG_LINK_MORTO = (
     "Este link não vale mais. Ele expira em 48 horas e só pode ser usado uma "

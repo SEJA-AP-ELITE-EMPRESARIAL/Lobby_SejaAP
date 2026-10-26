@@ -62,14 +62,25 @@ test('sem previsão, ou ilegível, a tela não fala de hora', () => {
   }
 });
 
+test('previsão que já passou (a manutenção atrasou) some da tela', () => {
+  const agora = new Date('2026-10-26T11:00:00-03:00');
+  assert.equal(textoDaPrevisao('2026-10-26T09:00:00-03:00', agora), null);
+  assert.equal(textoDaPrevisao('2026-10-26T11:00:00-03:00', agora), null);
+  assert.equal(textoDaPrevisao('2026-10-26T11:01:00-03:00', agora), 'hoje às 11:01');
+});
+
 test('o 503 de manutenção vira o aviso, com a mensagem e a previsão', () => {
+  // Duas horas à frente do relógio de verdade: o `erroDeManutencao` usa o
+  // `agora` padrão, e uma data fixa venceria no dia seguinte.
+  const daquiADuasHoras = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
   const erro = erroDeManutencao(
     { status: 503 },
-    { erro: 'manutencao', mensagem: 'Atualização do sistema.', previsao: '2026-10-26T15:00:00-03:00' },
+    { erro: 'manutencao', mensagem: 'Atualização do sistema.', previsao: daquiADuasHoras },
   );
   assert.ok(erro instanceof Error);
   assert.equal(erro.manutencao.mensagem, 'Atualização do sistema.');
-  assert.match(erro.manutencao.previsao, /15:00$/);
+  assert.equal(erro.manutencao.previsao, textoDaPrevisao(daquiADuasHoras));
+  assert.match(erro.manutencao.previsao, /às \d\d:\d\d$/);
 });
 
 test('manutenção sem texto ainda tem frase', () => {

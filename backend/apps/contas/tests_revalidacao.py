@@ -37,6 +37,7 @@ from apps.catalogo.tests_escrita import cria_pessoa
 from apps.vendas.tests_comprovante import venda_de_tabela
 
 from .models import Papel
+from .views import MSG_MANUTENCAO
 
 # Onde a `revalidar_sessao` instancia o cliente: no módulo dele.
 ALVO = "identidade_client.ClienteIdentidade"
@@ -274,7 +275,15 @@ class ManutencaoNoLoginTest(ConectaFalsoTest):
 
         self.assertEqual(corpo["erro"], "manutencao")
         self.assertIsNone(corpo["previsao"])
+        # Sem `mensagem`, o cliente põe a frase genérica do `detalhe` dele.
         self.assertTrue(corpo["mensagem"])
+
+    def test_aviso_com_textos_vazios_usa_a_frase_do_lobby(self):
+        self.responde("POST", "/api/v1/credenciais/verificar", 503,
+                      {"erro": "manutencao", "detalhe": "", "mensagem": "  "})
+        corpo = self.entrar().json()
+
+        self.assertEqual(corpo["mensagem"], MSG_MANUTENCAO)
 
     def test_503_que_nao_e_manutencao_continua_indisponivel(self):
         """O Conecta ID de hoje não tem manutenção: o 503 dele é o de sempre."""

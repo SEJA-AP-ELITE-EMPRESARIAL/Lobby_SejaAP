@@ -394,6 +394,14 @@ SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", not DEBUG)
 # que se quer poder rodar a suíte contra o banco de verdade.
 if "test" in sys.argv:
     SECURE_SSL_REDIRECT = False
+    # A suíte nunca fala com o login central de verdade, nem com um `.env` de
+    # produção carregado: desde o cliente 1.5 (TSK-1238) todo token JWT é
+    # conferido no Conecta (`revalidar_sessao`), e os testes com token real
+    # fariam um GET lá com um UUID inventado. Sem URL, o cliente responde
+    # "indisponível" sem abrir conexão, e a sessão fica de pé. Quem testa a
+    # conversa com o Conecta liga um servidor falso por `override_settings`.
+    IDENTIDADE_URL = ""
+    IDENTIDADE_APP_KEY = ""
 
 # O /metrics fica FORA do redirect para https, e isso é necessário, não frouxidão.
 #
