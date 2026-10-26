@@ -35,10 +35,11 @@ conexão veio de dentro da malha de proxies (endereço privado ou loopback). Com
 contam saltos no `X-Forwarded-For` porque a contagem quebra em silêncio quando
 a topologia muda.
 
-Ele também reescreve o `X-Forwarded-For` com o mesmo endereço. É o que protege o
-`identidade_client.py`, que é cópia do Conecta ID e não se edita aqui: o
-`BackendIdentidade._ip` de lá lê o `X-Forwarded-For[0]`, e depois deste
-middleware essa posição passa a ser o IP real. Os originais ficam em
+Ele também reescreve o `X-Forwarded-For` com o mesmo endereço. Era o que
+protegia o `identidade_client.py` até a 1.2, que lia o `X-Forwarded-For[0]`;
+desde a 1.5 (TSK-1238) o settings diz `IDENTIDADE_NUM_PROXIES = 0` e o cliente
+lê o `REMOTE_ADDR` que este middleware já trocou. O header reescrito fica como
+segunda trava, para quem ler o `X-Forwarded-For` direto. Os originais ficam em
 `REMOTE_ADDR_ORIGINAL` e `X_FORWARDED_FOR_ORIGINAL`, sem o prefixo `HTTP_` para
 não voltarem a parecer header.
 

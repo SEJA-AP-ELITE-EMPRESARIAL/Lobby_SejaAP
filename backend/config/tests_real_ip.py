@@ -93,7 +93,7 @@ class RealIPMiddlewareTest(SimpleTestCase):
         self.assertEqual(request.META["REMOTE_ADDR"], IP_VISITANTE)
 
     def test_x_forwarded_for_passa_a_ter_so_o_ip_real(self):
-        """É o que protege o `identidade_client.py`, que lê a primeira posição."""
+        """Segunda trava para quem lê a primeira posição (o cliente até a 1.2)."""
         request = _processar(**headers_de_producao(forjado="1.2.3.4"))
         self.assertEqual(request.META["HTTP_X_FORWARDED_FOR"], IP_VISITANTE)
 
@@ -171,10 +171,11 @@ class RealIPMiddlewareTest(SimpleTestCase):
     # ----- o cliente copiado do Conecta ID ------------------------------
 
     def test_backend_identidade_le_o_ip_real(self):
-        """`identidade_client.py` é cópia e lê o `X-Forwarded-For[0]`.
+        """`identidade_client.py` é cópia e não se edita aqui.
 
-        Não se edita aqui (a fonte é o repositório do Conecta ID). O que o
-        protege é o middleware reescrever o header antes dele.
+        Desde a 1.5 ele lê o `REMOTE_ADDR` (`IDENTIDADE_NUM_PROXIES = 0`), que o
+        middleware já trocou pelo IP real; até a 1.2 lia o `X-Forwarded-For[0]`,
+        que o middleware também reescreve.
         """
         from identidade_client import BackendIdentidade
 
@@ -190,6 +191,10 @@ class FiacaoTest(SimpleTestCase):
 
     def test_drf_usa_o_remote_addr_normalizado(self):
         self.assertEqual(settings.REST_FRAMEWORK.get("NUM_PROXIES"), 0)
+
+    def test_cliente_do_login_central_usa_o_remote_addr_normalizado(self):
+        """Sem a chave, o cliente 1.5 lê o começo do X-Forwarded-For (TSK-1238)."""
+        self.assertEqual(settings.IDENTIDADE_NUM_PROXIES, 0)
 
 
 class ThrottleAnonimoTest(TestCase):

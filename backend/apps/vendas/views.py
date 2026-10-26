@@ -24,8 +24,8 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from apps.contas.autenticacao import JWTRevalidado
 from config.real_ip import ip_do_cliente
 
 from .servicos import VendaRecusada, emitir, validar
@@ -34,13 +34,17 @@ from .throttling import ComprovanteThrottle
 logger = logging.getLogger(__name__)
 
 
-class JWTOpcional(JWTAuthentication):
+class JWTOpcional(JWTRevalidado):
     """JWT quando vier, anônimo quando não vier — sem 401 no meio do caminho.
 
     A `JWTAuthentication` padrão levanta em token malformado, e isso derrubaria
     a venda a preço de tabela de um consultor cuja autorização tinha acabado de
     expirar. Aqui, token ruim significa "sem autorização": se a venda for
     negociada, o serviço recusa com uma mensagem que explica o que fazer.
+
+    Revalidado no Conecta (TSK-1238), e é aqui que mais importa: é este o token
+    que destrava a venda negociada. O de quem foi desativado lá vira "sem
+    autorização", como o vencido.
     """
 
     def authenticate(self, request):

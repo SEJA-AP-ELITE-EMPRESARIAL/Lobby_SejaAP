@@ -13,6 +13,11 @@ ser a credencial de cada pessoa no Conecta ID.
       403 { erro }   entrou, mas não pode fazer o que pediu
       429 { erro }   bloqueado por tentativas
       503 { erro }   Conecta ID fora do ar
+      503 { erro: "manutencao", mensagem, previsao }   login central em
+                     manutenção (cliente 1.5, TSK-1238); `previsao` é ISO 8601
+                     com fuso, ou null. O front mostra "Temporariamente
+                     indisponível / Em manutenção", e não um erro. As rotas de
+                     senha respondem o mesmo.
 
 `exp` é unix em SEGUNDOS, porque o front faz `raw.exp * 1000 > Date.now()`
 (`index.html:182`).
@@ -20,8 +25,9 @@ ser a credencial de cada pessoa no Conecta ID.
 POR QUE ESTA VIEW NÃO USA `authenticate()`
 
 O `BackendIdentidade` converte tanto `CredencialInvalida` quanto
-`SemAcessoAoApp` em `None` (`identidade_client.py:268-271`), e a view fica sem
-como distinguir os dois. Para o /django-admin/ isso é aceitável. Aqui não é:
+`SemAcessoAoApp` no mesmo desfecho (`None`, ou `PermissionDenied` para a conta
+já ligada, desde a 1.5 — ver `BackendIdentidade.authenticate`), e a view fica
+sem como distinguir os dois. Para o /django-admin/ isso é aceitável. Aqui não é:
 um gerente que existe no Conecta ID mas ainda não recebeu acesso ao app `lobby`
 digitaria a senha certa e leria "e-mail ou senha incorretos" — e o desfecho
 previsível é a pessoa redefinir a senha, falhar de novo e abrir chamado.
@@ -49,6 +55,7 @@ from identidade_client import (
     ClienteIdentidade,
     CredencialInvalida,
     ErroIdentidade,
+    IdentidadeEmManutencao,
     IdentidadeIndisponivel,
     NaoEncontrado,
     SemAcessoAoApp,
@@ -75,6 +82,8 @@ MSG_BLOQUEADO = "Muitas tentativas. Aguarde alguns minutos e tente de novo."
 MSG_INDISPONIVEL = (
     "O sistema de login está indisponível no momento. Tente em instantes."
 )
+# Só quando o aviso de manutenção do Conecta chega sem texto nenhum.
+MSG_MANUTENCAO = "O login central está em manutenção. Tente de novo mais tarde."
 MSG_LINK_MORTO = (
     "Este link não vale mais. Ele expira em 48 horas e só pode ser usado uma "
     "vez — peça um novo na tela de esqueci minha senha."
@@ -105,6 +114,27 @@ def _resposta(mensagem, codigo):
     return Response({"erro": mensagem}, status=codigo)
 
 
+def _resposta_manutencao(erro):
+    """503 do login central em manutenção, no formato que o front reconhece.
+
+    `erro` é um código, e não a frase: é por ele que a tela troca o aviso de
+    erro pela de manutenção. A frase é a `mensagem`, o texto do aviso publicado
+    no Conecta. A captura vem ANTES da de `IdentidadeIndisponivel`, de que ela é
+    subclasse. Aviso, e não erro, no log: manutenção é prevista, e o cliente já
+    registra a dele.
+    """
+    previsao = erro.previsao.isoformat() if erro.previsao else None
+    logger.warning("login central em manutenção (previsão: %s)", previsao or "sem previsão")
+    return Response(
+        {
+            "erro": "manutencao",
+            "mensagem": erro.mensagem or MSG_MANUTENCAO,
+            "previsao": previsao,
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 @throttle_classes([LoginThrottle])
@@ -133,6 +163,8 @@ def abrir_sessao(request):
         return _resposta(MSG_SEM_ACESSO, status.HTTP_403_FORBIDDEN)
     except BloqueadoTemporariamente:
         return _resposta(MSG_BLOQUEADO, status.HTTP_429_TOO_MANY_REQUESTS)
+    except IdentidadeEmManutencao as erro:
+        return _resposta_manutencao(erro)
     except IdentidadeIndisponivel:
         # NUNCA vira "senha incorreta". Se o serviço cai e todo mundo lê "senha
         # incorreta" ao mesmo tempo, a leitura natural é vazamento — e vem uma
@@ -232,6 +264,8 @@ def definir_senha(request):
         # Aqui a mensagem detalhada É útil, ao contrário do erro de token: é a
         # pessoa escolhendo a senha dela, e ela precisa saber o que corrigir.
         return _resposta(str(erro), status.HTTP_400_BAD_REQUEST)
+    except IdentidadeEmManutencao as erro:
+        return _resposta_manutencao(erro)
     except IdentidadeIndisponivel:
         logger.exception("Conecta ID indisponível na definição de senha")
         return _resposta(MSG_INDISPONIVEL, status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -270,6 +304,10 @@ def esqueci_senha(request):
 
     try:
         ClienteIdentidade().esqueci_senha(email)
+    except IdentidadeEmManutencao as erro:
+        # A mesma para qualquer e-mail, como a de sucesso: a manutenção é do
+        # serviço inteiro, não diz nada sobre o endereço.
+        return _resposta_manutencao(erro)
     except ErroIdentidade:
         # Larga de propósito: nesta rota o Conecta ID não devolve erro sobre a
         # conta — responde 202 para qualquer endereço. Tudo que chega aqui é

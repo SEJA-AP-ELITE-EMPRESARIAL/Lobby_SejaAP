@@ -78,6 +78,9 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Quem foi desativado no Conecta perde a sessão do /django-admin/ (cliente
+    # 1.5, TSK-1238). A API é JWT e se confere em `JWTRevalidado`, abaixo.
+    "apps.contas.autenticacao.revalidar_sessao_middleware",
     # O cabeçalho da asserção do Conecta só vale nas views que a declaram; em
     # qualquer outra, 403 ROTA_NAO_LIBERADA (TSK-1059). Ver
     # apps/contas/autenticacao_conecta.py.
@@ -210,6 +213,11 @@ IDENTIDADE_URL = os.environ.get("IDENTIDADE_URL", "http://identidade-api:8000")
 IDENTIDADE_APP_KEY = os.environ.get("IDENTIDADE_APP_KEY", "")
 IDENTIDADE_TIMEOUT = int(os.environ.get("IDENTIDADE_TIMEOUT", "5"))
 IDENTIDADE_RESOLVER_USUARIO = "apps.contas.identidade.resolver_usuario"
+# Zero: o `RealIPMiddleware` já pôs o IP do visitante no REMOTE_ADDR, e é ele
+# que o cliente 1.5 deve ler (no /django-admin/, pelo `BackendIdentidade`). Sem
+# a chave, o cliente leria o começo do X-Forwarded-For e avisaria no log. O
+# login da API passa o IP por conta própria (`views._ip_do_usuario`).
+IDENTIDADE_NUM_PROXIES = 0
 
 # === Asserção do Conecta (TSK-1059, ADR-002 §13) ===
 # O Conecta administra o Lobby chamando estas rotas em nome de uma pessoa, com um
@@ -278,7 +286,10 @@ AUTHENTICATION_BACKENDS = ["identidade_client.BackendIdentidade"]
 # === DRF ===
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # O JWT do simplejwt, mais a pergunta ao Conecta se a pessoa ainda vale
+        # (cliente 1.5, TSK-1238): o token de quem foi desativado lá para de
+        # valer em até 5 minutos, e não quando vencer, horas depois.
+        "apps.contas.autenticacao.JWTRevalidado",
     ),
     # Fechado por padrão. O que é público abre explicitamente com AllowAny —
     # hoje, só o GET do catálogo.
