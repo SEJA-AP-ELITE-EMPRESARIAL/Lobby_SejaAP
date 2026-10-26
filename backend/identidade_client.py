@@ -1,26 +1,30 @@
 """
-Cliente do Conecta ID — o módulo que cada app instala.
+Cliente do login central (o Conecta ID) — o módulo que cada app instala.
 
-FONTE DE VERDADE: `conecta-id/cliente/identidade_client.py`. Nos apps ele é
-copiado, não editado. Corrigiu algo? Corrija aqui e recopie — um cliente que
-diverge entre apps é a forma mais silenciosa de dois sistemas passarem a tratar
-o mesmo erro de jeitos diferentes.
+FONTE DE VERDADE, desde a 1.5: no repositório do Conecta, que assumiu o papel
+do Conecta ID, em `backend/backend/app/saas/conectaap/apps/identidade/cliente/
+identidade_client.py`. Até a 1.4 era `conecta-id/cliente/identidade_client.py`.
+Nos apps ele é copiado, não editado. Corrigiu algo? Corrija lá e recopie — um
+cliente que diverge entre apps é a forma mais silenciosa de dois sistemas
+passarem a tratar o mesmo erro de jeitos diferentes.
 
-Só depende de Django e da biblioteca padrão. Nada de `requests`: são cinco
-chamadas HTTP simples, e uma dependência a mais em três apps custa mais do que
-as vinte linhas de `urllib` que ela pouparia.
+Só depende de Django e da biblioteca padrão, e não importa nada do Conecta: ele
+roda dentro dos apps. Nada de `requests`: são poucas chamadas HTTP simples, e
+uma dependência a mais em cinco apps custa mais do que as vinte linhas de
+`urllib` que ela pouparia.
 
 ## Como um app usa
 
     # settings.py
     AUTHENTICATION_BACKENDS = [
         "identidade_client.BackendIdentidade",
-        "django.contrib.auth.backends.ModelBackend",   # fallback local
+        "django.contrib.auth.backends.ModelBackend",   # fallback local (conta sem vínculo)
     ]
-    IDENTIDADE_URL = "http://identidade-api:8000"
+    IDENTIDADE_URL = "https://conecta.sejaap.com.br/api/identidade"
     IDENTIDADE_APP_KEY = "AppKey financeiro:..."       # do .env
     AUTH_CENTRAL_ATIVO = True                          # a chave que reverte tudo
     IDENTIDADE_RESOLVER_USUARIO = "apps.formularios.identidade.resolver_usuario"
+    IDENTIDADE_NUM_PROXIES = 3                         # ver a 1.4
 
 O `resolver_usuario` é do app, e é onde mora tudo que o Conecta ID não sabe:
 criar o Perfil no financeiro, o nível de acesso e a equipe no kanban. O cliente
@@ -37,20 +41,233 @@ de novo dentro do app. Daí saíam as contas duplicadas.
 Leia sempre pela classe `Provisionamento`, nunca do dicionário cru: a carga é
 digitada por gente e pode trazer um valor que este app não conhece. O contrato
 é **provisionar melhor quando dá, nunca impedir o login**.
+
+## 1.3 — por que o link de senha não serve
+
+`TokenInvalido.motivo` diz por que um link REAL foi recusado: `"substituido"`
+(emitiram outro depois dele — só o link mais recente vale), `"expirado"` ou
+`"usado"`. `None` quando não há o que dizer: token inventado, ou conta
+desativada. É o que permite a tela trocar o "link inválido ou expirado" por uma
+frase que diz o que fazer; com a genérica, a pessoa pedia mais um link e anulava
+o que estava a caminho (incidente de 28/09/2026). O código do erro continua
+`token_invalido`: quem ainda usa a 1.2 recebe o mesmo erro de sempre.
+
+## 1.4 — o IP do usuário conta da direita
+
+O IP que vai ao Conecta ID (para o bloqueio por origem) saía do PRIMEIRO item do
+`X-Forwarded-For`, que é o que o próprio cliente escreve: cada proxy ACRESCENTA
+ao cabeçalho, sem apagar o que veio antes. Com `X-Forwarded-For: <IP do
+escritório>`, umas tentativas erradas trancavam o escritório inteiro, e trocar o
+cabeçalho a cada tentativa anulava a camada por IP contra senha comum (kanban,
+TSK-837, 30/09/2026).
+
+Desde a 1.4 o IP é o N-ésimo a partir do fim, com N = os proxies em que o app
+confia (`ip_do_request`). **Cada app precisa dizer quantos são:**
+
+    IDENTIDADE_NUM_PROXIES = 3   # ex.: Cloudflare -> nginx do host -> nginx do front
+
+Sem essa chave, vale o `REST_FRAMEWORK["NUM_PROXIES"]` do app, se ele tiver
+um maior que zero. Sem nenhuma das duas, o cliente mantém o comportamento
+antigo (o primeiro item), que é forjável, e avisa no log uma vez. `0` explícito
+quer dizer "não há proxy": vale o `REMOTE_ADDR`.
+
+## 1.5 — o Conecta no lugar do Conecta ID (TSK-1221)
+
+Três decisões do dono, de 23/10/2026.
+
+**Só o Conecta cria login e concede acesso**, pelo /admin, e nenhum app recebe
+link ou token de senha. Saíram `criar`, `alterar`, `conceder_acesso`,
+`configurar_acesso`, `revogar_acesso` e `emitir_token_de_senha` (a API já
+recusava essas escritas com 403 `sem_permissao`). Ficam as leituras
+(`verificar`, `buscar_por_email`, `listar_com_acesso`, `obter`, `saudavel`), a
+semente do primeiro login (`resolver_com_vinculo`) e as chamadas de senha da
+própria pessoa (`esqueci_senha`, `definir_senha`, `trocar_senha`), que ainda não
+têm rota no Conecta (TSK-1217): até lá, levantam `IdentidadeIndisponivel`.
+
+**Em manutenção, a tela diz que está em manutenção**, e não que deu erro. O 503
+`erro: manutencao` vira `IdentidadeEmManutencao`, com `mensagem` (o texto do
+aviso) e `previsao` (`datetime` com fuso, ou `None`). Ela é uma
+`IdentidadeIndisponivel`, e o código que só conhece a 1.4 segue tratando como
+indisponível; por isso o `except` dela vem ANTES:
+
+    try:
+        usuario = authenticate(request, username=email, password=senha)
+    except identidade_client.IdentidadeEmManutencao as erro:
+        # A tela: "Temporariamente indisponível / Em manutenção", o texto do
+        # aviso e, se houver, a hora prevista para a volta.
+        return Response({"erro": "manutencao", "mensagem": erro.mensagem,
+                         "previsao": erro.previsao and erro.previsao.isoformat()},
+                        status=503)
+    except identidade_client.IdentidadeIndisponivel:
+        ...   # "login indisponível, tente em instantes", como antes
+
+A mesma captura vale nas outras telas que chamam o Conecta (esqueci e definir
+senha).
+
+**Desativar a pessoa no Conecta corta a sessão já aberta.** `revalidar_sessao`
+pergunta ao Conecta, no máximo a cada 5 minutos por usuário, se a identidade
+ainda vale neste app; só uma resposta clara de que não vale derruba a sessão.
+Cortam a sessão a identidade desativada no Conecta e, desde a TSK-1253, também
+o `Usuario` do Conecta desativado ou bloqueado (a saída comum de quem é da
+equipe) e o acesso revogado neste app, com ou sem `pode_gerir_identidades`
+(ver a 1.5.1). E o `identidade_id` do vínculo local tem de ser o
+que o Conecta conhece: a importação do Conecta ID tem de preservar os UUIDs, ou
+ninguém entra (`resolver_com_vinculo` recusa a conta ligada a outra identidade,
+e o log diz qual vínculo corrigir), e a sessão já aberta cai a cada 5 minutos.
+O app liga a revalidação onde confere a sessão:
+
+- sessão do Django (kanban): um middleware logo depois do
+  `AuthenticationMiddleware`:
+
+      def revalidar_sessao_middleware(get_response):
+          def middleware(request):
+              if (request.user.is_authenticated
+                      and not identidade_client.revalidar_sessao(request.user)):
+                  logout(request)
+              return get_response(request)
+          return middleware
+
+- JWT (Formulário, Lobby, Selo, CRM): na classe de autenticação, que roda a
+  cada requisição (só na renovação não bastaria: o access dura horas):
+
+      class JWTRevalidado(JWTAuthentication):
+          def get_user(self, validated_token):
+              usuario = super().get_user(validated_token)
+              if not identidade_client.revalidar_sessao(usuario):
+                  raise AuthenticationFailed("Sessão encerrada.", code="user_inactive")
+              return usuario
+
+  e na renovação, ANTES do `super().validate()` (que rotaciona o token). O
+  `TokenRefreshSerializer` do simplejwt 5.3 não olha o usuário: sem isto, o
+  front renova sem parar um token que a requisição seguinte recusa.
+
+      # api_settings e InvalidToken são os do simplejwt (`rest_framework_simplejwt.settings`
+      # e `.exceptions`): o `api_settings` do DRF não tem `USER_ID_FIELD`.
+      class RenovacaoRevalidada(TokenRefreshSerializer):   # SIMPLE_JWT["TOKEN_REFRESH_SERIALIZER"]
+          def validate(self, attrs):
+              refresh = self.token_class(attrs["refresh"])
+              usuario = get_user_model().objects.filter(**{
+                  api_settings.USER_ID_FIELD: refresh.get(api_settings.USER_ID_CLAIM)}).first()
+              if (usuario is None or not usuario.is_active
+                      or not identidade_client.revalidar_sessao(usuario)):
+                  raise InvalidToken("Sessão encerrada.")
+              return super().validate(attrs)
+
+  O Lobby não tem rota de renovação: lá basta a classe de autenticação.
+
+  O token do DRF (o do MCP no kanban) se liga do mesmo jeito, na classe de
+  autenticação dele: o middleware só vê a sessão.
+
+E o `BackendIdentidade` recusa a conta local inativa, no `authenticate` e no
+`get_user`, como o `ModelBackend`; e a conta ligada a uma identidade que o login
+central recusa não cai mais no `ModelBackend` de fallback (a senha local antiga
+dela não entra): o fallback fica para a conta sem vínculo, como o superusuário de
+emergência. E o e-mail não casa mais com conta já ligada a outra identidade
+(`resolver_com_vinculo`): até a 1.4, um e-mail reaproveitado no login central
+herdava a conta e as permissões da pessoa anterior.
+
+Também na 1.5: resposta que não é JSON (a página HTML de um proxy, um
+`IDENTIDADE_URL` errado), JSON no formato errado e conexão cortada no meio da
+resposta viram `IdentidadeIndisponivel`. Até a 1.4 subiam como uma exceção
+qualquer, e a tela de login dava 500.
+
+## 1.5.1 — o texto diz o que a API faz desde a TSK-1253
+
+Nenhuma linha de lógica mudou. Desde a TSK-1253 o `ativo` do `obter` é o
+estado real da pessoa (falso também com o `Usuario` do Conecta inativo ou
+bloqueado), e cada app só enxerga quem tem acesso ATIVO a ele (o revogado dá
+404 `nao_encontrado`). Com isso a `revalidar_sessao` da 1.5.0 já derrubava a
+sessão nesses casos; a 1.5.1 só acerta o cabeçalho, o docstring dela e o log.
+
+## 1.5.2 — o cliente se apresenta (TSK-1267)
+
+Toda requisição leva `User-Agent: ConectaIdentidadeClient/<VERSAO>`. Sem ele, o
+`urllib` se apresenta como `Python-urllib/3.x`, e a Cloudflare na frente do
+Conecta barra esse nome: em 25/10/2026, testando de dentro dos apps em
+produção, toda chamada levou 403 (`error code: 1010`), que o cliente traduz em
+`IdentidadeIndisponivel` (e o `saudavel` dava False). Nenhuma outra linha de
+lógica mudou.
+
+## Quem vem direto da 1.2 (Formulário e Lobby)
+
+Além do que mudou na 1.5:
+- 1.3: `TokenInvalido.motivo`, acima;
+- 1.4: o IP do usuário conta da direita do `X-Forwarded-For`, e o app diz
+  quantos proxies tem. Quem já reescreve o `REMOTE_ADDR` com o IP real por
+  middleware próprio (o `RealIPMiddleware` do Formulário e do Lobby) põe
+  `IDENTIDADE_NUM_PROXIES = 0`; sem a chave, o cliente lê o primeiro item e
+  avisa no log;
+- 1.5: o código do app que chama uma das escritas que saíram (a tela de
+  usuários, a criação do admin mestre, o "revogar ao desativar", o link de
+  senha emitido pelo app) sai junto: com a 1.5 ele quebra em `AttributeError`.
 """
+import http.client
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from django.conf import settings
 from django.contrib.auth.backends import BaseBackend
+from django.core.cache import cache
+from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
+from django.db.models import Q
+from django.utils.dateparse import parse_datetime
 from django.utils.module_loading import import_string
 
 logger = logging.getLogger("identidade_client")
 
-VERSAO = "1.2.0"
+VERSAO = "1.5.2"
+
+
+# === IP do usuário ========================================================
+_AVISOU_SEM_PROXIES = False
+
+
+def _proxies_confiados():
+    """Quantos proxies o app diz ter na frente, ou `None` se não disse."""
+    explicito = getattr(settings, "IDENTIDADE_NUM_PROXIES", None)
+    if explicito is not None:
+        return int(explicito)
+    do_drf = int((getattr(settings, "REST_FRAMEWORK", {}) or {}).get("NUM_PROXIES") or 0)
+    return do_drf or None
+
+
+def ip_do_request(request):
+    """IP do usuário final, para a auditoria e o bloqueio por origem (1.4).
+
+    Cada proxy ACRESCENTA ao `X-Forwarded-For` o que recebeu, sem apagar o que
+    veio antes: o começo da lista é o que o cliente escreveu, e só o N-ésimo a
+    partir do fim foi posto por um proxy em que o app confia. Com N proxies,
+    é esse o IP. Com `0`, não há proxy e vale o `REMOTE_ADDR`.
+
+    Sem configuração nenhuma, mantém o comportamento de até a 1.3 (o primeiro
+    item) para não trocar de repente o IP de um app que ainda não disse quantos
+    proxies tem: com o `REMOTE_ADDR` do proxy, o bloqueio por IP viraria
+    bloqueio de todo mundo. Esse modo é forjável, e o log avisa.
+    """
+    global _AVISOU_SEM_PROXIES
+    if request is None:
+        return None
+    proxies = _proxies_confiados()
+    encaminhado = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    enderecos = [e.strip() for e in encaminhado.split(",") if e.strip()]
+    if proxies is None:
+        if enderecos:
+            if not _AVISOU_SEM_PROXIES:
+                _AVISOU_SEM_PROXIES = True
+                logger.warning(
+                    "identidade_client: IDENTIDADE_NUM_PROXIES não configurado; "
+                    "o IP enviado ao Conecta ID sai do começo do X-Forwarded-For, "
+                    "que o cliente pode forjar"
+                )
+            return enderecos[0]
+        return request.META.get("REMOTE_ADDR") or None
+    if proxies and enderecos:
+        return enderecos[-min(proxies, len(enderecos))]
+    return request.META.get("REMOTE_ADDR") or None
 
 
 # === Erros ================================================================
@@ -80,17 +297,36 @@ class SenhaFraca(ErroIdentidade):
 
 
 class TokenInvalido(ErroIdentidade):
-    """Link de senha inexistente, expirado ou já usado."""
+    """Link de senha inexistente, expirado, substituído ou já usado.
+
+    `motivo` (desde a 1.3): `"substituido"`, `"expirado"`, `"usado"` ou `None`.
+    `None` é o caso a tratar com a mensagem genérica — inclui o token inventado,
+    e a tela não deve distinguir esse de nada.
+    """
+
+    SUBSTITUIDO = "substituido"
+    EXPIRADO = "expirado"
+    USADO = "usado"
+
+    def __init__(self, mensagem="", motivo=None):
+        super().__init__(mensagem)
+        self.motivo = motivo
 
 
 class EmailEmUso(ErroIdentidade):
+    """Era o erro do `criar` e do `alterar`, que saíram na 1.5.
+
+    Fica para o `except EmailEmUso` que ainda exista num app não quebrar em
+    `AttributeError` no meio do tratamento de outro erro.
+    """
+
     def __init__(self, mensagem, identidade_id=None):
         super().__init__(mensagem)
         self.identidade_id = identidade_id
 
 
 class NaoEncontrado(ErroIdentidade):
-    """Não há identidade com esse e-mail liberada para este app.
+    """Não há identidade com esse e-mail (ou id) liberada para este app.
 
     Erro próprio, e não `IdentidadeIndisponivel`: é uma resposta legítima do
     serviço sobre os dados enviados, não uma falha de infraestrutura. Tratar os
@@ -111,6 +347,25 @@ class IdentidadeIndisponivel(ErroIdentidade):
     """
 
 
+class IdentidadeEmManutencao(IdentidadeIndisponivel):
+    """O Conecta está em manutenção (503 `erro: manutencao`, desde a 1.5).
+
+    É uma `IdentidadeIndisponivel`, de propósito: quem só conhece a 1.4 continua
+    mostrando "indisponível", e nunca "senha incorreta". Quem conhece a 1.5 a
+    captura antes e mostra "Temporariamente indisponível / Em manutenção".
+
+    - `mensagem`: o texto do aviso de manutenção publicado no Conecta, para a
+      tela; sem texto no aviso, o `detalhe` genérico da resposta;
+    - `previsao`: quando a manutenção deve acabar, `datetime` com fuso (o de
+      Brasília), ou `None` quando não há previsão.
+    """
+
+    def __init__(self, detalhe="", mensagem=None, previsao=None):
+        super().__init__(detalhe)
+        self.mensagem = mensagem or detalhe
+        self.previsao = previsao
+
+
 _ERROS = {
     "credencial_invalida": CredencialInvalida,
     "sem_acesso_ao_app": SemAcessoAoApp,
@@ -120,6 +375,28 @@ _ERROS = {
     "nao_encontrado": NaoEncontrado,
     "indisponivel": IdentidadeIndisponivel,
 }
+
+
+def _texto(valor):
+    return valor.strip() if isinstance(valor, str) and valor.strip() else None
+
+
+def _data_e_hora(valor):
+    """A `previsao` da manutenção (ISO 8601 com fuso), ou `None` se não vier ou não for data."""
+    if not isinstance(valor, str):
+        return None
+    try:
+        quando = parse_datetime(valor)
+    except ValueError:
+        return None
+    # Sem fuso não se sabe que hora é, e um `localtime()` na tela daria 500.
+    return quando if quando is not None and quando.tzinfo is not None else None
+
+
+def _formato_inesperado(chamada):
+    """Resposta 2xx fora do contrato: falha de integração, nunca "senha incorreta" (1.5)."""
+    logger.error("Conecta ID respondeu %s fora do formato do contrato", chamada)
+    raise IdentidadeIndisponivel("Resposta inesperada do serviço de identidade.")
 
 
 # === Cliente HTTP =========================================================
@@ -138,12 +415,17 @@ class ClienteIdentidade:
         corpo = {"login": login, "senha": senha}
         if ip:
             corpo["ip"] = ip
-        return self._pedir("POST", "/api/v1/credenciais/verificar", corpo)
+        dados = self._pedir("POST", "/api/v1/credenciais/verificar", corpo)
+        if not isinstance(dados, dict) or not dados.get("identidade_id"):
+            _formato_inesperado("verificar")
+        return dados
 
     def buscar_por_email(self, email):
         achados = self._pedir(
             "GET", "/api/v1/identidades?email=" + urllib.parse.quote(email)
         )
+        if achados is not None and not isinstance(achados, list):
+            _formato_inesperado("buscar_por_email")
         return achados[0] if achados else None
 
     def listar_com_acesso(self):
@@ -154,67 +436,16 @@ class ClienteIdentidade:
         lugar nenhum do app. Era esse buraco que fazia alguém criar a pessoa de
         novo, e a segunda conta nascer.
         """
-        return self._pedir("GET", "/api/v1/identidades?com_acesso=1") or []
+        lista = self._pedir("GET", "/api/v1/identidades?com_acesso=1") or []
+        if not isinstance(lista, list):
+            _formato_inesperado("listar_com_acesso")
+        return lista
 
     def obter(self, identidade_id):
-        return self._pedir("GET", f"/api/v1/identidades/{identidade_id}")
-
-    def criar(self, email, nome, apps=(), enviar_convite=False, senha_inicial=None,
-              configuracao=None):
-        corpo = {
-            "email": email,
-            "nome": nome,
-            "apps": list(apps),
-            "enviar_convite": enviar_convite,
-        }
-        if configuracao is not None:
-            # Vale para UM app: com dois na lista o serviço recusa, para o
-            # vocabulário de um não parar gravado no acesso do outro.
-            corpo["configuracao"] = configuracao
-        if senha_inicial:
-            # Senha provisória combinada. A identidade nasce marcada para troca
-            # obrigatória — uma senha que o admin conhece só vale até o
-            # primeiro acesso.
-            corpo["senha_inicial"] = senha_inicial
-        return self._pedir("POST", "/api/v1/identidades", corpo)
-
-    def alterar(self, identidade_id, **campos):
-        return self._pedir("PATCH", f"/api/v1/identidades/{identidade_id}", campos)
-
-    def conceder_acesso(self, identidade_id, app, configuracao=None):
-        """Concede o acesso e, se vier, grava a configuração de provisionamento.
-
-        Omitir `configuracao` NÃO apaga a que já existe — é o que torna seguro
-        reconceder um acesso só para religá-lo.
-        """
-        corpo = {"identidade_id": str(identidade_id), "app": app}
-        if configuracao is not None:
-            corpo["configuracao"] = configuracao
-        self._pedir("POST", "/api/v1/acessos", corpo)
-
-    def configurar_acesso(self, identidade_id, app, configuracao):
-        """Troca a configuração de provisionamento sem mexer no acesso.
-
-        É esta, e não `conceder_acesso`, que a tela de usuários deve chamar ao
-        editar um papel: conceder reativa acesso desativado, e corrigir o papel
-        de quem saiu do sistema o traria de volta para dentro dele.
-        """
-        self._pedir(
-            "PATCH",
-            "/api/v1/acessos",
-            {
-                "identidade_id": str(identidade_id),
-                "app": app,
-                "configuracao": configuracao,
-            },
-        )
-
-    def revogar_acesso(self, identidade_id, app):
-        self._pedir("DELETE", "/api/v1/acessos", {"identidade_id": str(identidade_id), "app": app})
-
-    def emitir_token_de_senha(self, email):
-        resposta = self._pedir("POST", "/api/v1/senha/token", {"email": email})
-        return (resposta or {}).get("token")
+        dados = self._pedir("GET", f"/api/v1/identidades/{identidade_id}")
+        if not isinstance(dados, dict):
+            _formato_inesperado("obter")
+        return dados
 
     def esqueci_senha(self, email):
         """Pede o link de senha e deixa o Conecta ID mandar por e-mail.
@@ -225,6 +456,9 @@ class ClienteIdentidade:
         sempre a mesma frase ("se houver conta nesse endereço, o link foi
         enviado"); qualquer mensagem mais específica reconstrói, na tela, a
         distinção que a API se recusa a fazer.
+
+        Sem rota no Conecta até a TSK-1217, como `definir_senha` e
+        `trocar_senha`: até lá, as três levantam `IdentidadeIndisponivel`.
         """
         self._pedir("POST", "/api/v1/senha/esqueci", {"email": email})
 
@@ -238,7 +472,10 @@ class ClienteIdentidade:
         self._pedir("POST", f"/api/v1/identidades/{identidade_id}/senha", corpo)
 
     def saudavel(self):
-        """Para healthcheck do app: True se o Conecta ID responde."""
+        """Para healthcheck do app: True se o Conecta ID responde.
+
+        Em manutenção, False: o `/health` do Conecta também responde o 503.
+        """
         try:
             self._pedir("GET", "/health", autenticado=False)
             return True
@@ -251,8 +488,16 @@ class ClienteIdentidade:
             raise IdentidadeIndisponivel("IDENTIDADE_URL não configurada.")
 
         dados = json.dumps(corpo).encode() if corpo is not None else None
-        requisicao = urllib.request.Request(self.url + caminho, data=dados, method=metodo)
+        try:
+            requisicao = urllib.request.Request(self.url + caminho, data=dados, method=metodo)
+        except ValueError as erro:
+            # `IDENTIDADE_URL` sem `https://`: até a 1.4, o login dava 500.
+            logger.error("IDENTIDADE_URL inválida: %r", self.url)
+            raise IdentidadeIndisponivel("IDENTIDADE_URL inválida.") from erro
         requisicao.add_header("Content-Type", "application/json")
+        # A Cloudflare barra o `Python-urllib/3.x` do urllib (1.5.2). O `add_header`,
+        # e não o `add_unredirected_header`, para o nome seguir num redirecionamento.
+        requisicao.add_header("User-Agent", f"ConectaIdentidadeClient/{VERSAO}")
         if autenticado:
             if not self.chave:
                 raise IdentidadeIndisponivel("IDENTIDADE_APP_KEY não configurada.")
@@ -260,35 +505,58 @@ class ClienteIdentidade:
 
         try:
             with urllib.request.urlopen(requisicao, timeout=self.timeout) as resposta:
-                texto = resposta.read().decode()
-                return json.loads(texto) if texto else None
+                bruto = resposta.read()
         except urllib.error.HTTPError as erro:
             self._traduzir(erro)
-        except (urllib.error.URLError, TimeoutError, OSError) as erro:
-            # Rede caiu, DNS não resolveu, timeout. Nunca confundir com senha
-            # errada: quem decide o que mostrar é o app, e ele precisa saber a
-            # diferença.
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as erro:
+            # Rede caiu, DNS não resolveu, timeout, conexão cortada no meio da
+            # resposta. Nunca confundir com senha errada: quem decide o que
+            # mostrar é o app, e ele precisa saber a diferença.
             logger.error("Conecta ID inalcançável em %s%s: %s", self.url, caminho, erro)
             raise IdentidadeIndisponivel("Serviço de identidade inalcançável.") from erro
+
+        if not bruto:
+            return None
+        try:
+            return json.loads(bruto)
+        except ValueError as erro:
+            # A página HTML de um proxy, ou um IDENTIDADE_URL que cai fora da
+            # API: não é resposta do serviço (1.5).
+            logger.error("Conecta ID respondeu %s%s com algo que não é JSON", self.url, caminho)
+            raise IdentidadeIndisponivel("Resposta inesperada do serviço de identidade.") from erro
 
     def _traduzir(self, erro_http):
         try:
             corpo = json.loads(erro_http.read().decode())
         except Exception:
             corpo = {}
-        codigo = corpo.get("erro", "")
+        if not isinstance(corpo, dict):
+            corpo = {}
+        codigo = corpo.get("erro")
+        if not isinstance(codigo, str):
+            codigo = ""
         detalhe = corpo.get("detalhe", "Falha ao falar com o serviço de identidade.")
 
         if codigo == "email_em_uso":
             raise EmailEmUso(detalhe, corpo.get("identidade_id"))
+        if codigo == "token_invalido":
+            raise TokenInvalido(detalhe, corpo.get("motivo") or None)
+        if codigo == "manutencao":
+            # Prevista, e não erro de integração: aviso, e não erro, no log.
+            logger.warning("Conecta em manutenção (HTTP %s): %s", erro_http.code, detalhe)
+            raise IdentidadeEmManutencao(
+                detalhe,
+                mensagem=_texto(corpo.get("mensagem")),
+                previsao=_data_e_hora(corpo.get("previsao")),
+            )
 
         classe = _ERROS.get(codigo)
         if classe:
             raise classe(detalhe)
 
-        # `app_nao_autorizado`, `sem_permissao`, `nao_encontrado`,
-        # `dados_invalidos` e qualquer 5xx caem aqui. São erros de integração,
-        # não do usuário: quem errou foi o app, e o log precisa dizer isso alto.
+        # `app_nao_autorizado`, `sem_permissao`, `dados_invalidos` e qualquer
+        # 5xx caem aqui. São erros de integração, não do usuário: quem errou foi
+        # o app, e o log precisa dizer isso alto.
         logger.error(
             "Conecta ID recusou a chamada (HTTP %s, erro=%s): %s",
             erro_http.code, codigo or "?", detalhe,
@@ -311,6 +579,13 @@ class BackendIdentidade(BaseBackend):
     """
 
     def authenticate(self, request, username=None, password=None, **kwargs):
+        if username is None:
+            # Como o `ModelBackend`: `authenticate(email=...)` num app com
+            # `USERNAME_FIELD = "email"`. Sem isto, a chamada pulava o login
+            # central e ia direto à senha local do fallback (1.5).
+            from django.contrib.auth import get_user_model
+
+            username = kwargs.get(get_user_model().USERNAME_FIELD)
         if not central_ativa() or not username or not password:
             return None
 
@@ -318,11 +593,21 @@ class BackendIdentidade(BaseBackend):
         try:
             dados = cliente.verificar(username, password, ip=self._ip(request))
         except (CredencialInvalida, SemAcessoAoApp):
-            # `None` faz o Django seguir para o próximo backend e, no fim,
-            # responder "credenciais inválidas" — que é o certo aqui.
+            if _conta_ligada(username):
+                # Desde a 1.5: a conta ligada a uma identidade só entra pelo
+                # login central. Sem isto, o ModelBackend de fallback tentaria a
+                # senha local dela, e quem foi desativado ou perdeu o acesso no
+                # Conecta entraria com uma senha antiga do app. O
+                # `PermissionDenied` encerra a fila de backends, e o
+                # `authenticate()` do Django devolve None, como antes.
+                raise PermissionDenied
+            # `None` faz o Django seguir para o próximo backend (a conta local,
+            # como o superusuário de emergência do Selo) e, no fim, responder
+            # "credenciais inválidas" — que é o certo aqui.
             return None
-        # BloqueadoTemporariamente e IdentidadeIndisponivel sobem de propósito:
-        # a view precisa distinguir "tente mais tarde" de "senha errada".
+        # BloqueadoTemporariamente e IdentidadeIndisponivel (com a
+        # IdentidadeEmManutencao) sobem de propósito: a view precisa distinguir
+        # "tente mais tarde" e "em manutenção" de "senha errada".
 
         resolver = import_string(settings.IDENTIDADE_RESOLVER_USUARIO)
         usuario = resolver(dados)
@@ -331,34 +616,256 @@ class BackendIdentidade(BaseBackend):
                 "identidade %s autenticou mas o app não resolveu o usuário local",
                 dados.get("identidade_id"),
             )
+            if _conta_ligada(username):
+                # A conta deste login é de outra identidade (ver
+                # `resolver_com_vinculo`): a senha local dela também não entra.
+                raise PermissionDenied
+            return None
+        if not self.user_can_authenticate(usuario):
+            # Desde a 1.5: a conta deste app, desativada aqui, não entra só
+            # porque a identidade está ativa no Conecta.
+            logger.info(
+                "identidade %s autenticou, mas a conta local está inativa",
+                dados.get("identidade_id"),
+            )
             return None
 
         # `precisa_trocar_senha` vem do Conecta ID; a view do app decide o que
         # fazer com ele (banner, redirecionamento).
         usuario.identidade_precisa_trocar_senha = dados.get("precisa_trocar_senha", False)
+        # O Conecta acabou de dizer que a identidade vale neste app.
+        _lembrar_sessao_valida(usuario)
         return usuario
 
     def get_user(self, user_id):
         from django.contrib.auth import get_user_model
 
         try:
-            return get_user_model().objects.get(pk=user_id)
+            usuario = get_user_model().objects.get(pk=user_id)
         except get_user_model().DoesNotExist:
             return None
+        return usuario if self.user_can_authenticate(usuario) else None
+
+    def user_can_authenticate(self, usuario):
+        """Conta local inativa não entra, como no `ModelBackend` (1.5).
+
+        Até a 1.4, o `get_user` devolvia o usuário desativado no app, e a
+        sessão aberta dele seguia valendo.
+        """
+        return getattr(usuario, "is_active", True)
 
     @staticmethod
     def _ip(request):
-        """IP do usuário final, para a auditoria e o bloqueio por origem.
+        """IP do usuário final: ver `ip_do_request` (conta da direita desde a 1.4)."""
+        return ip_do_request(request)
 
-        Atrás do nginx do host, o que vale é o X-Forwarded-For; o REMOTE_ADDR
-        seria sempre o do proxy, e o bloqueio por IP viraria bloqueio geral.
-        """
-        if request is None:
-            return None
-        encaminhado = request.META.get("HTTP_X_FORWARDED_FOR", "")
-        if encaminhado:
-            return encaminhado.split(",")[0].strip()
-        return request.META.get("REMOTE_ADDR")
+
+def _conta_ligada(login):
+    """Há conta local com este login (e-mail ou `USERNAME_FIELD`) ligada a uma identidade? (1.5)
+
+    Sem o vínculo `vinculo_identidade` no modelo, ou com o banco fora, False: o
+    login segue para o próximo backend, como até a 1.4.
+    """
+    from django.contrib.auth import get_user_model
+    from django.core.exceptions import FieldError
+
+    Usuario = get_user_model()
+    try:
+        filtro = Q(**{Usuario.USERNAME_FIELD: login}) | Q(email__iexact=login)
+        return Usuario._default_manager.filter(filtro, vinculo_identidade__isnull=False).exists()
+    except FieldError:
+        return False
+    except Exception:
+        logger.warning("falha ao procurar a conta local de um login recusado", exc_info=True)
+        return False
+
+
+# === Revalidação da sessão (1.5) ==========================================
+#: No máximo uma pergunta ao Conecta por usuário neste intervalo, em segundos.
+REVALIDAR_A_CADA = 5 * 60
+#: Depois de uma falha do Conecta, ninguém pergunta por este tempo, em segundos.
+PAUSA_DEPOIS_DE_FALHA = 60
+#: Teto do timeout da pergunta, em segundos: abaixo do do login, que é de 5.
+TIMEOUT_DA_REVALIDACAO = 2
+
+#: Por quanto tempo a última resposta clara fica guardada, em segundos.
+GUARDAR_A_ULTIMA_RESPOSTA = 24 * 60 * 60
+
+_VALIDA = "valida"
+_RECUSADA = "recusada"
+_ULTIMA = ":ultima"
+_AVISOU_SEM_VINCULO = False
+_ULTIMO_REGISTRO_DE_FALHA = None
+
+
+def revalidar_sessao(usuario):
+    """A sessão já aberta de `usuario` ainda vale? Nunca levanta (1.5).
+
+    Pergunta ao Conecta (`obter`) e devolve False só com uma resposta clara de
+    que a identidade não vale mais neste app:
+
+    - `"ativo": false` na resposta: a pessoa não está ativa no Conecta. É o
+      `ativo` do `IdentidadeCompleta` da API, que desde a TSK-1253 é o
+      `esta_ativa`: falso com a identidade desativada e também com o `Usuario`
+      ligado a ela inativo ou bloqueado no Conecta;
+    - 404 `nao_encontrado`: a identidade não é visível para este app. Desde a
+      TSK-1253, é como a API diz, a todo app (com ou sem
+      `pode_gerir_identidades`), "sem acesso ativo a este app" (ou "não existe
+      mais"): o acesso revogado derruba a sessão. Um `sem_acesso_ao_app`
+      diria o mesmo.
+
+    True em todo o resto: Conecta fora do ar, em manutenção, chave ou IP
+    recusados, limite estourado, resposta estranha, cache fora, bug aqui dentro.
+    Sessão derrubada por falha do Conecta seria todo mundo dos cinco apps fora
+    ao mesmo tempo. A falha só não desfaz uma recusa: a última resposta clara
+    fica guardada (`GUARDAR_A_ULTIMA_RESPOSTA`) e vale enquanto o Conecta não
+    der outra, inclusive para a requisição que chega com a pergunta no ar. Com o Conecta pendurado, cada pergunta seguraria um worker:
+    por isso o timeout dela é de no máximo `TIMEOUT_DA_REVALIDACAO` segundos, e
+    depois de uma falha ninguém pergunta por `PAUSA_DEPOIS_DE_FALHA` segundos.
+    A falha inesperada (cache fora, bug) vai ao log no máximo uma vez nesse
+    mesmo intervalo, por processo: uma por requisição inundaria o log e o
+    GlitchTip enquanto o Redis estiver fora. E True sem perguntar nada
+    com `AUTH_CENTRAL_ATIVO` desligado (a chave que reverte tudo), para quem não
+    está autenticado e para a conta local, sem vínculo (as empresas do Selo).
+
+    No máximo uma pergunta por usuário a cada `REVALIDAR_A_CADA` segundos, com a
+    resposta guardada no cache padrão do Django: a recusa também fica guardada,
+    e um token velho reapresentado não volta a valer nem vira uma chamada por
+    requisição. Com o LocMem (o padrão de quem não configura `CACHES`) a conta é
+    por processo: com três workers, até três perguntas por pessoa a cada 5
+    minutos. O login aceito pelo `BackendIdentidade` vale como revalidação (no
+    processo que o atendeu). As perguntas entram na cota de leitura do app no
+    Conecta (120 por minuto): com LocMem, cerca de pessoas ativas × workers ÷ 5
+    por minuto. Estourada, a cota dá 429, e a sessão fica de pé.
+
+    O `identidade_id` sai de `usuario.vinculo_identidade` (o vínculo de
+    `resolver_com_vinculo`), e tem de ser o que o Conecta conhece: um vínculo
+    com o id de outra base dá 404 e derruba a sessão.
+    """
+    try:
+        if not central_ativa() or not getattr(usuario, "is_authenticated", False):
+            return True
+        chave = _chave_da_sessao(usuario)
+        anterior = cache.get(chave)
+        if anterior is not None:
+            return anterior != _RECUSADA
+        # A última resposta clara vale até chegar outra: é o que recebe a
+        # requisição que chega com a pergunta no ar, e o que fica se o Conecta
+        # não responder. Sem ela, uma recusa vencida abria uma janela a cada 5
+        # minutos para um token velho.
+        ultima = cache.get(chave + _ULTIMA)
+        if cache.get(_chave_da_pausa()) is not None:
+            return ultima != _RECUSADA
+        if not cache.add(chave, ultima or _VALIDA, REVALIDAR_A_CADA):
+            # Outra requisição desta pessoa pegou a vez entre o `get` e o `add`.
+            return cache.get(chave) != _RECUSADA
+        identidade_id = _identidade_de(usuario)
+        if identidade_id is None:
+            return True
+        resposta = _resposta_do_conecta(identidade_id)
+        if resposta is None:
+            return ultima != _RECUSADA
+        _guardar_resposta(chave, resposta)
+        return resposta != _RECUSADA
+    except Exception:
+        _registrar_falha()
+        return True
+
+
+def _registrar_falha():
+    """Põe a falha inesperada no log, no máximo uma vez a cada `PAUSA_DEPOIS_DE_FALHA` segundos."""
+    global _ULTIMO_REGISTRO_DE_FALHA
+    agora = time.time()
+    if (_ULTIMO_REGISTRO_DE_FALHA is not None
+            and 0 <= agora - _ULTIMO_REGISTRO_DE_FALHA < PAUSA_DEPOIS_DE_FALHA):
+        return
+    _ULTIMO_REGISTRO_DE_FALHA = agora
+    logger.exception("falha ao revalidar a sessão; ela fica de pé")
+
+
+def _resposta_do_conecta(identidade_id):
+    """`_VALIDA`, `_RECUSADA`, ou `None` quando o Conecta não responde com clareza."""
+    timeout = min(TIMEOUT_DA_REVALIDACAO, getattr(settings, "IDENTIDADE_TIMEOUT", None) or 5)
+    try:
+        dados = ClienteIdentidade(timeout=timeout).obter(identidade_id)
+    except (NaoEncontrado, SemAcessoAoApp):
+        logger.warning(
+            "sessão encerrada: a identidade %s não tem acesso ativo a este app, ou o "
+            "login central não a conhece (vínculo com o id de outra base?)", identidade_id
+        )
+        return _RECUSADA
+    except ErroIdentidade as erro:
+        cache.set(_chave_da_pausa(), True, PAUSA_DEPOIS_DE_FALHA)
+        logger.warning(
+            "sessão mantida: o Conecta não confirmou a identidade %s (%s: %s)",
+            identidade_id, type(erro).__name__, erro,
+        )
+        return None
+    ativo = dados.get("ativo") if isinstance(dados, dict) else None
+    if ativo is False:
+        logger.warning(
+            "sessão encerrada: a identidade %s está desativada, ou o usuário do Conecta "
+            "ligado a ela está inativo ou bloqueado", identidade_id
+        )
+        return _RECUSADA
+    return _VALIDA if ativo is True else None
+
+
+def _identidade_de(usuario):
+    """O `identidade_id` do vínculo do usuário, ou `None` para a conta local."""
+    global _AVISOU_SEM_VINCULO
+    try:
+        vinculo = usuario.vinculo_identidade
+    except ObjectDoesNotExist:
+        # O `RelatedObjectDoesNotExist` do Django, que é também AttributeError:
+        # este `except` tem de vir antes do outro.
+        return None
+    except AttributeError:
+        if not _AVISOU_SEM_VINCULO:
+            _AVISOU_SEM_VINCULO = True
+            logger.warning(
+                "identidade_client: o usuário não tem `vinculo_identidade`; "
+                "revalidar_sessao não confere ninguém neste app"
+            )
+        return None
+    return getattr(vinculo, "identidade_id", None)
+
+
+def _app_da_chave():
+    """O slug do app no `IDENTIDADE_APP_KEY` (`AppKey <slug>:<segredo>`), nunca o segredo."""
+    partes = (getattr(settings, "IDENTIDADE_APP_KEY", "") or "").split()
+    slug, separador, _ = (partes[-1] if partes else "").partition(":")
+    return slug if separador else ""
+
+
+def _chave_da_sessao(usuario):
+    """Por app e por usuário: dois apps no mesmo Redis não trocam a resposta de um pelo outro."""
+    modelo = getattr(getattr(usuario, "_meta", None), "label_lower", "usuario")
+    return f"identidade_client:sessao:{_app_da_chave()}:{modelo}:{usuario.pk}"
+
+
+def _chave_da_pausa():
+    return f"identidade_client:pausa:{_app_da_chave()}"
+
+
+def _lembrar_sessao_valida(usuario):
+    """Guarda o login aceito como revalidação, e apaga uma recusa antiga.
+
+    Sem isso, quem foi reativado minutos depois de ter a sessão derrubada
+    entraria e cairia de novo, pela recusa ainda no cache. Com o LocMem, vale só
+    no processo que atendeu o login: nos outros, a recusa dura o resto dos 5
+    minutos. Quem chama o `verificar` direto, sem o `BackendIdentidade` (Lobby e
+    Selo), não tem nem isso.
+    """
+    try:
+        _guardar_resposta(_chave_da_sessao(usuario), _VALIDA)
+    except Exception:
+        logger.warning("falha ao guardar a revalidação do login", exc_info=True)
+
+
+def _guardar_resposta(chave, resposta):
+    cache.set(chave, resposta, REVALIDAR_A_CADA)
+    cache.set(chave + _ULTIMA, resposta, GUARDAR_A_ULTIMA_RESPOSTA)
 
 
 # === Provisionamento ======================================================
@@ -418,7 +925,8 @@ def resolver_com_vinculo(
     """Devolve o usuário local correspondente à identidade, criando se preciso.
 
     `modelo_vinculo` é um modelo do PRÓPRIO app, com `identidade_id` (UUID
-    único) e `usuario` (OneToOne). Cinco linhas, e é o app que as declara:
+    único) e `usuario` (OneToOne). Cinco linhas, e é o app que as declara (o
+    `related_name` é o que a `revalidar_sessao` lê, desde a 1.5):
 
         class VinculoIdentidade(models.Model):
             identidade_id = models.UUIDField(unique=True, db_index=True)
@@ -426,8 +934,9 @@ def resolver_com_vinculo(
                 settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
                 related_name="vinculo_identidade")
 
-    O casamento é por `identidade_id` primeiro e por e-mail depois. A ordem
-    importa: o e-mail muda (casamento, troca de sobrenome, correção de digitação
+    O casamento é por `identidade_id` primeiro e por e-mail depois, e o e-mail
+    só casa com conta sem vínculo ou ligada a esta mesma identidade (1.5). A
+    ordem importa: o e-mail muda (casamento, troca de sobrenome, correção de digitação
     — o Diego que o diga), o UUID não. Casar por e-mail primeiro faria uma
     correção de cadastro criar um usuário novo e órfão, com o histórico do
     antigo preso na conta velha.
@@ -469,9 +978,23 @@ def resolver_com_vinculo(
 
     # `get_or_create` e não `create`: se dois requests da mesma pessoa chegarem
     # juntos no primeiro login, os dois tentam vincular ao mesmo usuário.
-    modelo_vinculo.objects.get_or_create(
+    vinculo, criado = modelo_vinculo.objects.get_or_create(
         usuario=usuario, defaults={"identidade_id": identidade_id}
     )
+    if not criado and str(vinculo.identidade_id).lower() != str(identidade_id).lower():
+        # Desde a 1.5: o e-mail casou com uma conta já ligada a OUTRA
+        # identidade, e ninguém entra. Até a 1.4 a conta era entregue, e um
+        # e-mail reaproveitado no login central (antes de a conta local
+        # sincronizar o e-mail novo da pessoa anterior) dava à identidade nova
+        # a conta e as permissões da antiga. Também é o caso da importação que
+        # trocou os UUIDs, ou de um vínculo digitado à mão: o log diz qual
+        # corrigir, e o cliente não o regrava sozinho.
+        logger.error(
+            "login recusado: o e-mail casou com o usuário %s, ligado à identidade "
+            "%s, mas o login central autenticou a %s; corrija o vínculo",
+            getattr(usuario, "pk", usuario), vinculo.identidade_id, identidade_id,
+        )
+        return None
     if not recem_criado:
         # Conta local que já existia e só agora ganhou vínculo — o caso de quem
         # foi casado pelo e-mail. Para ela a semente nunca foi aplicada, então a

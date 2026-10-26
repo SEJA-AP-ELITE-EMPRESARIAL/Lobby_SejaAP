@@ -348,6 +348,42 @@ const categoriaFinParaPayload = (c) => (c ? { codigo: c.codigo, descricao: c.des
 // quando o serviço está fora do ar faz a pessoa redefinir a senha à toa.
 const ERRO_AUTORIZACAO_PADRAO = 'Não foi possível autorizar. Tente de novo.';
 
+/* ===== Login central em manutenção (TSK-1238) ===== */
+// A previsão de volta que o backend repassa do aviso de manutenção do Conecta
+// (ISO 8601 com fuso, ou null), em texto para a tela, no horário de Brasília:
+// "hoje às 15:00" ou "27/10 às 09:30". Sem previsão, ilegível ou já vencida
+// (a manutenção atrasou), null — e a tela não fala de hora nenhuma, em vez de
+// prometer uma volta que já passou. A MESMA função no index.html, no
+// esqueci-senha.html e no definir-senha.html (tests/front/manutencao.test.mjs
+// confere que as três são iguais).
+function textoDaPrevisao(iso, agora = new Date()) {
+  if (!iso) return null;
+  const quando = new Date(iso);
+  if (isNaN(quando.getTime()) || quando.getTime() <= agora.getTime()) return null;
+  const formato = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  const partes = (d) => Object.fromEntries(formato.formatToParts(d).map((p) => [p.type, p.value]));
+  const q = partes(quando);
+  const a = partes(agora);
+  const hora = `${q.hour}:${q.minute}`;
+  if (q.day === a.day && q.month === a.month && q.year === a.year) return `hoje às ${hora}`;
+  return `${q.day}/${q.month} às ${hora}`;
+}
+
+// O 503 `erro: "manutencao"` do backend vira um Error com `manutencao`, que a
+// tela troca pelo aviso "Temporariamente indisponível / Em manutenção". Não é
+// erro de quem digitou, e não pode parecer: nem "senha incorreta", nem o
+// vermelho de falha.
+function erroDeManutencao(r, d) {
+  if (r.status !== 503 || !d || d.erro !== 'manutencao') return null;
+  const erro = new Error(d.mensagem || 'O login central está em manutenção.');
+  erro.manutencao = { mensagem: erro.message, previsao: textoDaPrevisao(d.previsao) };
+  return erro;
+}
+/* ===== fim do login central em manutenção ===== */
+
 /**
  * Troca e-mail + senha por uma autorização de negociação.
  * Devolve { token, nome, email, papel }. Lança Error com a mensagem da vez.
@@ -367,6 +403,8 @@ async function autorizaNegociacao(email, senha) {
   }
 
   const d = await r.json().catch(() => ({}));
+  const manutencao = erroDeManutencao(r, d);
+  if (manutencao) throw manutencao;
   if (!r.ok) throw new Error(d.erro || ERRO_AUTORIZACAO_PADRAO);
   return d;
 }
@@ -1248,6 +1286,8 @@ function ModalAutorizacao({ alvo, onOk, onCancelar }) {
   // Guardamos aqui para avisar ANTES de fechar o modal — depois de fechado, a
   // pessoa volta a atender o cliente e o aviso se perde.
   const [trocarSenha, setTrocarSenha] = useState(null);
+  // Login central em manutenção: `{ mensagem, previsao }`, ou null.
+  const [manutencao, setManutencao] = useState(null);
 
   const oQueLibera = alvo === 'produto'
     ? 'alterar o valor deste produto'
@@ -1269,13 +1309,57 @@ function ModalAutorizacao({ alvo, onOk, onCancelar }) {
       if (dados.precisaTrocarSenha) { setTrocarSenha(dados); setCarregando(false); return; }
       onOk(dados);
     } catch (err) {
-      setErro(err.message);
+      if (err.manutencao) setManutencao(err.manutencao);
+      else setErro(err.message);
       // Limpa só a senha: reescrever o e-mail a cada tentativa é atrito puro,
       // ainda mais com alguém esperando do outro lado do balcão.
       setSenha('');
       setCarregando(false);
     }
   };
+
+  if (manutencao) {
+    // Não é erro de ninguém, e a tela não pode parecer: nada de vermelho nem
+    // de "tente de novo" em destaque. A venda a preço de tabela não depende do
+    // login, e o consultor precisa saber que pode seguir com ela.
+    return (
+      <div
+        onClick={(e) => { if (e.target === e.currentTarget) onCancelar(); }}
+        style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center', padding: 20, background: 'rgba(10,10,9,.72)', backdropFilter: 'blur(4px)', animation: 'popIn .18s both' }}
+      >
+        <div className="card" role="alertdialog" aria-labelledby="manutencao-titulo" style={{ width: '100%', maxWidth: 420 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            <span style={{ display: 'grid', placeItems: 'center', width: 40, height: 40, borderRadius: 10, background: 'rgba(255,193,7,.12)', border: '1px solid rgba(255,193,7,.28)', flexShrink: 0 }}>
+              <span className="ms-icon" style={{ color: 'var(--warning)', fontSize: 22 }}>construction</span>
+            </span>
+            <div>
+              <strong id="manutencao-titulo" style={{ display: 'block', font: '700 16px var(--font-primary)' }}>Temporariamente indisponível</strong>
+              <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--warning)' }}>Em manutenção</span>
+            </div>
+          </div>
+          <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.55, whiteSpace: 'pre-line' }}>
+            {manutencao.mensagem}
+          </p>
+          {manutencao.previsao && (
+            <p style={{ display: 'flex', alignItems: 'center', gap: 6, font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+              <span className="ms-icon" style={{ fontSize: 17, color: 'var(--text-muted)' }}>schedule</span>
+              Previsão de volta: {manutencao.previsao}
+            </p>
+          )}
+          <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 20px', lineHeight: 1.55 }}>
+            A venda segue normalmente a preço de tabela. A autorização de
+            negociação depende do login e volta junto com ele.
+          </p>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn-ghost" onClick={() => setManutencao(null)}>Tentar de novo</button>
+            <button type="button" className="btn-prim" autoFocus onClick={onCancelar}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>check</span>Entendi
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (trocarSenha) {
     return (

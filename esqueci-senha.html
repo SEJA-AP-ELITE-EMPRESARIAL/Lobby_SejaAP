@@ -57,6 +57,7 @@ button{font-family:var(--font-primary);}
 .aviso{display:flex;align-items:flex-start;gap:10px;padding:14px 16px;border-radius:10px;font:400 13.5px var(--font-secondary);line-height:1.5;}
 .aviso.erro{background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.32);color:#F1AEB5;}
 .aviso.ok{background:rgba(40,167,69,.12);border:1px solid rgba(40,167,69,.32);color:#A3D9AE;}
+.aviso.manutencao{background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.28);color:#FFD866;}
 .tela{min-height:100%;display:grid;place-items:center;padding:24px;}
 .dica{font:400 12.5px var(--font-secondary);color:var(--text-muted);line-height:1.55;margin:8px 0 0;}
 .voltar{display:inline-flex;align-items:center;gap:6px;margin-top:16px;color:var(--text-muted);text-decoration:none;font:400 12.5px var(--font-secondary);}
@@ -88,6 +89,60 @@ const { useState } = React;
 
 const LOGIN = '/';
 
+/* ===== Login central em manutenção (TSK-1238) ===== */
+// A previsão de volta que o backend repassa do aviso de manutenção do Conecta
+// (ISO 8601 com fuso, ou null), em texto para a tela, no horário de Brasília:
+// "hoje às 15:00" ou "27/10 às 09:30". Sem previsão, ilegível ou já vencida
+// (a manutenção atrasou), null — e a tela não fala de hora nenhuma, em vez de
+// prometer uma volta que já passou. A MESMA função no index.html, no
+// esqueci-senha.html e no definir-senha.html (tests/front/manutencao.test.mjs
+// confere que as três são iguais).
+function textoDaPrevisao(iso, agora = new Date()) {
+  if (!iso) return null;
+  const quando = new Date(iso);
+  if (isNaN(quando.getTime()) || quando.getTime() <= agora.getTime()) return null;
+  const formato = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  const partes = (d) => Object.fromEntries(formato.formatToParts(d).map((p) => [p.type, p.value]));
+  const q = partes(quando);
+  const a = partes(agora);
+  const hora = `${q.hour}:${q.minute}`;
+  if (q.day === a.day && q.month === a.month && q.year === a.year) return `hoje às ${hora}`;
+  return `${q.day}/${q.month} às ${hora}`;
+}
+
+// O 503 `erro: "manutencao"` do backend vira um Error com `manutencao`, que a
+// tela troca pelo aviso "Temporariamente indisponível / Em manutenção". Não é
+// erro de quem digitou, e não pode parecer: nem "senha incorreta", nem o
+// vermelho de falha.
+function erroDeManutencao(r, d) {
+  if (r.status !== 503 || !d || d.erro !== 'manutencao') return null;
+  const erro = new Error(d.mensagem || 'O login central está em manutenção.');
+  erro.manutencao = { mensagem: erro.message, previsao: textoDaPrevisao(d.previsao) };
+  return erro;
+}
+/* ===== fim do login central em manutenção ===== */
+
+// O aviso de manutenção, no lugar do erro: âmbar, e não vermelho, porque não
+// há nada que a pessoa tenha feito de errado nem que ela possa corrigir.
+function AvisoManutencao({ manutencao }) {
+  return (
+    <div className="aviso manutencao" role="status" style={{ marginBottom: 16 }}>
+      <span className="ms-icon" style={{ fontSize: 20 }}>construction</span>
+      <span>
+        <strong style={{ display: 'block', font: '700 14px var(--font-primary)', color: 'var(--text)' }}>Temporariamente indisponível</strong>
+        <span style={{ display: 'block', font: '600 11px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', margin: '2px 0 8px' }}>Em manutenção</span>
+        <span style={{ display: 'block', whiteSpace: 'pre-line', color: 'var(--text-secondary)' }}>{manutencao.mensagem}</span>
+        {manutencao.previsao && (
+          <span style={{ display: 'block', marginTop: 6, color: 'var(--text-secondary)' }}>Previsão de volta: {manutencao.previsao}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 function Cartao({ icone, cor, titulo, children }) {
   return (
     <div className="tela">
@@ -105,6 +160,7 @@ function Cartao({ icone, cor, titulo, children }) {
 function App() {
   const [email, setEmail] = useState('');
   const [erro, setErro] = useState('');
+  const [manutencao, setManutencao] = useState(null);
   const [enviando, setEnviando] = useState(false);
   const [pedido, setPedido] = useState(false);
 
@@ -112,6 +168,7 @@ function App() {
     e.preventDefault();
     if (enviando) return;
     setErro('');
+    setManutencao(null);
     if (!email) { setErro('Informe o seu e-mail.'); return; }
 
     setEnviando(true);
@@ -122,12 +179,15 @@ function App() {
         body: JSON.stringify({ email }),
       });
       const dados = await r.json().catch(() => ({}));
+      const emManutencao = erroDeManutencao(r, dados);
+      if (emManutencao) throw emManutencao;
       if (!r.ok) throw new Error(dados.erro || 'Não foi possível pedir o link agora.');
       setPedido(true);
     } catch (err) {
       // Só chega aqui o que não é sobre a conta: Conecta ID fora do ar ou
       // campo vazio. E-mail desconhecido responde sucesso, de propósito.
-      setErro(err.message);
+      if (err.manutencao) setManutencao(err.manutencao);
+      else setErro(err.message);
     } finally {
       setEnviando(false);
     }
@@ -165,6 +225,8 @@ function App() {
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
+
+        {manutencao && <AvisoManutencao manutencao={manutencao} />}
 
         {erro && (
           <div className="aviso erro" style={{ marginBottom: 16 }}>

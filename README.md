@@ -64,9 +64,11 @@ acesso é binário, e quem guarda permissão de negócio é cada sistema.
 
 #### Dar acesso a alguém — dois passos, nesta ordem
 
-**1.** Libere a pessoa para o app `lobby` **no Conecta ID**. Sem isso o comando
-abaixo não encontra ninguém — e está certo: quem decide quem entra na empresa é o
-Conecta ID, não este app.
+**1.** Libere a pessoa para o app `lobby` **no login central**: hoje o admin do
+Conecta ID; depois da virada (TSK-1220), o /admin do Conecta, por SuperAdmin. Sem
+isso o comando abaixo não encontra ninguém — e está certo: quem cria login e
+concede acesso é o login central, e nenhum app faz isso (decisão do dono de
+23/10/2026; o cliente 1.5 nem tem mais esses métodos).
 
 **2.** Dê o papel, aqui:
 
@@ -89,6 +91,23 @@ incidente.
 
 > ⚠️ **`AUTH_CENTRAL_ATIVO=false` não é rollback, é tranca.** Não há senha local
 > neste app; desligar tira todo mundo, inclusive a diretoria.
+
+#### Desativou no login central, caiu aqui; manutenção não derruba ninguém
+
+Cliente 1.5 (`backend/identidade_client.py`, cópia do Conecta — não se edita
+aqui), desde a TSK-1238:
+
+- **Desativar a pessoa** (ou revogar o acesso dela ao Lobby) no login central
+  derruba a autorização já emitida em até 5 minutos: o token é conferido de novo
+  a cada requisição (`apps/contas/autenticacao.py`, `JWTRevalidado`), com a
+  resposta guardada por 5 minutos por pessoa. A venda negociada volta a pedir
+  autorização. O mesmo vale para a sessão do `/django-admin/`.
+- **Login central fora do ar ou em manutenção nunca derruba** quem já está
+  autorizado.
+- **Em manutenção**, o login, o esqueci e o definir senha respondem `503
+  {erro: "manutencao", mensagem, previsao}`, e as telas mostram
+  "Temporariamente indisponível / Em manutenção", com o texto do aviso e a
+  previsão de volta. A venda a preço de tabela segue, porque não depende de login.
 
 #### Rotacionar a chave de aplicação
 

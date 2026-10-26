@@ -10,10 +10,13 @@ container:
     docker exec lobby-backend python manage.py promover_no_lobby \\
         fulano@sejaap.com.br --papel diretoria
 
-Pré-requisito: a pessoa já precisa ter acesso ao app `lobby` no Conecta ID
-(`POST /api/v1/acessos` ou o admin de lá). Sem isso o comando não a encontra —
-e isso é correto, porque quem decide quem entra na empresa é o Conecta ID, não
-este app.
+Pré-requisito: a pessoa já precisa ter acesso ao app `lobby` no login central
+(hoje o admin do Conecta ID; depois da virada, TSK-1220, o /admin do Conecta).
+Sem isso o comando não a encontra — e isso é correto, porque quem cria login e
+concede acesso é o login central, não este app. O comando só LÊ de lá
+(`buscar_por_email`) e grava o papel aqui: não cria conta nem concede acesso no
+login central, e por isso segue de pé com o cliente 1.5, que tirou esses métodos
+(TSK-1238).
 """
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
