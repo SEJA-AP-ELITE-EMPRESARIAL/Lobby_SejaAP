@@ -19,7 +19,7 @@ dentro, na tradução da resposta. Nada aqui chama servidor de fora.
 import http.server
 import json
 import threading
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -134,6 +134,24 @@ class RevalidacaoDoTokenTest(TestCase):
                 "/api/venda/comprovante", _venda_negociada(), format="json"
             )
         self.assertEqual(resposta.status_code, 200)
+
+    def test_redis_fora_mantem_a_sessao_sem_martelar_o_conecta(self):
+        """O cache `default` do Lobby falha aberto no `get` e no `set`, mas não no
+        `add` (`config/cache.py`): com o Redis fora, o `add` levanta, e a
+        `revalidar_sessao` mantém a sessão sem perguntar nada. Sem isso, cada
+        requisição viraria uma chamada ao Conecta enquanto o Redis estivesse
+        fora.
+        """
+        cache_fora = MagicMock()
+        cache_fora.get.return_value = None
+        cache_fora.add.side_effect = ConnectionError("Redis fora")
+        # O registro da falha sai no máximo uma vez por minuto por processo:
+        # zerado aqui, para o teste não depender de quem rodou antes.
+        with patch("identidade_client.cache", cache_fora), patch(ALVO) as Cliente, \
+                patch("identidade_client._ULTIMO_REGISTRO_DE_FALHA", None):
+            with self.assertLogs("identidade_client", level="ERROR"):
+                self.assertEqual(self.sessao().status_code, 200)
+        Cliente.return_value.obter.assert_not_called()
 
     @override_settings(AUTH_CENTRAL_ATIVO=False)
     def test_com_a_central_desligada_nao_pergunta_nada(self):
