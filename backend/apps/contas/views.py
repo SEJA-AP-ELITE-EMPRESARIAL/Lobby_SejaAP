@@ -117,27 +117,6 @@ def _resposta(mensagem, codigo):
     return Response({"erro": mensagem}, status=codigo)
 
 
-def _lembrar_login_aceito(usuario):
-    """O login aceito vale como revalidação, e apaga uma recusa antiga do cache.
-
-    Sem isto, quem foi desativado, teve o token recusado e foi reativado minutos
-    depois entraria no modal e levaria o token novo recusado na venda (a recusa
-    fica guardada por 5 minutos, e a última resposta por 24 h). O
-    `BackendIdentidade` faz isso sozinho; esta view chama o `verificar` direto
-    (ver o docstring do módulo), e o docstring do cliente admite a lacuna.
-
-    `_lembrar_sessao_valida` é privada no cliente, que não se edita aqui: o
-    `getattr` é para uma cópia futura sem ela não derrubar o login com 500, e o
-    teste da reativação (`tests_revalidacao`) é quem avisa se ela sumir. Ela
-    mesma nunca levanta. Pedido ao Conecta: torná-la pública numa 1.5.3.
-    """
-    lembrar = getattr(identidade_client, "_lembrar_sessao_valida", None)
-    if lembrar is None:
-        logger.error("identidade_client sem _lembrar_sessao_valida; o login não revalida a sessão")
-        return
-    lembrar(usuario)
-
-
 def _resposta_manutencao(erro):
     """503 do login central em manutenção, no formato que o front reconhece.
 
@@ -210,7 +189,13 @@ def abrir_sessao(request):
         # do admin (`admin.html:228`) e a mensagem precisa ser vista.
         return _resposta(MSG_SEM_PAPEL, status.HTTP_403_FORBIDDEN)
 
-    _lembrar_login_aceito(usuario)
+    # O login aceito vale como revalidação, e apaga uma recusa antiga do cache.
+    # Sem isto, quem foi desativado, teve o token recusado e foi reativado
+    # minutos depois levaria o token novo recusado na venda (a recusa fica
+    # guardada por 5 minutos). O `BackendIdentidade` faz isso sozinho; esta view
+    # chama o `verificar` direto (ver o docstring do módulo). Pública desde a
+    # 1.5.3 do cliente (TSK-1271), e nunca levanta.
+    identidade_client.lembrar_sessao_valida(usuario)
     token = RefreshToken.for_user(usuario).access_token
     return Response(
         {
