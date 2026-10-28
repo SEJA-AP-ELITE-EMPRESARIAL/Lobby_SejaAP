@@ -81,8 +81,9 @@ link ou token de senha. Saíram `criar`, `alterar`, `conceder_acesso`,
 recusava essas escritas com 403 `sem_permissao`). Ficam as leituras
 (`verificar`, `buscar_por_email`, `listar_com_acesso`, `obter`, `saudavel`), a
 semente do primeiro login (`resolver_com_vinculo`) e as chamadas de senha da
-própria pessoa (`esqueci_senha`, `definir_senha`, `trocar_senha`), que ainda não
-têm rota no Conecta (TSK-1217): até lá, levantam `IdentidadeIndisponivel`.
+própria pessoa (`esqueci_senha`, `definir_senha`, `trocar_senha`), com rota no
+Conecta desde a TSK-1217 (`api/v1/senha/esqueci`, `api/v1/senha/definir` e
+`api/v1/identidades/<id>/senha`).
 
 **Em manutenção, a tela diz que está em manutenção**, e não que deu erro. O 503
 `erro: manutencao` vira `IdentidadeEmManutencao`, com `mensagem` (o texto do
@@ -188,6 +189,65 @@ produção, toda chamada levou 403 (`error code: 1010`), que o cliente traduz em
 `IdentidadeIndisponivel` (e o `saudavel` dava False). Nenhuma outra linha de
 lógica mudou.
 
+## 1.5.3 — a chave fica no Conecta, e a resposta velha não vence a nova (TSK-1270)
+
+Quatro pontos que as revisões das versões anteriores deixaram para esta.
+
+**A chave do app não segue redirecionamento para outro destino.** Até a 1.5.2 o
+`Authorization` ia por `add_header`, e o `urllib` repete esses cabeçalhos no
+pedido que segue um 3xx, sem olhar para onde: um proxy mal configurado, ou um
+`IDENTIDADE_URL` que cai num domínio que redireciona, entregava a chave a outro
+host. Agora o cliente segue o 3xx pelo `_RedirecionamentoSemAChave`: para o
+mesmo destino (mesmo esquema, host e porta), o pedido leva a chave, como antes;
+para outro host, outra porta, ou de https para http, vai sem ela, e o que vier
+de lá não vale como resposta do Conecta: o cliente levanta
+`IdentidadeIndisponivel`, e o log diz para onde foi. Nem um 200 de outro host
+vira login, e um 3xx de lá não é seguido. O `User-Agent` da 1.5.2 continua em
+todo pedido, inclusive no redirecionado. Um `Location` que nem é URL também
+vira `IdentidadeIndisponivel` (até a 1.5.2, um `ValueError` e 500 no login).
+Um handler, e não o `add_unredirected_header`, porque este tiraria a chave
+também do mesmo host, e reenviá-la à mão custaria uma ida a mais ao Conecta e a
+regra de método do `urllib` (o POST que vira GET) reescrita aqui. De http para
+https no mesmo host a chave também não vai (é outro esquema): o `IDENTIDADE_URL`
+já tem de ser o `https://`.
+
+**Uma resposta velha não apaga uma nova na revalidação.** Uma pergunta ao
+Conecta que começou antes de a pessoa ser reativada, e terminou depois do novo
+login dela, gravava a recusa por cima do login aceito, e a pessoa ficava
+recusada por mais 5 minutos. Agora, ao lado da resposta, ficam a hora do último
+login aceito (a hora em que ele é lembrado, depois de o Conecta aceitá-lo: ver
+`lembrar_sessao_valida`) e a hora em que começou a pergunta que deu a última
+recusa; e uma recusa mais velha que o último login não vale. A pergunta que
+começou antes do login nem grava a recusa e, se ela gravar mesmo assim (outro
+processo no mesmo Redis, uma pausa no meio da gravação), a leitura a descarta:
+a ordem não depende de trava, que a API de cache do Django não tem como fazer
+atômica. Vale com o LocMem (o padrão de quem não configura `CACHES`, como o
+Formulário) e com o Redis. A resposta guardada continua o texto da 1.5.2, com as
+horas em chaves ao lado: voltar a imagem de um app para a 1.5.2 não solta quem
+estava recusado. Sem uma das horas (a 1.5.2 gravou a recusa, ou o cache cortou a
+chave), a recusa vale, como até a 1.5.2: com o LocMem, cada pessoa ocupa até
+quatro entradas, e o padrão do Django guarda 300 por processo, junto com o que
+mais o app puser no cache; o app com muita gente sobe o `OPTIONS["MAX_ENTRIES"]`.
+A regra que não muda: falha ou manutenção do Conecta nunca derrubam a sessão.
+
+**`lembrar_sessao_valida(usuario)` é pública.** É o que o app chama quando o
+próprio login acaba de ser aceito pela API sem passar pelo `BackendIdentidade`
+(o Lobby e o Selo chamam o `verificar` direto), para valer como revalidação; e
+ela entra na mesma regra de ordem. A privada `_lembrar_sessao_valida`, que o
+Lobby usa por `getattr`, fica como apelido nesta versão e sai na próxima.
+
+**O texto:** as rotas de senha existem no Conecta desde a TSK-1217, e o
+cabeçalho da 1.5 e os docstrings de `esqueci_senha`, `definir_senha` e
+`trocar_senha` diziam que não.
+
+## Quem vem da 1.5.2 (Formulário e Lobby)
+
+Nenhuma configuração muda, e voltar para a 1.5.2 (o rollback da imagem) também
+não pede nada no cache. No Lobby, troque o `getattr(identidade_client,
+"_lembrar_sessao_valida", None)` de `apps/contas/views.py` pela chamada direta a
+`identidade_client.lembrar_sessao_valida(usuario)`: o apelido sai na próxima
+versão. O Formulário passa pelo `BackendIdentidade` e não tem o que trocar.
+
 ## Quem vem direto da 1.2 (Formulário e Lobby)
 
 Além do que mudou na 1.5:
@@ -219,7 +279,7 @@ from django.utils.module_loading import import_string
 
 logger = logging.getLogger("identidade_client")
 
-VERSAO = "1.5.2"
+VERSAO = "1.5.3"
 
 
 # === IP do usuário ========================================================
@@ -400,6 +460,63 @@ def _formato_inesperado(chamada):
 
 
 # === Cliente HTTP =========================================================
+def _origem(url):
+    """`(esquema, host, porta)` de uma URL, ou `None` se ela não disser para onde vai (1.5.3)."""
+    try:
+        partes = urllib.parse.urlsplit(url)
+        esquema = partes.scheme.lower()
+        porta = partes.port or {"http": 80, "https": 443}.get(esquema)
+    except (AttributeError, TypeError, ValueError):
+        # Porta que não é número, ou o que nem é texto: não é o mesmo destino de nada.
+        return None
+    if not esquema or not partes.hostname:
+        return None
+    return esquema, partes.hostname, porta
+
+
+def _mesmo_destino(uma, outra):
+    """As duas URLs vão ao mesmo lugar: mesmo esquema, host e porta (1.5.3)."""
+    origem = _origem(uma)
+    return origem is not None and origem == _origem(outra)
+
+
+class _RedirecionamentoSemAChave(urllib.request.HTTPRedirectHandler):
+    """Segue o 3xx como o `urllib`, mas a chave do app só vai ao mesmo destino (1.5.3).
+
+    O `redirect_request` do `urllib` copia para o pedido novo todo cabeçalho posto
+    por `add_header`, sem olhar o host. O `User-Agent` segue; o `Authorization`, só
+    se o destino tiver o mesmo esquema, host e porta do pedido que foi redirecionado.
+    E um 3xx que venha do outro destino não é seguido: quem responde lá não escolhe
+    o caminho de volta, e a resposta dele já não vale (`_conferir_destino`).
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if getattr(req, "_fora_do_destino", False):
+            # `None` faz o `urllib` levantar o `HTTPError` do 3xx, com a URL de fora.
+            return None
+        novo = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if novo is not None and not _mesmo_destino(novo.full_url, req.full_url):
+            novo.remove_header("Authorization")
+            novo._fora_do_destino = True
+        return novo
+
+
+_ABRIDOR = None
+
+
+def _abrir(requisicao, timeout):
+    """O `urlopen` do cliente: o do `urllib`, com o `_RedirecionamentoSemAChave` (1.5.3).
+
+    Montado uma vez por processo, como o do `urlopen`: o `HTTPSHandler` carrega os
+    certificados da máquina ao nascer, e um por chamada custaria isso a cada
+    pergunta ao Conecta.
+    """
+    global _ABRIDOR
+    if _ABRIDOR is None:
+        _ABRIDOR = urllib.request.build_opener(_RedirecionamentoSemAChave)
+    return _ABRIDOR.open(requisicao, timeout=timeout)
+
+
 class ClienteIdentidade:
     def __init__(self, url=None, chave=None, timeout=None):
         self.url = (url or getattr(settings, "IDENTIDADE_URL", "")).rstrip("/")
@@ -457,15 +574,25 @@ class ClienteIdentidade:
         enviado"); qualquer mensagem mais específica reconstrói, na tela, a
         distinção que a API se recusa a fazer.
 
-        Sem rota no Conecta até a TSK-1217, como `definir_senha` e
-        `trocar_senha`: até lá, as três levantam `IdentidadeIndisponivel`.
+        Rota `api/v1/senha/esqueci` do Conecta, desde a TSK-1217.
         """
         self._pedir("POST", "/api/v1/senha/esqueci", {"email": email})
 
     def definir_senha(self, token, senha_nova):
+        """Define a senha pelo link do e-mail (`api/v1/senha/definir`, desde a TSK-1217).
+
+        `TokenInvalido` (com o `motivo`, desde a 1.3) para o link que não vale,
+        e `SenhaFraca` para a senha que não passa na política.
+        """
         self._pedir("POST", "/api/v1/senha/definir", {"token": token, "senha_nova": senha_nova})
 
     def trocar_senha(self, identidade_id, senha_atual, senha_nova, ip=None):
+        """Troca a senha de quem está logado (`api/v1/identidades/<id>/senha`, desde a TSK-1217).
+
+        `CredencialInvalida` para a senha atual errada, `BloqueadoTemporariamente`
+        depois de tentativas demais, `SenhaFraca` para a nova e `NaoEncontrado`
+        para a identidade que este app não enxerga.
+        """
         corpo = {"senha_atual": senha_atual, "senha_nova": senha_nova}
         if ip:
             corpo["ip"] = ip
@@ -501,17 +628,25 @@ class ClienteIdentidade:
         if autenticado:
             if not self.chave:
                 raise IdentidadeIndisponivel("IDENTIDADE_APP_KEY não configurada.")
+            # Também por `add_header`, para seguir um 3xx para o mesmo destino: o
+            # `_RedirecionamentoSemAChave` a tira do pedido que vai a outro (1.5.3).
             requisicao.add_header("Authorization", self.chave)
 
         try:
-            with urllib.request.urlopen(requisicao, timeout=self.timeout) as resposta:
+            with _abrir(requisicao, self.timeout) as resposta:
+                # Antes do corpo: o de outro destino nem é lido.
+                self._conferir_destino(resposta.url, caminho)
                 bruto = resposta.read()
         except urllib.error.HTTPError as erro:
+            self._conferir_destino(erro.url, caminho)
             self._traduzir(erro)
-        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as erro:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError,
+                ValueError) as erro:
             # Rede caiu, DNS não resolveu, timeout, conexão cortada no meio da
-            # resposta. Nunca confundir com senha errada: quem decide o que
-            # mostrar é o app, e ele precisa saber a diferença.
+            # resposta, ou um 3xx com um `Location` que nem é URL (o `ValueError`
+            # do `urllib`, desde a 1.5.3; antes, 500 na tela de login). Nunca
+            # confundir com senha errada: quem decide o que mostrar é o app, e ele
+            # precisa saber a diferença.
             logger.error("Conecta ID inalcançável em %s%s: %s", self.url, caminho, erro)
             raise IdentidadeIndisponivel("Serviço de identidade inalcançável.") from erro
 
@@ -524,6 +659,23 @@ class ClienteIdentidade:
             # API: não é resposta do serviço (1.5).
             logger.error("Conecta ID respondeu %s%s com algo que não é JSON", self.url, caminho)
             raise IdentidadeIndisponivel("Resposta inesperada do serviço de identidade.") from erro
+
+    def _conferir_destino(self, destino, caminho):
+        """A resposta veio de onde o pedido foi? Se um 3xx a levou para fora, não vale (1.5.3).
+
+        O pedido redirecionado para outro destino saiu sem a chave, e o que voltou
+        de lá não é resposta do Conecta: nem o erro (um `credencial_invalida` de
+        outro host viraria "senha incorreta"), nem o 200 (viraria login).
+        """
+        if _mesmo_destino(destino, self.url):
+            return
+        origem = _origem(destino)
+        logger.error(
+            "Conecta ID redirecionou %s%s para outro destino (%s); a chave do app não foi "
+            "junto, e a resposta de lá foi descartada",
+            self.url, caminho, "%s://%s:%s" % origem if origem else "ilegível",
+        )
+        raise IdentidadeIndisponivel("O serviço de identidade redirecionou para outro destino.")
 
     def _traduzir(self, erro_http):
         try:
@@ -634,7 +786,7 @@ class BackendIdentidade(BaseBackend):
         # fazer com ele (banner, redirecionamento).
         usuario.identidade_precisa_trocar_senha = dados.get("precisa_trocar_senha", False)
         # O Conecta acabou de dizer que a identidade vale neste app.
-        _lembrar_sessao_valida(usuario)
+        lembrar_sessao_valida(usuario)
         return usuario
 
     def get_user(self, user_id):
@@ -694,6 +846,10 @@ GUARDAR_A_ULTIMA_RESPOSTA = 24 * 60 * 60
 _VALIDA = "valida"
 _RECUSADA = "recusada"
 _ULTIMA = ":ultima"
+#: Ao lado da resposta (1.5.3): a hora do último login aceito e a do começo da pergunta que deu a
+#: última recusa. Cada uma tem um escritor só (o login, a recusa). Ver `_recusada`.
+_LOGIN = ":login"
+_RECUSA = ":recusa"
 _AVISOU_SEM_VINCULO = False
 _ULTIMO_REGISTRO_DE_FALHA = None
 
@@ -719,7 +875,8 @@ def revalidar_sessao(usuario):
     Sessão derrubada por falha do Conecta seria todo mundo dos cinco apps fora
     ao mesmo tempo. A falha só não desfaz uma recusa: a última resposta clara
     fica guardada (`GUARDAR_A_ULTIMA_RESPOSTA`) e vale enquanto o Conecta não
-    der outra, inclusive para a requisição que chega com a pergunta no ar. Com o Conecta pendurado, cada pergunta seguraria um worker:
+    der outra, inclusive para a requisição que chega com a pergunta no ar. Com o
+    Conecta pendurado, cada pergunta seguraria um worker:
     por isso o timeout dela é de no máximo `TIMEOUT_DA_REVALIDACAO` segundos, e
     depois de uma falha ninguém pergunta por `PAUSA_DEPOIS_DE_FALHA` segundos.
     A falha inesperada (cache fora, bug) vai ao log no máximo uma vez nesse
@@ -733,10 +890,16 @@ def revalidar_sessao(usuario):
     e um token velho reapresentado não volta a valer nem vira uma chamada por
     requisição. Com o LocMem (o padrão de quem não configura `CACHES`) a conta é
     por processo: com três workers, até três perguntas por pessoa a cada 5
-    minutos. O login aceito pelo `BackendIdentidade` vale como revalidação (no
-    processo que o atendeu). As perguntas entram na cota de leitura do app no
-    Conecta (120 por minuto): com LocMem, cerca de pessoas ativas × workers ÷ 5
-    por minuto. Estourada, a cota dá 429, e a sessão fica de pé.
+    minutos. O login aceito vale como revalidação (no processo que o atendeu):
+    o `BackendIdentidade` chama `lembrar_sessao_valida`, e o app que chama o
+    `verificar` direto chama ela também. As perguntas entram na cota de leitura
+    do app no Conecta (120 por minuto): com LocMem, cerca de pessoas ativas ×
+    workers ÷ 5 por minuto. Estourada, a cota dá 429, e a sessão fica de pé.
+
+    Desde a 1.5.3, a recusa da pergunta que começou antes do último login aceito
+    não vale (a hora do login é a da chamada a `lembrar_sessao_valida`, depois
+    de o Conecta o aceitar): ela nem é gravada, e a requisição dela recebe o
+    login; se for gravada mesmo assim, a leitura a descarta. Ver `_recusada`.
 
     O `identidade_id` sai de `usuario.vinculo_identidade` (o vínculo de
     `resolver_com_vinculo`), e tem de ser o que o Conecta conhece: um vínculo
@@ -748,25 +911,29 @@ def revalidar_sessao(usuario):
         chave = _chave_da_sessao(usuario)
         anterior = cache.get(chave)
         if anterior is not None:
-            return anterior != _RECUSADA
+            return not _recusada(chave, anterior)
         # A última resposta clara vale até chegar outra: é o que recebe a
         # requisição que chega com a pergunta no ar, e o que fica se o Conecta
         # não responder. Sem ela, uma recusa vencida abria uma janela a cada 5
         # minutos para um token velho.
         ultima = cache.get(chave + _ULTIMA)
         if cache.get(_chave_da_pausa()) is not None:
-            return ultima != _RECUSADA
+            return not _recusada(chave, ultima)
         if not cache.add(chave, ultima or _VALIDA, REVALIDAR_A_CADA):
             # Outra requisição desta pessoa pegou a vez entre o `get` e o `add`.
-            return cache.get(chave) != _RECUSADA
+            return not _recusada(chave, cache.get(chave))
         identidade_id = _identidade_de(usuario)
         if identidade_id is None:
             return True
+        # A marca da resposta é o INÍCIO da pergunta (1.5.3): um login aceito
+        # enquanto ela está no ar é mais novo do que ela.
+        inicio = time.time()
         resposta = _resposta_do_conecta(identidade_id)
         if resposta is None:
-            return ultima != _RECUSADA
-        _guardar_resposta(chave, resposta)
-        return resposta != _RECUSADA
+            # Relida, e não a do começo: um login aceito com a pergunta no ar
+            # é mais novo que a recusa que estava lá.
+            return not _recusada(chave, cache.get(chave + _ULTIMA))
+        return _guardar_resposta(chave, resposta, inicio) != _RECUSADA
     except Exception:
         _registrar_falha()
         return True
@@ -848,24 +1015,90 @@ def _chave_da_pausa():
     return f"identidade_client:pausa:{_app_da_chave()}"
 
 
-def _lembrar_sessao_valida(usuario):
-    """Guarda o login aceito como revalidação, e apaga uma recusa antiga.
+def lembrar_sessao_valida(usuario):
+    """O login que a API acabou de aceitar vale como revalidação, e apaga uma recusa antiga (1.5.3).
+
+    Quando chamar: logo depois de o `verificar` devolver a identidade e o app
+    resolver o usuário local, antes de emitir a sessão ou o token. O
+    `BackendIdentidade` já chama; quem chama o `verificar` direto, sem ele (o
+    Lobby e o Selo), chama esta. Só aí: ela não pergunta nada ao Conecta, e
+    chamada em outro ponto (na renovação do token, num login recusado) daria por
+    conferida uma sessão que ninguém conferiu.
 
     Sem isso, quem foi reativado minutos depois de ter a sessão derrubada
-    entraria e cairia de novo, pela recusa ainda no cache. Com o LocMem, vale só
-    no processo que atendeu o login: nos outros, a recusa dura o resto dos 5
-    minutos. Quem chama o `verificar` direto, sem o `BackendIdentidade` (Lobby e
-    Selo), não tem nem isso.
+    entraria e cairia de novo, pela recusa ainda no cache. O login vale da hora
+    desta chamada, na regra de ordem da `revalidar_sessao`: a pergunta ao Conecta
+    que começou antes dela, inclusive durante o `verificar`, não grava a recusa
+    por cima. É de propósito, e não a hora do começo do `verificar`: com esta, a
+    pergunta que saiu durante o login e leu a pessoa ainda inativa venceria o
+    login da pessoa reativada, que entraria e cairia na hora. O preço é o
+    contrário, e menor: quem é desativado durante o próprio login fica até a
+    pergunta seguinte, em 5 minutos, a demora que a desativação já tem. Com o
+    LocMem, vale só no processo que atendeu o login: nos outros, a recusa dura o
+    resto dos 5 minutos. Nunca levanta.
     """
     try:
-        _guardar_resposta(_chave_da_sessao(usuario), _VALIDA)
+        chave = _chave_da_sessao(usuario)
+        # A hora do login antes da resposta: quem vir a resposta vê a hora.
+        cache.set(chave + _LOGIN, time.time(), GUARDAR_A_ULTIMA_RESPOSTA)
+        cache.set(chave, _VALIDA, REVALIDAR_A_CADA)
+        cache.set(chave + _ULTIMA, _VALIDA, GUARDAR_A_ULTIMA_RESPOSTA)
     except Exception:
         logger.warning("falha ao guardar a revalidação do login", exc_info=True)
 
 
-def _guardar_resposta(chave, resposta):
+#: O nome da 1.5.2, que o Lobby chama por `getattr`. Apelido só nesta versão: sai
+#: na próxima. Use `lembrar_sessao_valida`.
+_lembrar_sessao_valida = lembrar_sessao_valida
+
+
+def _marca_de(guardada):
+    """A hora guardada ao lado da resposta, ou `None` sem ela."""
+    try:
+        return float(guardada)
+    except (TypeError, ValueError):
+        return None
+
+
+def _recusada(chave, guardada):
+    """A resposta guardada em `chave` é uma recusa que ainda vale? (1.5.3)
+
+    Não vale a recusa da pergunta que começou antes do último login aceito: o
+    Conecta aceitou o login depois de ela ter lido o estado da pessoa. É a
+    leitura que decide, e não a ordem em que as gravações caem no cache: a
+    recusa velha que grava depois do login (outro processo no mesmo Redis, uma
+    pausa no meio da gravação) não vale do mesmo jeito. Sem a hora do login ou
+    sem a da recusa (a 1.5.2 gravou a recusa, ou o cache cortou a chave), a
+    recusa vale, como até a 1.5.2. No empate, também vale.
+    """
+    if guardada != _RECUSADA:
+        return False
+    login = _marca_de(cache.get(chave + _LOGIN))
+    recusa = _marca_de(cache.get(chave + _RECUSA))
+    return login is None or recusa is None or recusa >= login
+
+
+def _guardar_resposta(chave, resposta, inicio):
+    """Grava a resposta da pergunta que começou em `inicio`, e devolve a que vale (1.5.3).
+
+    A recusa só é gravada se a pergunta não for mais velha que o último login
+    aceito; senão, vale o login. A resposta continua o texto puro da 1.5.2, e a
+    hora vai numa chave ao lado, que a 1.5.2 não lê: a imagem que volta para a
+    1.5.2 (o rollback), num Redis, lê a recusa gravada aqui como recusa.
+
+    Sem trava, porque a API de cache do Django não tem compare-and-set: se o
+    login gravar entre a conferência e a gravação da recusa, a `_recusada`
+    ainda a descarta na leitura, pela hora. Por isso a hora da recusa vai antes
+    da resposta, e a devolvida é conferida de novo depois de gravar.
+    """
+    if resposta == _RECUSADA:
+        login = _marca_de(cache.get(chave + _LOGIN))
+        if login is not None and login > inicio:
+            return _VALIDA
+        cache.set(chave + _RECUSA, inicio, GUARDAR_A_ULTIMA_RESPOSTA)
     cache.set(chave, resposta, REVALIDAR_A_CADA)
     cache.set(chave + _ULTIMA, resposta, GUARDAR_A_ULTIMA_RESPOSTA)
+    return _RECUSADA if _recusada(chave, resposta) else _VALIDA
 
 
 # === Provisionamento ======================================================

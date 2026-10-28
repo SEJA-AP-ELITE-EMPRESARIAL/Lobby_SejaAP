@@ -139,6 +139,51 @@ class RevalidacaoDoTokenTest(TestCase):
         # Valeu pelo login, sem perguntar de novo ao Conecta.
         Cliente.return_value.obter.assert_not_called()
 
+    def test_o_login_chama_a_funcao_publica_do_cliente(self):
+        """`lembrar_sessao_valida` é pública desde a 1.5.3 (TSK-1271).
+
+        A privada `_lembrar_sessao_valida` sai na próxima versão do cliente: a
+        view tem de chamar a pública, e este teste quebra se voltar à outra.
+        """
+        with (
+            patch("apps.contas.views.ClienteIdentidade") as Login,
+            patch("identidade_client.lembrar_sessao_valida") as lembrar,
+            # `create=True`: quando o apelido sair do cliente, o teste segue
+            # valendo, em vez de quebrar no `patch`.
+            patch("identidade_client._lembrar_sessao_valida", create=True) as privada,
+        ):
+            Login.return_value.verificar.return_value = {
+                "identidade_id": str(self.identidade_id),
+                "email": "gerente@sejaap.com.br",
+                "nome": "Gerente",
+                "precisa_trocar_senha": False,
+            }
+            resposta = APIClient().post(
+                "/api/sessao", {"email": "gerente@sejaap.com.br", "senha": "x"}, format="json"
+            )
+
+        self.assertEqual(resposta.status_code, 200)
+        lembrar.assert_called_once()
+        self.assertEqual(lembrar.call_args.args[0].email, "gerente@sejaap.com.br")
+        privada.assert_not_called()
+
+    def test_login_recusado_nao_conta_como_revalidacao(self):
+        """Só o login aceito vale: chamada em outro ponto daria por conferida uma
+        sessão que ninguém conferiu (docstring de `lembrar_sessao_valida`)."""
+        from identidade_client import CredencialInvalida
+
+        with (
+            patch("apps.contas.views.ClienteIdentidade") as Login,
+            patch("identidade_client.lembrar_sessao_valida") as lembrar,
+        ):
+            Login.return_value.verificar.side_effect = CredencialInvalida("Credenciais inválidas.")
+            resposta = APIClient().post(
+                "/api/sessao", {"email": "gerente@sejaap.com.br", "senha": "x"}, format="json"
+            )
+
+        self.assertEqual(resposta.status_code, 401)
+        lembrar.assert_not_called()
+
     # ----- o que NÃO derruba ---------------------------------------------
 
     def test_identidade_ativa_segue_e_so_pergunta_uma_vez_a_cada_5_minutos(self):
@@ -329,14 +374,14 @@ class ManutencaoNoLoginTest(ConectaFalsoTest):
         self.assertIn("indisponível", resposta.json()["erro"])
 
     def test_o_cliente_se_apresenta_com_a_versao_e_a_chave(self):
-        """A Cloudflare barra o `Python-urllib` (1.5.2)."""
+        """A Cloudflare barra o `Python-urllib` (desde a 1.5.2)."""
         self.responde("POST", "/api/v1/credenciais/verificar", 503, MANUTENCAO)
         self.entrar()
 
         cabecalhos = _ConectaFalso.recebidas[0]["cabecalhos"]
         self.assertEqual(cabecalhos["User-Agent"], f"ConectaIdentidadeClient/{VERSAO}")
         self.assertEqual(cabecalhos["Authorization"], CHAVE)
-        self.assertEqual(VERSAO, "1.5.2")
+        self.assertEqual(VERSAO, "1.5.3")
 
     def test_esqueci_senha_em_manutencao(self):
         self.responde("POST", "/api/v1/senha/esqueci", 503, MANUTENCAO)
