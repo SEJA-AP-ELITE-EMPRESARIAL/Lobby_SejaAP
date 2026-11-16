@@ -79,8 +79,13 @@ com `"para": "negociacao"`, e conta sem papel recebe o 403 de sempre).
   em `/api/sessao/atual`, e só o 401 barra. O token nunca vai aos webhooks.
 - **Sair** limpa a sessão, a autorização e a venda. Sair (ou cair) com uma venda
   a caminho descarta o que estava pendente: o comprovante que volta depois não
-  vai ao n8n. Se a sessão caiu e a **mesma** pessoa entra de novo, a venda volta
-  como estava; se entra **outra**, o atendimento recomeça do zero.
+  vai ao n8n, e o login do gerente que responde depois de o modal fechar não
+  destrava nada. Se a sessão caiu e a **mesma** pessoa entra de novo, a venda
+  volta como estava; se entra **outra**, o atendimento recomeça do zero.
+- **A venda cujo POST ao n8n já partiu** é a exceção: ela existe. Se a sessão
+  cai nesse meio-tempo, a tela fica em "Enviando…" e a resposta do n8n volta para
+  quem entrar de novo (a mesma pessoa vê o protocolo, em vez de reenviar a venda
+  com outro). O Sair, nesse momento, avisa que a venda já saiu.
 - **Rotas abertas** (sem sessão): só `POST /api/sessao`, `senha/esqueci` e
   `senha/definir` — e as que têm credencial própria: `/api/venda/validar` (o
   segredo do n8n), `/api/integracao/*` (a asserção do Conecta), `/metrics` (o
