@@ -42,7 +42,7 @@ const EXPOSTOS = [
   'SessaoDerrubada', 'SessaoTrocada', 'fimDeSessao', 'sessaoVigente', 'normalizaSessao', 'abreSessaoGuardada',
   'iniciaSessao', 'encerraSessao', 'derrubaSessao', 'motivoDaQueda', 'apiFetch', 'entraNoLobby',
   'confereSessaoAoAbrir', 'confereSessao', 'enviaVenda', 'pedeComprovante', 'postCadastro',
-  'ComprovanteRecusado', 'autorizaNegociacao',
+  'ComprovanteRecusado', 'autorizaNegociacao', 'marcaDoMomento', 'aindaVale', 'criaEnviaEsta',
 ];
 
 // ----- o mundo de mentira -----------------------------------------------------
@@ -427,6 +427,107 @@ test('venda finalizada numa sessão não sai na seguinte', async () => {
   l.iniciaSessao(LOGIN_OK);
   await assert.rejects(l.postCadastro(WEBHOOK, payloadDeAntes(), geracao), (e) => e.sessaoTrocada);
   assert.equal(l.fetch.para('n8n.sejaap.com.br').length, 0);
+});
+
+// ----- o atendimento: o que volta à tela depois de sair ou cair --------------
+
+// As duas refs do App, como o `useRef` as entrega.
+const refs = () => ({ atendimento: { current: 0 }, vendaNoAr: { current: null } });
+
+test('venda no ar e a sessão cai: a mesma pessoa recebe a resposta (não reenvia)', async () => {
+  const pendente = adiado();
+  const l = lobby(regraDaVenda({ webhook: () => pendente.promessa }));
+  const { atendimento, vendaNoAr } = refs();
+  const enviaEsta = l.criaEnviaEsta(atendimento, vendaNoAr);
+  const geracao = l.iniciaSessao(LOGIN_OK) && l.sessaoLobby.geracao;
+  const envio = enviaEsta({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao }, 'APN-1');
+  for (let i = 0; i < 5 && !l.fetch.para('n8n.sejaap.com.br').length; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(vendaNoAr.current, 'APN-1', 'com o POST no ar, a venda está marcada');
+  l.derrubaSessao('Sessão encerrada.');   // o atendimento não muda na queda
+  pendente.resolve(resposta(200, { ok: true }));
+  assert.deepEqual(await envio, { resposta: { ok: true } });
+  assert.equal(vendaNoAr.current, null);
+});
+
+test('venda no ar e a pessoa sai: a resposta não volta à tela (o atendimento é outro)', async () => {
+  const pendente = adiado();
+  const l = lobby(regraDaVenda({ webhook: () => pendente.promessa }));
+  const { atendimento, vendaNoAr } = refs();
+  const enviaEsta = l.criaEnviaEsta(atendimento, vendaNoAr);
+  const geracao = l.iniciaSessao(LOGIN_OK) && l.sessaoLobby.geracao;
+  const envio = enviaEsta({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao }, 'APN-1');
+  for (let i = 0; i < 5 && !l.fetch.para('n8n.sejaap.com.br').length; i++) await new Promise((r) => setImmediate(r));
+  l.encerraSessao(); atendimento.current += 1; vendaNoAr.current = null;   // o Sair: encerra e `restart`
+  vendaNoAr.current = 'APN-2';   // e outra venda já partiu no atendimento novo
+  pendente.resolve(resposta(200, { ok: true }));
+  assert.equal(await envio, null);
+  assert.equal(vendaNoAr.current, 'APN-2', 'a resposta velha não apaga a marca da venda nova');
+});
+
+test('o erro do webhook de outro atendimento também não volta; o do mesmo, sim', async () => {
+  for (const [mudaAtendimento, esperado] of [[true, null], [false, 'erro']]) {
+    const pendente = adiado();
+    const l = lobby(regraDaVenda({ webhook: () => pendente.promessa }));
+    const { atendimento, vendaNoAr } = refs();
+    const geracao = l.iniciaSessao(LOGIN_OK) && l.sessaoLobby.geracao;
+    const envio = l.criaEnviaEsta(atendimento, vendaNoAr)({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao }, 'APN-1');
+    for (let i = 0; i < 5 && !l.fetch.para('n8n.sejaap.com.br').length; i++) await new Promise((r) => setImmediate(r));
+    if (mudaAtendimento) atendimento.current += 1;
+    pendente.resolve(resposta(500, { faultstring: 'O Omie recusou.' }));
+    const fim = await envio.then((v) => v, (e) => (e.handled ? 'erro' : e));
+    assert.equal(fim, esperado);
+  }
+});
+
+test('sair com o comprovante pendente, pelo enviaEsta: null, e nada vai ao webhook', async () => {
+  const pendente = adiado();
+  const l = lobby(regraDaVenda({ comprovante: () => pendente.promessa }));
+  const { atendimento, vendaNoAr } = refs();
+  const geracao = l.iniciaSessao(LOGIN_OK) && l.sessaoLobby.geracao;
+  const envio = l.criaEnviaEsta(atendimento, vendaNoAr)({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao }, 'APN-1');
+  await new Promise((r) => setImmediate(r));
+  l.encerraSessao(); atendimento.current += 1;
+  pendente.resolve(resposta(200, { comprovante: 'id.assinatura', expira_em: 'x' }));
+  assert.equal(await envio, null);
+  assert.equal(vendaNoAr.current, null);
+  assert.equal(l.fetch.para('n8n.sejaap.com.br').length, 0);
+});
+
+test('aindaVale: mesma sessão e mesmo atendimento; sair, cair ou outro atendimento, não', () => {
+  const l = lobby();
+  const { atendimento } = refs();
+  l.iniciaSessao(LOGIN_OK);
+  let marca = l.marcaDoMomento(atendimento);
+  assert.equal(l.aindaVale(marca, atendimento), true);
+  atendimento.current += 1;
+  assert.equal(l.aindaVale(marca, atendimento), false, 'outro atendimento');
+  marca = l.marcaDoMomento(atendimento);
+  l.derrubaSessao('Sessão encerrada.');
+  l.iniciaSessao(LOGIN_OK);
+  assert.equal(l.aindaVale(marca, atendimento), false, 'a sessão caiu e voltou: o pedido de antes não vale');
+});
+
+test('o login do gerente que responde depois de o modal fechar não destrava nada', () => {
+  // A autorização só entra se o pedido ainda é este (achado da revisão do Codex):
+  // a queda no meio, com outra pessoa entrando, não pode levar o token do
+  // gerente ao atendimento dela.
+  const ok = entre('const onAutorizacaoOk = (autorizacao) => {', '// Encerra a autorização');
+  assert.match(html, /const pedidoDeAutorizacao = marcaDoMomento\(atendimento\);\s*const onAutorizacaoOk/);
+  assert.match(ok, /if \(!aindaVale\(pedidoDeAutorizacao, atendimento\)\) return;/);
+  assert.match(ok, /patch\(\(d\) => \(!d\.pedindoAutorizacao \? \{\} :/, 'modal fechado (cancelado ou queda): nada');
+  assert.ok(!ok.includes('s.pedindoAutorizacao'), 'o alvo vem do estado atual, não do render antigo');
+  assert.match(entre('const restart = () =>', 'patch({'), /vendaNoAr\.current = null/);
+});
+
+test('rede fora numa sessão que já acabou é fim de sessão, e não rede (nada segue ao webhook)', async () => {
+  const pendente = adiado();
+  const l = lobby(() => pendente.promessa);
+  l.iniciaSessao(LOGIN_OK);
+  const conferindo = l.confereSessao();
+  await new Promise((r) => setImmediate(r));
+  l.encerraSessao();
+  pendente.resolve(Promise.reject(new TypeError('Failed to fetch')));
+  await assert.rejects(conferindo, (e) => e.sessaoTrocada);
 });
 
 // ----- o modal do gerente ----------------------------------------------------
