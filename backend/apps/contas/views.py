@@ -17,8 +17,9 @@ DUAS PORTAS, UMA ROTA (TSK-1513)
 
 Desde 14/11/2026 o Lobby inteiro pede login (decisão do dono): toda conta ativa
 do Conecta entra, com ou sem papel, e o login comum devolve 200 a ela — com
-`papel` vazio e `podeAutorizarNegociacao: false`. Ninguém ganha permissão por
-entrar: o primeiro login cria a conta local SEM papel (`identidade.py`).
+`papel` vazio e `podeAutorizarNegociacao: false` quando é o caso. Ninguém ganha
+permissão por entrar: o primeiro login cria a conta local SEM papel
+(`identidade.py`), salvo o que o acesso cadastrado no Conecta já semeia.
 
 O modal em que o gerente digita a senha para destravar UMA venda manda
 `"para": "negociacao"`, e aí vale a regra de antes: sem papel, 403

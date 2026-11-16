@@ -65,9 +65,11 @@ class SuperficieAbertaTest(TestCase):
                     continue
                 with self.subTest(rota=url, metodo=metodo.upper()):
                     resposta = getattr(APIClient(), metodo)(url, {}, format="json")
-                    # 503 é a integração desligada (sem chave na suíte), que
-                    # também não atende ninguém.
-                    self.assertIn(resposta.status_code, (401, 503), resposta.content)
+                    # 503 só nas rotas da integração: é ela desligada (sem chave
+                    # na suíte), que não atende ninguém. Em qualquer outra, 503
+                    # seria uma rota aberta que só não está configurada.
+                    fechada = (401, 503) if caminho.startswith("api/integracao/") else (401,)
+                    self.assertIn(resposta.status_code, fechada, resposta.content)
                     conferidas += 1
         # A varredura não pode passar por não ter achado nada.
         self.assertGreater(conferidas, 20)

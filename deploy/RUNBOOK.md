@@ -705,8 +705,11 @@ negociação e publicação. Sem migration.
    o login de toda conta sem papel. E a aba aberta ANTES do deploy roda o
    `index.html` velho contra o backend novo: o catálogo leva 401 e ela cai no
    embutido, e o comprovante leva 401 e a venda sai para o n8n sem ele
-   (`comprovante_erro: "http_401"`, a regra degradada de antes). Avise para
-   recarregarem a página: o HTML é `no-cache`, e a recarga já abre o login.
+   (`comprovante_erro: "http_401"`, a regra degradada de antes). Na venda
+   negociada é pior: a aba velha manda o token do gerente no lugar da sessão, e
+   o backend novo responde 422 "exigem a autorização de um gerente" com o gerente
+   ao lado. Avise para recarregarem a página: o HTML é `no-cache`, e a recarga já
+   abre o login.
 
 **O que muda no compose:** só o healthcheck do backend. Ele batia no `GET
 /api/catalogo`, que agora responde 401 sem sessão e deixaria o backend
@@ -737,6 +740,14 @@ com os mesmos valores do `lobby.env` — folgados agora, porque o escritório n�
 divide mais um balde. A asserção do Conecta não conta neles (tem a cota dela).
 `LOBBY_RATE_LOGIN` e `_DEFINIR_SENHA` seguem por IP. Se quiser apertar, olhe o log
 de 429 primeiro.
+
+**O teto do login é o que pode faltar.** Agora todo consultor faz login (e cada
+aba nova é um login: a sessão é do `sessionStorage`), não só o gerente. O
+`LOBBY_RATE_LOGIN` é por IP (360/hora no `lobby.env`), e o 429 do login não tem
+modo degradado: ninguém entra até a janela andar. Num evento com muita gente no
+mesmo Wi-Fi, acompanhe o log (`Too Many Requests: /api/sessao`) e suba o número
+se precisar. A cota por app do Conecta (60/min, do lado de lá) também passa a
+receber o login de todo mundo.
 
 **Voltar:** sem migration, é só a imagem de antes, front e backend juntos
 (`git checkout --detach <SHA de antes>` e `sudo docker compose up -d --build`).

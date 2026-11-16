@@ -325,6 +325,12 @@ REST_FRAMEWORK = {
         # O que protege de força bruta mesmo não é este número: é o bloqueio por
         # conta e por IP do Conecta ID, mais a cota de 60/min por app de lá.
         # Este teto é contenção de rajada.
+        #
+        # Desde a TSK-1513 TODO consultor faz login (e cada aba nova é um login,
+        # a sessão é do `sessionStorage`), não só o gerente — e o 429 do login
+        # não tem modo degradado: ninguém entra. Num evento com todo mundo no
+        # mesmo Wi-Fi é o primeiro teto a estourar, e a cota por app do Conecta
+        # passa a receber o login de todos. Ver o RUNBOOK, "Login para todo uso".
         "login": os.environ.get("LOBBY_RATE_LOGIN", "120/hour"),
         # Emissão de comprovante de venda, por pessoa (TSK-1513). Folgado: uma
         # venda pode ser reenviada algumas vezes. Existe para o endpoint não

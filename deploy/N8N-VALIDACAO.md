@@ -151,9 +151,17 @@ auditoria montada no cliente — **não confie nele.**
 
 ## Como testar sem fechar uma venda de verdade
 
+Desde a TSK-1513 o comprovante pede a **sessão de quem vende**: entre no Lobby com
+uma conta do Conecta (qualquer uma, sem papel serve) e copie o token da aba —
+no console do navegador, `JSON.parse(sessionStorage.getItem('lobby.sessao')).token`.
+Sem ele, o passo 1 responde 401. Para a venda negociada, o token de quem autoriza
+(gerente ou diretoria) vai noutro cabeçalho, `X-Lobby-Autorizacao: Bearer <token
+dele>`; é ele que vira o `autorizado_por`.
+
 ```bash
 # 1. Emite um comprovante (venda a preço de tabela)
 curl -s -X POST https://lobby.sejaap.com.br/api/venda/comprovante \
+  -H 'Authorization: Bearer <SESSÃO>' \
   -H 'Content-Type: application/json' \
   -d '{"fluxo":"elite","categoria_id":"elite","produto_id":"pro",
        "negociado":false,"valor_total":155964,"valor_mensal":12997,
@@ -166,8 +174,9 @@ curl -s -X POST https://lobby.sejaap.com.br/api/venda/validar \
   -d '{"comprovante":"<COMPROVANTE>","valores":{ ...o mesmo bloco... }}'
 ```
 
-E tente emitir com valor abaixo da tabela: tem que vir **422**, dizendo que
-precisa de autorização de um gerente.
+E tente emitir com valor abaixo da tabela (com a mesma `<SESSÃO>`, sem
+`X-Lobby-Autorizacao`): tem que vir **422**, dizendo que precisa de autorização
+de um gerente. Sem a sessão vem 401, e isso não testa a trava.
 
 ---
 

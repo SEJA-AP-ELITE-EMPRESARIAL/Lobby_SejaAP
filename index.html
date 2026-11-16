@@ -330,7 +330,7 @@ const categoriaFinParaPayload = (c) => (c ? { codigo: c.codigo, descricao: c.des
 /* ============================================================================
  * AUTORIZAÇÃO DE NEGOCIAÇÃO — destrava a alteração de valores numa venda.
  *
- * Desde a TSK-1513 o lobby pede login (ver "Sessão do Lobby", acima), mas a
+ * Desde a TSK-1513 o lobby pede login (ver "Sessão do Lobby", abaixo), mas a
  * SESSÃO não autoriza nada: o consultor sem papel cota, cadastra e envia a
  * venda a preço de tabela, e só.
  *
@@ -592,14 +592,16 @@ function enviadoPor(sessao) {
 // O fim comum dos quatro envios (Elite, APN, DH e DH - Avaliação), nesta ordem:
 // o comprovante, a sessão ainda é a mesma?, o webhook. `geracao` é a da sessão
 // em que se clicou em Finalizar. O 401 do comprovante sobe daqui como
-// `SessaoDerrubada` e a venda NÃO vai ao n8n.
-async function enviaVenda({ url, payload, valores, tokenDeQuemAutoriza, geracao }) {
+// `SessaoDerrubada` e a venda NÃO vai ao n8n. `aoPartir` é chamado logo antes do
+// POST ao webhook: dali em diante a venda existe, e o App não pode deixá-la ser
+// enviada de novo por causa de uma queda (ver `vendaNoAr` no App).
+async function enviaVenda({ url, payload, valores, tokenDeQuemAutoriza, geracao, aoPartir }) {
   const atestado = await pedeComprovante(valores, tokenDeQuemAutoriza);
   if (geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
   payload.comprovante = atestado.comprovante;
   payload.comprovante_valores = valores;
   payload.comprovante_erro = atestado.erro;
-  return postCadastro(url, payload, geracao);
+  return postCadastro(url, payload, geracao, aoPartir);
 }
 /* ===== fim da sessão do Lobby ===== */
 
@@ -1070,20 +1072,23 @@ function extractWebhookError(body) {
 //
 // Comum aos quatro fluxos, e por isso é aqui que entra o `enviado_por` (quem
 // estava logado, TSK-1513). Só sai na sessão em que a venda foi finalizada
-// (`geracao`): depois de sair, nada vai ao webhook. O token da sessão NUNCA vai:
-// o webhook é público.
-async function postCadastro(url, payload, geracao = sessaoLobby.geracao) {
+// (`geracao`): depois de sair ou cair, nada vai ao webhook. O token da sessão
+// NUNCA vai: o webhook é público.
+//
+// Depois que o POST partiu, a venda existe, e a resposta é dela: volta a quem
+// chamou mesmo que a sessão tenha caído no meio. Quem decide se ela ainda vale
+// para a tela é o App, pelo atendimento (a venda de quem saiu não volta na tela
+// de outra pessoa; a de quem caiu e voltou, sim — senão ela seria reenviada).
+async function postCadastro(url, payload, geracao = sessaoLobby.geracao, aoPartir = null) {
   if (!url) throw new Error('Webhook de envio não configurado.');
   const sessao = sessaoLobby.atual;
   if (!sessao || geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
   const corpo = { ...payload, enviado_por: enviadoPor(sessao) };
+  if (aoPartir) aoPartir();
   let res;
   try {
     res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(corpo), mode: 'cors' });
   } catch (e) { throw new Error('Falha de conexão ao enviar o cadastro'); }
-  // A venda já foi. Se a sessão acabou enquanto o n8n respondia, a resposta não
-  // mexe mais na tela (de outra pessoa, talvez).
-  if (geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
   let body = null; try { body = await res.json(); } catch { body = null; }
   const errInfo = extractWebhookError(body);
   if (errInfo) { const err = new Error(errInfo.message); err.handled = true; err.errorType = errInfo.errorType; throw err; }
@@ -1998,6 +2003,13 @@ function App({ motivoAoAbrir }) {
   const pixStop = useRef(false);   // sinaliza para o polling parar
   const pixBase = useRef(null);    // payload de geração (reutilizado no polling, evita closure stale)
   const pixTxidRef = useRef('');   // txid devolvido na geração
+  // O atendimento em memória: o `restart` o troca. A resposta tardia de uma venda
+  // só volta à tela se o atendimento ainda for o dela (TSK-1513).
+  const atendimento = useRef(0);
+  // O protocolo da venda cujo POST ao webhook já partiu e ainda não respondeu, ou
+  // null. Com ele no ar, a queda não devolve o "Finalizar" (a venda seria enviada
+  // duas vezes) e o Sair avisa que ela já saiu.
+  const vendaNoAr = useRef(null);
 
   // Lista de departamentos. Fica FORA do `s` de propósito: não é dado da venda,
   // é referência — o `restart` não pode apagá-la, e trocá-la não pode mexer no
@@ -2227,7 +2239,7 @@ function App({ motivoAoAbrir }) {
       await confereSessao();
       const r = await fetchCnpj(s.cnpj);
       // A resposta de uma sessão que já acabou não preenche a tela de ninguém.
-      if (geracao !== sessaoLobby.geracao) return;
+      if (geracao !== sessaoLobby.geracao) { patch((d) => (d.cnpjStatus === 'loading' ? { cnpjStatus: 'idle' } : {})); return; }
       patch((d) => ({
         cnpjStatus: 'done',
         razaoSocial: r.razaoSocial || d.razaoSocial,
@@ -2236,8 +2248,7 @@ function App({ motivoAoAbrir }) {
         bairro: r.bairro || d.bairro, cidade: r.cidade || d.cidade, estado: r.estado || d.estado, cep: r.cep || d.cep,
       }));
     } catch (e) {
-      if (fimDeSessao(e)) { patch((d) => (d.cnpjStatus === 'loading' ? { cnpjStatus: 'idle' } : {})); return; }
-      if (geracao !== sessaoLobby.geracao) return;
+      if (fimDeSessao(e) || geracao !== sessaoLobby.geracao) { patch((d) => (d.cnpjStatus === 'loading' ? { cnpjStatus: 'idle' } : {})); return; }
       // Permite preenchimento manual mesmo se a consulta falhar.
       patch({ cnpjStatus: 'manual', cnpjErr: 'Não foi possível consultar. Preencha manualmente.' });
     }
@@ -2251,11 +2262,10 @@ function App({ motivoAoAbrir }) {
     try {
       await confereSessao();
       const r = await fetchCep(s.cep);
-      if (geracao !== sessaoLobby.geracao) return;
+      if (geracao !== sessaoLobby.geracao) { patch((d) => (d.cepStatus === 'loading' ? { cepStatus: 'idle' } : {})); return; }
       patch((d) => ({ cepStatus: 'done', endereco: r.logradouro || d.endereco, complemento: r.complemento || d.complemento, bairro: r.bairro || d.bairro, cidade: r.cidade || d.cidade, estado: r.estado || d.estado, cep: r.cep || d.cep }));
     } catch (e) {
-      if (fimDeSessao(e)) { patch((d) => (d.cepStatus === 'loading' ? { cepStatus: 'idle' } : {})); return; }
-      if (geracao !== sessaoLobby.geracao) return;
+      if (fimDeSessao(e) || geracao !== sessaoLobby.geracao) { patch((d) => (d.cepStatus === 'loading' ? { cepStatus: 'idle' } : {})); return; }
       patch({ cepStatus: 'error' });
     }
   };
@@ -2710,6 +2720,26 @@ function App({ motivoAoAbrir }) {
     };
   };
 
+  // O que os quatro envios fazem em volta do `enviaVenda` (TSK-1513): marcam a
+  // venda no ar quando o POST ao webhook parte, e só devolvem o resultado se o
+  // atendimento ainda for o desta venda. `null` = não mexa na tela: a sessão
+  // acabou antes de a venda sair (nada foi ao n8n; quem cuida da tela é o sair
+  // ou o `aoDerrubar`), ou o atendimento já é outro (saiu, ou entrou outra
+  // pessoa). A venda de quem CAIU e voltou continua sendo a mesma: o resultado
+  // volta para ela, e o "Finalizar" não reenvia o que já saiu.
+  const enviaEsta = async (envio, protocolo) => {
+    const desta = atendimento.current;
+    try {
+      const resposta = await enviaVenda({ ...envio, aoPartir: () => { vendaNoAr.current = protocolo; } });
+      return desta === atendimento.current ? { resposta } : null;
+    } catch (e) {
+      if (fimDeSessao(e) || desta !== atendimento.current) return null;
+      throw e;
+    } finally {
+      if (vendaNoAr.current === protocolo) vendaNoAr.current = null;
+    }
+  };
+
   /* ----- Payload + envio da APN (webhook próprio) -----
    * Bem menor que o do Elite: não há produto, cronograma nem destino. O endereço
    * não é pedido na tela — vai só o que a consulta ao CNPJ trouxer, e `dados_receita`
@@ -2801,16 +2831,14 @@ function App({ motivoAoAbrir }) {
         cronograma: [],
         protocolo,
       };
-      const response = await enviaVenda({
+      const enviada = await enviaEsta({
         url: APN_SEND_WEBHOOK_URL, payload, valores, tokenDeQuemAutoriza: s.autorizacao?.token, geracao,
-      });
+      }, protocolo);
+      if (!enviada) return;
       // Venda enviada: a autorização se esgota aqui. Ela valia para este
       // registro, e ele acabou de ser fechado.
-      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
+      patch({ screen: 'success', response: enviada.resposta || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
     } catch (e) {
-      // A sessão acabou no meio (saiu, caiu, ou o 401 do comprovante): nada foi
-      // ao n8n depois disso, e quem cuida da tela é o sair ou o `aoDerrubar`.
-      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
   };
@@ -2914,12 +2942,12 @@ function App({ motivoAoAbrir }) {
         cronograma: dhVagas.map(dhAdiantamentoDaVaga),
         protocolo,
       };
-      const response = await enviaVenda({
+      const enviada = await enviaEsta({
         url: DH_SEND_WEBHOOK_URL, payload, valores, tokenDeQuemAutoriza: s.autorizacao?.token, geracao,
-      });
-      patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null, dhAdiantamentoEdit: false });
+      }, protocolo);
+      if (!enviada) return;
+      patch({ screen: 'success', response: enviada.resposta || {}, protocol: protocolo, sendState: 'idle', autorizacao: null, dhAdiantamentoEdit: false });
     } catch (e) {
-      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
   };
@@ -3007,9 +3035,10 @@ function App({ motivoAoAbrir }) {
         protocolo,
         itens: payload.itens.map((i) => ({ modalidade: i.modalidade, quantidade: i.quantidade, valor_unitario: i.valor_unitario })),
       };
-      const response = await enviaVenda({ url: DH_AVALIACAO_SEND_WEBHOOK_URL, payload, valores, geracao });
+      const enviada = await enviaEsta({ url: DH_AVALIACAO_SEND_WEBHOOK_URL, payload, valores, geracao }, protocolo);
+      if (!enviada) return;
       patch({
-        screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null,
+        screen: 'success', response: enviada.resposta || {}, protocol: protocolo, sendState: 'idle', autorizacao: null,
         avalEnviado: {
           nome: payload.contratante.nome,
           itens: avalVendidos.map((m) => ({ nome: m.nome, plural: m.plural, quantidade: avalQtd(m.id) })),
@@ -3019,7 +3048,6 @@ function App({ motivoAoAbrir }) {
         },
       });
     } catch (e) {
-      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
       // Recusa do servidor (um valor fixo que a reconsulta não pegou, por
       // exemplo): reconsulta de novo, para a etapa Itens já mostrar o certo.
@@ -3055,20 +3083,20 @@ function App({ motivoAoAbrir }) {
         cronograma: s.parcelas.map((p) => round2(Number(p.valor) || 0)),
         protocolo,
       };
-      const response = await enviaVenda({
+      const enviada = await enviaEsta({
         url: SEND_WEBHOOK_URL, payload, valores, tokenDeQuemAutoriza: s.autorizacao?.token, geracao,
-      });
-      const r = response || {};
+      }, protocolo);
+      if (!enviada) return;
+      const r = enviada.resposta || {};
       // Venda enviada: a autorização se esgota aqui. Ela valia para este
       // registro, e ele acabou de ser fechado.
       patch({ screen: 'success', response: r, protocol: protocolo, sendState: 'idle', autorizacao: null });
     } catch (e) {
-      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
   };
 
-  const restart = () => { stopPixPolling(); patch({
+  const restart = () => { stopPixPolling(); atendimento.current += 1; patch({
     screen: 'lobby', step: 0, catId: null, product: null,
     cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
     razaoSocial: '', inscricaoEstadual: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '', cepStatus: 'idle',
@@ -3144,6 +3172,7 @@ function App({ motivoAoAbrir }) {
     pixBase.current = buildPixPayload();
     pixTxidRef.current = '';
     patch({ pixState: 'generating', pixErr: '', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '' });
+    const geracao = sessaoLobby.geracao;
     try {
       // Webhook direto do navegador, como o CNPJ: a sessão ainda vale? (TSK-1513)
       try {
@@ -3154,6 +3183,8 @@ function App({ motivoAoAbrir }) {
       }
       const res = await fetch(PIX_CREATE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify({ ...pixBase.current, acao: 'gerar' }), mode: 'cors' });
       let raw = null; try { raw = await res.json(); } catch { raw = null; }
+      // Saiu ou caiu com a criação no ar: o polling não volta a bater no webhook.
+      if (geracao !== sessaoLobby.geracao) return;
       if (!res.ok) throw new Error('Falha ao criar a cobrança (HTTP ' + res.status + ')');
       const n = normalizePixResponse(raw);
       if (n.paid) { patch({ pixState: 'paid' }); return; }
@@ -3183,6 +3214,33 @@ function App({ motivoAoAbrir }) {
   useEffect(() => () => stopPixPolling(), []);
 
   // ===== Sessão: entrar, sair, cair (TSK-1513) =====
+  // A queda (401 ou `exp` vencido, em qualquer chamada): volta ao login com o
+  // motivo. A venda fica na memória, para quem entrar de novo continuar; o que
+  // não sobrevive é o envio que ainda não tinha saído (descartado pela geração),
+  // o modal de autorização aberto e a autorização dada com a própria sessão que
+  // caiu. O envio que JÁ saiu fica "Enviando…" até o n8n responder: devolver o
+  // "Finalizar" deixaria a mesma venda ser enviada duas vezes. Registrado antes
+  // do efeito de abertura, para a queda logo na abertura já ter quem a ouça.
+  useEffect(() => {
+    sessaoLobby.aoDerrubar = (motivo, caiu) => {
+      stopPixPolling();
+      const noAr = !!vendaNoAr.current;
+      setMotivoDoLogin(motivo);
+      setSessao(null);
+      patch((d) => ({
+        sendState: d.sendState === 'sending' && !noAr ? 'idle' : d.sendState,
+        // O QR já gerado continua valendo: quem volta vê o mesmo, em vez de gerar
+        // uma segunda cobrança enquanto o cliente paga a primeira.
+        pixState: d.pixState === 'generating' ? 'idle' : d.pixState,
+        cnpjStatus: d.cnpjStatus === 'loading' ? 'idle' : d.cnpjStatus,
+        cepStatus: d.cepStatus === 'loading' ? 'idle' : d.cepStatus,
+        pedindoAutorizacao: null,
+        ...(caiu && d.autorizacao && d.autorizacao.token === caiu.token ? semAutorizacao(d) : {}),
+      }));
+    };
+    return () => { sessaoLobby.aoDerrubar = null; };
+  }, []);
+
   // Abre o lobby depois de entrar: confere no backend a sessão guardada e busca
   // o catálogo, uma vez por página. O 401 de qualquer dos dois derruba a sessão
   // (o `aoDerrubar`, abaixo, leva ao login); rede e 5xx não barram.
@@ -3206,25 +3264,6 @@ function App({ motivoAoAbrir }) {
     })();
   }, [temSessao, catalogoPronto]);
 
-  // A queda (401 ou `exp` vencido, em qualquer chamada): volta ao login com o
-  // motivo. A venda fica na memória, para quem entrar de novo continuar; o que
-  // não sobrevive é o envio em andamento (descartado pela geração), o modal de
-  // autorização aberto e a autorização dada com a própria sessão que caiu.
-  useEffect(() => {
-    sessaoLobby.aoDerrubar = (motivo, caiu) => {
-      stopPixPolling();
-      setMotivoDoLogin(motivo);
-      setSessao(null);
-      patch((d) => ({
-        sendState: d.sendState === 'sending' ? 'idle' : d.sendState,
-        pixState: d.pixState === 'generating' || d.pixState === 'awaiting' ? 'idle' : d.pixState,
-        pedindoAutorizacao: null,
-        ...(caiu && d.autorizacao && d.autorizacao.token === caiu.token ? semAutorizacao(d) : {}),
-      }));
-    };
-    return () => { sessaoLobby.aoDerrubar = null; };
-  }, []);
-
   const onEntrar = (dados) => {
     const nova = iniciaSessao(dados);
     const quem = (nova.email || '').toLowerCase();
@@ -3238,7 +3277,10 @@ function App({ motivoAoAbrir }) {
   // Sair limpa a sessão, a autorização e a venda. A geração nova descarta o que
   // estava a caminho: o comprovante pendente volta e não vai ao webhook.
   const sair = () => {
-    if (s.screen === 'flow' && !window.confirm('Sair agora descarta a venda em andamento. Sair mesmo assim?')) return;
+    const aviso = vendaNoAr.current
+      ? `A venda ${vendaNoAr.current} já saiu para o n8n e a resposta ainda não chegou. Saindo agora você não vê o resultado: confira antes de refazê-la. Sair mesmo assim?`
+      : 'Sair agora descarta a venda em andamento. Sair mesmo assim?';
+    if (s.screen === 'flow' && !window.confirm(aviso)) return;
     encerraSessao();
     restart();
     donoDoAtendimento.current = null;

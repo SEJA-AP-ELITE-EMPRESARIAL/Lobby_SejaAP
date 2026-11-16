@@ -34,7 +34,9 @@ de 14/11/2026; até então o lobby era anônimo):
 > **Toda conta ativa do Conecta entra no Lobby e cota, cadastra e envia a venda.**
 > Quem abre `lobby.sejaap.com.br` sem sessão vê a tela de login (e-mail e senha
 > do Conecta, com "esqueci minha senha") antes de qualquer coisa. Entrar não dá
-> permissão nenhuma: o primeiro login cria a conta local **sem papel**.
+> permissão nenhuma: o primeiro login cria a conta local **sem papel** — salvo o
+> papel que o acesso cadastrado no Conecta já trouxer (`config_do_app.papel`,
+> semeado uma vez, como antes; ver *Dar acesso a alguém*).
 
 O que exige **papel** é **negociar** — alterar valor de produto ou cronograma de
 parcelas — e **publicar a tabela de preços**. São coisas diferentes, com pessoas

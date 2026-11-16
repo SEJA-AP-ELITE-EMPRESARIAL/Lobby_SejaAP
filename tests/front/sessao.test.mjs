@@ -281,12 +281,16 @@ test('enviado_por vai ao n8n com nome e e-mail, sem tirar campo nenhum, e o toke
   assert.equal(envio.headers.Authorization, undefined);
 });
 
-test('os quatro fluxos passam pelo enviaVenda, e só ele chama o postCadastro', () => {
+test('os quatro fluxos passam pelo enviaEsta → enviaVenda, e só ele chama o postCadastro', () => {
   for (const url of ['SEND_WEBHOOK_URL', 'APN_SEND_WEBHOOK_URL', 'DH_SEND_WEBHOOK_URL', 'DH_AVALIACAO_SEND_WEBHOOK_URL']) {
-    assert.match(html, new RegExp(`enviaVenda\\(\\{\\s*url: ${url},`), url);
+    assert.match(html, new RegExp(`enviaEsta\\(\\{\\s*url: ${url},`), url);
   }
+  assert.equal(html.match(/enviaVenda\(/g).length, 2, 'a definição e a chamada no enviaEsta');
   assert.equal(html.match(/postCadastro\(/g).length, 2, 'a definição e a chamada no enviaVenda');
   assert.equal(html.match(/pedeComprovante\(/g).length, 2, 'a definição e a chamada no enviaVenda');
+  // Resultado de outro atendimento (saiu, ou entrou outra pessoa) não mexe na tela.
+  assert.equal(html.match(/if \(!enviada\) return;/g).length, 4);
+  assert.match(entre('const restart = () =>', 'patch({'), /atendimento\.current \+= 1/);
 });
 
 test('o 401 do comprovante PARA a venda: nada vai ao n8n, e a tela volta ao login', async () => {
@@ -371,16 +375,49 @@ test('a sessão que cai com o comprovante pendente: idem', async () => {
   assert.equal(l.quedas.length, 1, 'uma queda só');
 });
 
-test('a resposta do webhook que chega depois de sair não volta à tela', async () => {
+test('a venda que já partiu é da venda: cair no meio não esconde a resposta do n8n', async () => {
+  // Esconder levaria a mesma pessoa, ao voltar, a enviar a venda de novo (com
+  // outro protocolo). Quem decide se a resposta ainda vale para a tela é o App,
+  // pelo atendimento (`enviaEsta`): a de quem saiu não volta na tela de outro.
   const pendente = adiado();
   const l = lobby(regraDaVenda({ webhook: () => pendente.promessa }));
   const geracao = l.iniciaSessao(LOGIN_OK) && l.sessaoLobby.geracao;
-  const envio = l.enviaVenda({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao });
+  const partidas = [];
+  const envio = l.enviaVenda({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao, aoPartir: () => partidas.push(l.fetch.para('n8n.sejaap.com.br').length) });
   for (let i = 0; i < 5 && !l.fetch.para('n8n.sejaap.com.br').length; i++) await new Promise((r) => setImmediate(r));
   assert.equal(l.fetch.para('n8n.sejaap.com.br').length, 1, 'a venda já tinha saído');
-  l.encerraSessao();
-  pendente.resolve(resposta(200, { ok: true }));
+  assert.deepEqual(partidas, [0], 'aoPartir uma vez, logo ANTES do POST');
+  l.derrubaSessao('Sessão encerrada.');
+  pendente.resolve(resposta(200, { ok: true, protocolo: 'APN-1' }));
+  assert.deepEqual(await envio, { ok: true, protocolo: 'APN-1' });
+  assert.equal(l.fetch.para('n8n.sejaap.com.br').length, 1, 'e uma vez só');
+});
+
+test('aoPartir não é chamado quando a venda não sai', async () => {
+  const caiu = lobby(regraDaVenda({ comprovante: () => resposta(401, { erro: 'Sessão encerrada.' }) }));
+  const partidas = [];
+  let geracao = caiu.iniciaSessao(LOGIN_OK) && caiu.sessaoLobby.geracao;
+  await assert.rejects(caiu.enviaVenda({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao, aoPartir: () => partidas.push(1) }));
+
+  const pendente = adiado();
+  const saiu = lobby(regraDaVenda({ comprovante: () => pendente.promessa }));
+  geracao = saiu.iniciaSessao(LOGIN_OK) && saiu.sessaoLobby.geracao;
+  const envio = saiu.enviaVenda({ url: WEBHOOK, payload: payloadDeAntes(), valores: VALORES, geracao, aoPartir: () => partidas.push(2) });
+  await new Promise((r) => setImmediate(r));
+  saiu.encerraSessao();
+  pendente.resolve(resposta(200, { comprovante: 'id.assinatura', expira_em: 'x' }));
   await assert.rejects(envio, (e) => e.sessaoTrocada);
+  assert.deepEqual(partidas, []);
+});
+
+test('a queda com a venda no ar não devolve o "Finalizar", e o Sair avisa que ela já saiu', () => {
+  const queda = entre('sessaoLobby.aoDerrubar = (motivo, caiu) => {', 'return () => { sessaoLobby.aoDerrubar = null; };');
+  assert.match(queda, /const noAr = !!vendaNoAr\.current;/);
+  assert.match(queda, /sendState: d\.sendState === 'sending' && !noAr \? 'idle' : d\.sendState/);
+  const sair = entre('const sair = () => {', 'encerraSessao();');
+  assert.match(sair, /vendaNoAr\.current\s*\?\s*`A venda \$\{vendaNoAr\.current\} já saiu para o n8n/);
+  // E o `aoDerrubar` é registrado antes do efeito de abertura.
+  assert.ok(html.indexOf('sessaoLobby.aoDerrubar = (motivo, caiu)') < html.indexOf('const conferida = await confereSessaoAoAbrir();'));
 });
 
 test('venda finalizada numa sessão não sai na seguinte', async () => {
