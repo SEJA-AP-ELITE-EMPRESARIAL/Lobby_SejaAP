@@ -17,6 +17,7 @@ from rest_framework.test import APIClient
 
 from apps.catalogo.tests_escrita import cria_pessoa
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from .models import ConfiguracaoValores
 
@@ -45,7 +46,7 @@ class Base(TestCase):
         return cliente
 
     def publico(self):
-        resposta = self.anonimo.get(PUBLICA)
+        resposta = cliente_logado().get(PUBLICA)
         self.assertEqual(resposta.status_code, 200)
         return resposta.json()
 
@@ -71,8 +72,10 @@ class SemConfiguracaoTest(Base):
         for modalidade in self.publico()["modalidades"]:
             self.assertIsInstance(modalidade["valor"], int)
 
-    def test_rota_publica_nao_e_cacheavel_nem_exige_login(self):
-        resposta = self.anonimo.get(PUBLICA)
+    def test_rota_do_consultor_nao_e_cacheavel_e_pede_so_a_sessao(self):
+        """Sem sessão, 401 (TSK-1513); com ela, qualquer conta lê, sem papel."""
+        self.assertEqual(self.anonimo.get(PUBLICA).status_code, 401)
+        resposta = cliente_logado().get(PUBLICA)
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta["Cache-Control"], "no-store")
 
@@ -185,8 +188,8 @@ class PermissaoTest(Base):
         self.assertEqual(resposta.status_code, 403)
         self.assertFalse(ConfiguracaoValores.objects.exists())
 
-    def test_rota_publica_nao_aceita_escrita(self):
-        self.assertEqual(self.anonimo.put(PUBLICA, corpo(), format="json").status_code, 405)
+    def test_rota_do_consultor_nao_aceita_escrita(self):
+        self.assertEqual(cliente_logado().put(PUBLICA, corpo(), format="json").status_code, 405)
 
 
 class RestricaoDoBancoTest(TestCase):

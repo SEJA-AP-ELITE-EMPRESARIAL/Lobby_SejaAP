@@ -18,6 +18,7 @@ from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient
 
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from .models import Categoria, PoliticaCobranca, Vigencia
 from .tests_escrita import cria_pessoa
@@ -37,7 +38,7 @@ class Base(TestCase):
         return self.cliente.put("/api/cobranca", corpo, format="json")
 
     def catalogo(self):
-        return APIClient().get("/api/catalogo").json()
+        return cliente_logado().get("/api/catalogo").json()
 
     def regra_servida(self, slug):
         return next(c for c in self.catalogo()["cats"] if c["id"] == slug)["cobranca"]

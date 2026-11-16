@@ -623,6 +623,31 @@ class TetoTest(BaseAssercao):
             # Outra pessoa, mesmo IP: o balde é outro.
             self.assertEqual(self.get(sub="gerente@sejaap.com.br").status_code, 200)
 
+    def test_admin_lobby_e_lobby_tem_cotas_separadas(self):
+        """TSK-1513: o catálogo pede sessão e conta por pessoa
+        (`PorPessoaThrottle`, scope `catalogo_publico`), mas a chamada do Admin
+        Lobby, pela asserção, só gasta a cota da integração — e a sessão no lobby
+        só gasta a do consultor. Abrir o Admin Lobby não tira o catálogo de
+        ninguém, e vender não tira o Admin Lobby."""
+        from apps.catalogo.throttling import CatalogoPublicoThrottle
+
+        from .para_testes import cliente_logado
+
+        with mock.patch.object(CatalogoPublicoThrottle, "THROTTLE_RATES", {"catalogo_publico": "1/min"}), \
+                mock.patch.object(IntegracaoLeituraThrottle, "THROTTLE_RATES", {"integracao_leitura": "3/min"}):
+            # Pela asserção: três leituras, acima do teto de 1 do consultor; a
+            # quarta para no teto da integração.
+            for _ in range(3):
+                self.assertEqual(self.get("/api/catalogo").status_code, 200)
+            self.assertRecusa(self.get("/api/catalogo"), 429, "MUITAS_CHAMADAS")
+            # A mesma pessoa, no lobby, pela sessão: o balde do consultor está
+            # intacto (1 leitura passa), e a cota da integração esgotada não pesa.
+            lobby = cliente_logado(self.diretoria)
+            self.assertEqual(lobby.get("/api/catalogo").status_code, 200)
+            resposta = lobby.get("/api/catalogo")
+            self.assertEqual(resposta.status_code, 429)
+            self.assertNotIn("codigo", resposta.json())
+
 
 class AchadosDaRevisaoTest(BaseAssercao):
     """O que a revisão de contexto limpo da TSK-1059 achou na autenticação."""

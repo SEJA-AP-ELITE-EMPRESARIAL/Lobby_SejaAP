@@ -116,9 +116,12 @@ class DesligadaNaoAtrapalhaTest(TestCase):
 
         self.diretoria = cria_pessoa("diretoria@sejaap.com.br", Papel.DIRETORIA)
 
-    def test_consultor_anonimo_le_o_catalogo(self):
-        self.assertEqual(APIClient().get("/api/catalogo").status_code, 200)
-        self.assertEqual(APIClient().get("/api/departamentos").status_code, 200)
+    def test_consultor_logado_le_o_catalogo(self):
+        """Sem a asserção nada muda para quem vende (logado desde a TSK-1513)."""
+        from apps.contas.para_testes import cliente_logado
+
+        self.assertEqual(cliente_logado().get("/api/catalogo").status_code, 200)
+        self.assertEqual(cliente_logado().get("/api/departamentos").status_code, 200)
 
     def test_admin_de_hoje_publica_com_o_jwt_de_sessao(self):
         token = RefreshToken.for_user(self.diretoria).access_token

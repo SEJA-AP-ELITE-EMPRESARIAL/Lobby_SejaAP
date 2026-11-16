@@ -25,7 +25,7 @@ FALHA FECHADA
 
 Sem chave pública configurada, ou sem cache compartilhado com `DEBUG=False`, a
 integração se declara desligada: quem manda o cabeçalho recebe 503
-`INTEGRACAO_DESLIGADA`. Quem NÃO manda — o consultor anônimo, a diretoria no
+`INTEGRACAO_DESLIGADA`. Quem NÃO manda — o consultor no lobby, a diretoria no
 /admin de hoje — não percebe nada: a classe só age quando o cabeçalho existe.
 
 O cache importa porque é nele que o `jti` fica guardado contra repetição
@@ -471,7 +471,7 @@ class AutenticacaoConecta(BaseAuthentication):
 
     É a classe das rotas que já existiam e passam a aceitar o Conecta ao lado do
     JWT de sessão do /admin: sem cabeçalho, devolve None e o DRF segue para a
-    próxima classe — e o consultor anônimo e a diretoria no /admin não passam
+    próxima classe — e o consultor no lobby e a diretoria no /admin não passam
     por nada daqui, nem pelo 503 da integração desligada.
     """
 

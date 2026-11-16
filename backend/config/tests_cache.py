@@ -10,7 +10,8 @@ from unittest import mock
 
 from django.core.cache import caches
 from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
+
+from apps.contas.para_testes import cliente_logado
 
 # Porta 1 do loopback: conexão recusada na hora, sem esperar o tempo de conexão.
 REDIS_FORA = "redis://127.0.0.1:1/3"
@@ -42,17 +43,19 @@ class RedisForaTest(TestCase):
         self.assertLess(time.monotonic() - inicio, 3)
 
     def test_catalogo_do_consultor_responde_com_o_redis_fora(self):
+        cliente = cliente_logado()
         with self.assertLogs("lobby.cache", level="WARNING"):
-            resposta = APIClient().get("/api/catalogo")
+            resposta = cliente.get("/api/catalogo")
         self.assertEqual(resposta.status_code, 200)
 
     def test_o_aviso_sai_mesmo_com_a_maquina_ligada_ha_segundos(self):
         """O relógio do aviso é o `monotonic`, que conta desde o boot. Num runner
         de CI recém-ligado ele vale poucos segundos, e o primeiro aviso não pode
         depender disso."""
+        cliente = cliente_logado()
         with mock.patch("config.cache.time.monotonic", return_value=5.0):
             with self.assertLogs("lobby.cache", level="WARNING"):
-                resposta = APIClient().get("/api/catalogo")
+                resposta = cliente.get("/api/catalogo")
         self.assertEqual(resposta.status_code, 200)
 
     def test_um_aviso_por_minuto_e_nao_um_por_requisicao(self):

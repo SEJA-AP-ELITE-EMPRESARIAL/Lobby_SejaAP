@@ -1,12 +1,12 @@
 """
 As duas rotas dos valores do DH - Avaliação.
 
-    GET     /api/dh-avaliacao/valores               público    — o que o lobby mostra
+    GET     /api/dh-avaliacao/valores               logado     — o que o lobby mostra
     GET/PUT /api/dh-avaliacao/valores/configuracao  diretoria  — a aba DH - Avaliação do /admin
 
-A PÚBLICA
+A DO CONSULTOR
 
-Pública pelo mesmo motivo do catálogo: o consultor não faz login.
+Aberta a qualquer pessoa logada, como o catálogo (anônima até a TSK-1513).
 
     { "versao": "<hash>",
       "modalidades": [{"id": "relatorio", "nome": "Relatório", "valor": 150, "fixo": false},
@@ -18,7 +18,7 @@ Mesmo corte do `/api/departamentos/configuracao`: o que se grava vale para todas
 as próximas vendas, alcance de tabela. Gerente recebe 403; 401 fica só para "não
 autenticado", porque é o que derruba a sessão do `/admin`.
 """
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -42,7 +42,7 @@ def _sem_cache(resposta: Response) -> Response:
 
 
 class ValoresView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [ValoresPublicoThrottle]
 
     def get(self, request):

@@ -12,6 +12,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from .models import Produto, Vigencia
 from .tests_escrita import cria_pessoa
@@ -80,9 +81,9 @@ class CriacaoTest(BaseProdutos):
         self.assertEqual(produto["price"], 39997 * 12)
         self.assertEqual(produto["vigencia"], 12)
 
-    def test_aparece_no_catalogo_publico_na_hora(self):
+    def test_aparece_no_catalogo_do_consultor_na_hora(self):
         self.cria()
-        cats = self.client.get("/api/catalogo").json()["cats"]
+        cats = cliente_logado().get("/api/catalogo").json()["cats"]
         elite = next(c for c in cats if c["id"] == "elite")
         self.assertIn("elite-master", [p["id"] for p in elite["products"]])
 

@@ -37,6 +37,7 @@ from apps.catalogo.tests_escrita import cria_pessoa
 from apps.vendas.tests_comprovante import venda_de_tabela
 
 from .models import Papel
+from .para_testes import emite_comprovante
 from .views import MSG_MANUTENCAO
 
 # Onde a `revalidar_sessao` instancia o cliente: no módulo dele.
@@ -58,8 +59,8 @@ class RevalidacaoDoTokenTest(TestCase):
         # pessoa; sem limpar, um teste herdaria a do anterior.
         cache.clear()
         self.gerente = cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE)
-        token = RefreshToken.for_user(self.gerente).access_token
-        self.cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.token = str(RefreshToken.for_user(self.gerente).access_token)
+        self.cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.identidade_id = self.gerente.vinculo_identidade.identidade_id
 
     def sessao(self):
@@ -92,18 +93,30 @@ class RevalidacaoDoTokenTest(TestCase):
     def test_venda_negociada_com_o_token_de_quem_foi_desativado_volta_a_pedir_autorizacao(self):
         """É o token que destrava o desconto: aqui a revalidação mais importa.
 
-        O comprovante não dá 401 (o `JWTOpcional` trata token ruim como "sem
-        autorização"), mas a venda negociada é recusada com a frase que manda
-        pedir a autorização de novo.
+        O comprovante não dá 401 por causa da AUTORIZAÇÃO (o `X-Lobby-Autorizacao`
+        é lido como o `JWTOpcional`: token ruim é "sem autorização"), mas a venda
+        negociada é recusada com a frase que manda pedir a autorização de novo.
+        A sessão de quem vende é outra pessoa, e segue de pé.
         """
         with patch(ALVO) as Cliente:
-            Cliente.return_value.obter.return_value = {"ativo": False}
-            resposta = self.cliente.post(
-                "/api/venda/comprovante", _venda_negociada(), format="json"
+            Cliente.return_value.obter.side_effect = (
+                lambda identidade_id: {"ativo": identidade_id != self.identidade_id}
             )
+            resposta = emite_comprovante(_venda_negociada(), autorizador=self.gerente)
 
         self.assertEqual(resposta.status_code, 422)
         self.assertIn("exigem a autorização", resposta.json()["erro"])
+
+    def test_sessao_de_quem_vende_desativada_e_401_no_comprovante(self):
+        """A sessão derrubada pelo Conecta, no comprovante, é 401 — e o lobby
+        volta ao login sem mandar nada ao n8n (TSK-1513)."""
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.obter.return_value = {"ativo": False}
+            resposta = self.cliente.post(
+                "/api/venda/comprovante", venda_de_tabela(), format="json"
+            )
+        self.assertEqual(resposta.status_code, 401)
+        self.assertEqual(resposta.json(), {"erro": "Sessão encerrada."})
 
     def test_reativada_e_logada_de_novo_o_token_novo_vale_na_hora(self):
         """Recusa → reativação → novo login → token novo, sem limpar o cache.
@@ -129,11 +142,16 @@ class RevalidacaoDoTokenTest(TestCase):
             )
         self.assertEqual(resposta.status_code, 200)
 
-        novo = APIClient(HTTP_AUTHORIZATION=f"Bearer {resposta.json()['token']}")
+        token = resposta.json()["token"]
+        novo = APIClient(HTTP_AUTHORIZATION=f"Bearer {token}")
         with patch(ALVO) as Cliente:
             self.assertEqual(novo.get("/api/sessao/atual").status_code, 200)
+            # Gerente logado autorizando com a própria sessão.
             self.assertEqual(
-                novo.post("/api/venda/comprovante", _venda_negociada(), format="json").status_code,
+                novo.post(
+                    "/api/venda/comprovante", _venda_negociada(), format="json",
+                    HTTP_X_LOBBY_AUTORIZACAO=f"Bearer {token}",
+                ).status_code,
                 200,
             )
         # Valeu pelo login, sem perguntar de novo ao Conecta.
@@ -211,7 +229,8 @@ class RevalidacaoDoTokenTest(TestCase):
         with patch(ALVO) as Cliente:
             Cliente.return_value.obter.side_effect = IdentidadeIndisponivel("x")
             resposta = self.cliente.post(
-                "/api/venda/comprovante", _venda_negociada(), format="json"
+                "/api/venda/comprovante", _venda_negociada(), format="json",
+                HTTP_X_LOBBY_AUTORIZACAO=f"Bearer {self.token}",
             )
         self.assertEqual(resposta.status_code, 200)
 

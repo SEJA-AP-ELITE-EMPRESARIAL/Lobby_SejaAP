@@ -15,6 +15,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from . import vigencias
 from .models import PoliticaCobranca, Produto, PublicacaoCatalogo, Vigencia

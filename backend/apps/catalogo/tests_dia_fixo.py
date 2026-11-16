@@ -24,6 +24,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 from apps.integracao.historico import consulta
 
 from .models import Categoria, PoliticaCobranca, Vigencia
@@ -44,7 +45,7 @@ class Base(TestCase):
         return resposta
 
     def catalogo(self):
-        return APIClient().get("/api/catalogo").json()
+        return cliente_logado().get("/api/catalogo").json()
 
     def da_categoria(self, slug):
         return next(c for c in self.catalogo()["cats"] if c["id"] == slug)["cobranca"]
@@ -471,7 +472,7 @@ class MigracaoDoDiaFixoTest(TransactionTestCase):
         self.assertEqual(sementes.get(chave="categoria:apn").vigente_de, copia.vigente_de)
 
         # O que o consultor recebe: o mesmo de antes, com dia_fixo true em tudo.
-        corpo = APIClient().get("/api/catalogo").json()
+        corpo = cliente_logado().get("/api/catalogo").json()
         apn = next(c for c in corpo["cats"] if c["id"] == "apn")
         self.assertEqual(
             apn["cobranca"],

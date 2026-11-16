@@ -30,6 +30,8 @@ produto. Ninguém sai sem guarda.
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from apps.contas.para_testes import cliente_logado
+
 CATALOGO_EM_PRODUCAO = [
     {
         "id": "elite",
@@ -132,7 +134,9 @@ class ContratoDoCatalogoTest(TestCase):
     """O JSON servido tem que ser o mesmo que o front recebe hoje."""
 
     def setUp(self):
-        self.client = APIClient()
+        # Um consultor logado sem papel: desde a TSK-1513 o catálogo pede sessão,
+        # mas papel nenhum — quem acabou de entrar pela primeira vez cota igual.
+        self.client = cliente_logado()
 
     def _servido(self):
         resposta = self.client.get("/api/catalogo")
@@ -202,10 +206,11 @@ class ContratoDoCatalogoTest(TestCase):
             [c["id"] for c in cats], ["elite", "treinamentos", "apn", "produtos"]
         )
 
-    def test_get_e_anonimo(self):
-        """Consultor sem login precisa conseguir cotar. É o ponto do app."""
-        resposta = APIClient().get("/api/catalogo")
-        self.assertEqual(resposta.status_code, 200)
+    def test_get_pede_sessao_mas_nao_papel(self):
+        """Desde a TSK-1513 (decisão do dono de 14/11/2026), o catálogo pede a
+        sessão do Lobby: sem ela, 401. Com ela, qualquer conta lê, sem papel."""
+        self.assertEqual(APIClient().get("/api/catalogo").status_code, 401)
+        self.assertEqual(cliente_logado().get("/api/catalogo").status_code, 200)
 
     def test_resposta_nunca_e_cacheavel(self):
         """Atrás da Cloudflare, preço cacheado na borda é venda com valor errado."""

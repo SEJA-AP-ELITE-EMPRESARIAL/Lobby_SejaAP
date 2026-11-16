@@ -1,13 +1,13 @@
 """
-Limite da leitura anônima das categorias financeiras. Mesmo aviso do
-`apps/departamentos/throttling.py`: é por processo do gunicorn, contenção de
-rajada.
+Limite da leitura das categorias financeiras. Mesmo aviso do
+`apps/departamentos/throttling.py`: por pessoa desde a TSK-1513, com o `scope`
+de quando a rota era anônima.
 """
-from rest_framework.throttling import AnonRateThrottle
+from apps.contas.throttling import PorPessoaThrottle
 
 
-class CategoriasFinanceirasPublicoThrottle(AnonRateThrottle):
+class CategoriasFinanceirasPublicoThrottle(PorPessoaThrottle):
     """Folgado pelo mesmo motivo do departamento: o front reconsulta a cada 5
-    minutos e ao voltar para a aba, e vários consultores dividem o IP."""
+    minutos e ao voltar para a aba."""
 
     scope = "categorias_financeiras_publico"

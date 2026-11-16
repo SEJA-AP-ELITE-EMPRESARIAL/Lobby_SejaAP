@@ -45,7 +45,7 @@ def _reais(valor: Decimal) -> str:
 
 # Teto da conversão para `int`, em casas decimais, e não regra de negócio (a
 # regra é o `QUANTIDADE_MAX`, conferido adiante, com mensagem própria). Existe
-# porque `int(Decimal("1e5000000"))` leva minutos: sem ele, um POST anônimo com
+# porque `int(Decimal("1e5000000"))` leva minutos: sem ele, um POST qualquer com
 # uma quantidade em notação exponencial prenderia um worker do gunicorn. É o
 # expoente que se olha, e não `abs(numero) > teto`: a aritmética do Decimal
 # estoura (`Overflow`) antes de comparar um número desses.

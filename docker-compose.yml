@@ -77,13 +77,16 @@ services:
       # responde 301 para https, e sem o header o urllib tentaria TLS contra o
       # gunicorn em texto claro — o healthcheck nunca passaria.
       #
-      # Bate no GET público do catálogo de propósito: é a rota que precisa estar
-      # de pé para o consultor cotar. Se ela responde, o app serve.
+      # Bate no `/saude` (TSK-1513): sem sessão, sem teto, e confere o banco
+      # pelo túnel, como o GET do catálogo conferia. Até a TSK-1513 era o
+      # catálogo; com o Lobby pedindo login ele responde 401 sem sessão, e o
+      # backend ficaria unhealthy para sempre. Fora de `/api/`, como o
+      # `/metrics`: o nginx do container não o encaminha, não há caminho público.
       test:
         - "CMD"
         - "python"
         - "-c"
-        - "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8000/api/catalogo', headers={'X-Forwarded-Proto': 'https'}), timeout=5)"
+        - "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8000/saude', headers={'X-Forwarded-Proto': 'https'}), timeout=5)"
       interval: 30s
       timeout: 10s
       retries: 5

@@ -14,6 +14,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.contas.models import Papel, VinculoIdentidade
+from apps.contas.para_testes import cliente_logado
 
 from .models import Produto, PublicacaoCatalogo
 
@@ -53,7 +54,8 @@ def cria_pessoa(email, papel):
 
 class BaseEscrita(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        # Quem lê o catálogo é um consultor logado sem papel (TSK-1513).
+        self.client = cliente_logado()
         self.usuario = cria_pessoa("diretoria@sejaap.com.br", Papel.DIRETORIA)
 
     def catalogo_atual(self):
@@ -77,14 +79,19 @@ class BaseEscrita(TestCase):
 
 class PermissaoTest(BaseEscrita):
     def test_anonimo_nao_publica(self):
-        resposta = self.client.put(
+        resposta = APIClient().put(
             "/api/catalogo", {"cats": self.catalogo_atual()}, format="json"
         )
         self.assertEqual(resposta.status_code, 401)
 
-    def test_get_continua_anonimo_depois_de_fechar_a_escrita(self):
-        """A trava é só na publicação. Cotar segue livre."""
+    def test_consultor_sem_papel_le_mas_nao_publica(self):
+        """A trava de papel é só na publicação: ler o catálogo pede só a sessão
+        (TSK-1513), e o consultor sem papel recebe 403 no PUT, não 401."""
         self.assertEqual(self.client.get("/api/catalogo").status_code, 200)
+        resposta = self.client.put(
+            "/api/catalogo", {"cats": self.catalogo_atual()}, format="json"
+        )
+        self.assertEqual(resposta.status_code, 403)
 
     def test_gerente_nao_publica_a_tabela(self):
         """A diferença entre os dois papéis é de ALCANCE.

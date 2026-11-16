@@ -17,6 +17,7 @@ from rest_framework.test import APIClient
 
 from apps.catalogo.tests_escrita import cria_pessoa
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from .models import ConfiguracaoDepartamento, Departamento
 from .servicos import sincronizar
@@ -44,7 +45,7 @@ class Base(TestCase):
         return cliente
 
     def publico(self):
-        return self.anonimo.get("/api/departamentos").json()
+        return cliente_logado().get("/api/departamentos").json()
 
     def salva(self, corpo, usuario=None):
         return self.como(usuario or self.diretoria).put(ROTA, corpo, format="json")
@@ -203,8 +204,8 @@ class PermissaoTest(Base):
         self.assertEqual(resposta.status_code, 403)
         self.assertFalse(ConfiguracaoDepartamento.objects.exists())
 
-    def test_rota_publica_continua_sem_escrita(self):
-        self.assertEqual(self.anonimo.put("/api/departamentos", {}, format="json").status_code, 405)
+    def test_rota_do_consultor_continua_sem_escrita(self):
+        self.assertEqual(cliente_logado().put("/api/departamentos", {}, format="json").status_code, 405)
 
 
 class RestricaoDoBancoTest(TestCase):

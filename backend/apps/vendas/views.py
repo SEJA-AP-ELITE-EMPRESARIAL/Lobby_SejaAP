@@ -4,9 +4,13 @@ Os dois endpoints do comprovante de venda.
     POST /api/venda/comprovante   o navegador pede, antes de enviar ao n8n
     POST /api/venda/validar       o n8n confere, antes de processar
 
-O primeiro é ANÔNIMO, e tem que ser: quem monta a venda é o consultor, que não
-faz login. A credencial entra só quando há negociação — e aí vem no `Authorization`,
-do modal de autorização.
+O primeiro pede a SESSÃO de quem vende, no `Authorization` (TSK-1513; até
+então era anônimo). A credencial de quem AUTORIZA a negociação é outra coisa e
+vem noutro cabeçalho, o `X-Lobby-Autorizacao: Bearer <token>`: o token do
+gerente que digitou a senha no modal, ou o da própria sessão quando quem vende já
+é gerente ou diretoria e clicou em "autorizar com a minha conta". O consultor
+nunca é o autorizador por estar logado: sem o cabeçalho, venda negociada é
+recusada como sempre foi.
 
 O segundo é fechado por um segredo compartilhado com o n8n. Não é firula: sem
 ele, qualquer um poderia queimar os nonces das vendas alheias chamando o
@@ -22,7 +26,8 @@ from rest_framework.decorators import (
     permission_classes,
     throttle_classes,
 )
-from rest_framework.permissions import AllowAny
+from rest_framework import HTTP_HEADER_ENCODING
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.contas.autenticacao import JWTRevalidado
@@ -35,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class JWTOpcional(JWTRevalidado):
-    """JWT quando vier, anônimo quando não vier — sem 401 no meio do caminho.
+    """JWT quando vier, ninguém quando não vier — sem 401 no meio do caminho.
 
     A `JWTAuthentication` padrão levanta em token malformado, e isso derrubaria
     a venda a preço de tabela de um consultor cuja autorização tinha acabado de
@@ -54,16 +59,45 @@ class JWTOpcional(JWTRevalidado):
             return None
 
 
+class AutorizacaoDaNegociacao(JWTOpcional):
+    """O token de quem autoriza, lido do `X-Lobby-Autorizacao` (TSK-1513).
+
+    Desde que o comprovante pede a sessão de quem vende no `Authorization`, o
+    token de quem autoriza não cabe mais lá. Mesmo formato (`Bearer <token>`) e
+    mesma regra do `JWTOpcional`: ruim, vencido ou de quem o Conecta desativou
+    vira "sem autorização", e a venda negociada recebe o 422 de sempre.
+
+    Não é classe de autenticação da view: é usada à mão, depois que a sessão de
+    quem vende já passou, para descobrir o autorizador.
+    """
+
+    def get_header(self, request):
+        cabecalho = request.META.get("HTTP_X_LOBBY_AUTORIZACAO")
+        if isinstance(cabecalho, str):
+            cabecalho = cabecalho.encode(HTTP_HEADER_ENCODING)
+        return cabecalho
+
+
+def autorizador_da_negociacao(request):
+    """Quem autorizou a negociação desta venda, ou None."""
+    resultado = AutorizacaoDaNegociacao().authenticate(request)
+    return resultado[0] if resultado else None
+
+
 @api_view(["POST"])
-@authentication_classes([JWTOpcional])
-@permission_classes([AllowAny])
+@authentication_classes([JWTRevalidado])
+@permission_classes([IsAuthenticated])
 @throttle_classes([ComprovanteThrottle])
 def emitir_comprovante(request):
-    """Assina os valores da venda, se eles se sustentarem."""
+    """Assina os valores da venda, se eles se sustentarem.
+
+    `usuario` do `emitir` é quem AUTORIZOU (o `X-Lobby-Autorizacao`), nunca quem
+    está logado vendendo: é ele que fica em `autorizado_por` no comprovante.
+    """
     try:
         comprovante = emitir(
             request.data or {},
-            usuario=request.user if request.user.is_authenticated else None,
+            usuario=autorizador_da_negociacao(request),
             ip=ip_do_cliente(request),
         )
     except VendaRecusada as erro:

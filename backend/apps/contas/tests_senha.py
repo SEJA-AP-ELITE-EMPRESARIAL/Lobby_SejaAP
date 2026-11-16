@@ -73,6 +73,18 @@ class DefinirSenhaTest(TestCase):
             )
         self.assertEqual(resposta.status_code, 200)
 
+    def test_token_de_sessao_vencido_no_cabecalho_nao_atrapalha(self):
+        """A aba do lobby com a sessão vencida manda o token velho; a rota não
+        autentica nada (`authentication_classes([])`, TSK-1513)."""
+        with patch(ALVO):
+            resposta = APIClient().post(
+                "/api/senha/definir",
+                {"token": TOKEN, "senha_nova": SENHA},
+                format="json",
+                HTTP_AUTHORIZATION="Bearer token.vencido.qualquer",
+            )
+        self.assertEqual(resposta.status_code, 200)
+
     def test_espaco_em_volta_do_token_nao_atrapalha(self):
         """Copiar o link do WhatsApp costuma trazer espaço junto."""
         with patch(ALVO) as Cliente:
@@ -170,6 +182,15 @@ class EsqueciSenhaTest(TestCase):
         with patch(ALVO):
             resposta = APIClient().post(
                 "/api/senha/esqueci", {"email": "gerente@sejaap.com.br"}, format="json"
+            )
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_token_de_sessao_vencido_no_cabecalho_nao_atrapalha(self):
+        """O "esqueci a senha" da tela de login, com a sessão vencida na aba."""
+        with patch(ALVO):
+            resposta = APIClient().post(
+                "/api/senha/esqueci", {"email": "gerente@sejaap.com.br"}, format="json",
+                HTTP_AUTHORIZATION="Bearer token.vencido.qualquer",
             )
         self.assertEqual(resposta.status_code, 200)
 
