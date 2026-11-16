@@ -113,6 +113,21 @@ class LoginTest(TestCase):
         self.assertEqual(vinculo.usuario.email, "fulano@sejaap.com.br")
         self.assertFalse(vinculo.usuario.is_staff)
 
+    def test_primeiro_login_com_a_senha_inicial_avisa_a_troca(self):
+        """O primeiro login é justamente o da senha inicial: o aviso tem de vir
+        já nele, e não só no segundo (o vínculo é lido do cache da relação)."""
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = {**IDENTIDADE_OK, "precisa_trocar_senha": True}
+            resposta = self.entrar()
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(resposta.json()["precisaTrocarSenha"])
+        self.assertTrue(VinculoIdentidade.objects.get(identidade_id=ID_FULANO).precisa_trocar_senha)
+
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = IDENTIDADE_OK
+            resposta = self.entrar()
+        self.assertFalse(resposta.json()["precisaTrocarSenha"])
+
     def test_sem_papel_no_modal_do_gerente_continua_403(self):
         """O modal de autorização manda `para: "negociacao"`: ali, sem papel, a
         recusa de sempre — e nada de token."""

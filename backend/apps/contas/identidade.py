@@ -141,7 +141,12 @@ def resolver_usuario(dados):
 
     # `precisa_trocar_senha` é do Conecta ID e muda a cada login; guardar a
     # cópia local permite que a tela avise sem precisar de outra chamada.
-    vinculo = VinculoIdentidade.objects.filter(usuario=usuario).first()
+    #
+    # Pelo cache da relação, como o `_semear_papel`, e não por consulta nova: é
+    # ESSE objeto que a view lê logo em seguida. Gravando numa cópia, o primeiro
+    # login respondia `precisaTrocarSenha: false` — justo o da senha inicial.
+    # Até a TSK-1513 ninguém via: o primeiro login sem papel era recusado.
+    vinculo = getattr(usuario, "vinculo_identidade", None)
     if vinculo is not None:
         precisa = bool(dados.get("precisa_trocar_senha", False))
         if vinculo.precisa_trocar_senha != precisa:
