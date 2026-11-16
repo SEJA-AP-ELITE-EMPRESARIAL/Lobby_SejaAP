@@ -16,6 +16,7 @@ from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+from apps.contas.para_testes import cliente_logado
 
 from .models import Departamento
 from .omie import URL, DepartamentoOmie, OmieIndisponivel, listar_departamentos
@@ -202,8 +203,10 @@ class SincronizacaoTest(TestCase):
 
 
 class RotaPublicaTest(TestCase):
+    """A rota do consultor. Anônima até a TSK-1513; agora pede a sessão."""
+
     def setUp(self):
-        self.cliente = APIClient()
+        self.cliente = cliente_logado()
 
     def ler(self):
         return self.cliente.get("/api/departamentos")
@@ -214,7 +217,10 @@ class RotaPublicaTest(TestCase):
         self.assertEqual(resposta.json()["departamentos"], [])
         self.assertIsNone(resposta.json()["sincronizado_em"])
 
-    def test_anonimo_le_so_os_ativos_na_ordem_da_estrutura(self):
+    def test_sem_sessao_nao_le(self):
+        self.assertEqual(APIClient().get("/api/departamentos").status_code, 401)
+
+    def test_consultor_le_so_os_ativos_na_ordem_da_estrutura(self):
         sincronizar(
             [
                 dep("2", "2.Comercial", "001.009"),

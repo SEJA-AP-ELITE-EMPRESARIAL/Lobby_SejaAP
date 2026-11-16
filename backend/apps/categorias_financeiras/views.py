@@ -1,18 +1,18 @@
 """
 As duas rotas das categorias financeiras.
 
-    GET     /api/categorias-financeiras               público    — a lista do campo
+    GET     /api/categorias-financeiras               logado     — a lista do campo
     GET/PUT /api/categorias-financeiras/configuracao  diretoria  — a aba Categorias do /admin
 
-Mesmo corte das rotas de `apps/departamentos/views.py`: a pública é anônima,
-porque o consultor não faz login, e lê só o banco; a da diretoria usa a
-permissão de publicar tabela, com 403 para gerente.
+Mesmo corte das rotas de `apps/departamentos/views.py`: a do consultor pede só a
+sessão (anônima até a TSK-1513) e lê só o banco; a da diretoria usa a permissão
+de publicar tabela, com 403 para gerente.
 
     { "versao": "<hash>", "sincronizado_em": "<ISO>|null",
       "modo": "lista"|"fixo",
       "categorias": [{"codigo", "descricao"}, ...] }
 """
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -35,7 +35,7 @@ def _sem_cache(resposta: Response) -> Response:
 
 
 class CategoriasFinanceirasView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [CategoriasFinanceirasPublicoThrottle]
 
     def get(self, request):

@@ -32,7 +32,7 @@ class ProvisionamentoTest(TestCase):
         cache.clear()
         self.identidade_id = str(uuid.uuid4())
 
-    def entrar(self, config=None, email="fulano@sejaap.com.br"):
+    def entrar(self, config=None, email="fulano@sejaap.com.br", para=None):
         with patch(ALVO) as Cliente:
             Cliente.return_value.verificar.return_value = {
                 "identidade_id": self.identidade_id,
@@ -41,9 +41,10 @@ class ProvisionamentoTest(TestCase):
                 "precisa_trocar_senha": False,
                 "config_do_app": config or {},
             }
-            return self.client.post(
-                "/api/sessao", {"email": email, "senha": "segredo"}, format="json"
-            )
+            corpo = {"email": email, "senha": "segredo"}
+            if para:
+                corpo["para"] = para
+            return self.client.post("/api/sessao", corpo, format="json")
 
     def test_papel_vem_da_configuracao_do_acesso(self):
         self.assertEqual(self.entrar({"papel": Papel.GERENTE}).status_code, 200)
@@ -63,14 +64,20 @@ class ProvisionamentoTest(TestCase):
     def test_sem_configuracao_continua_nascendo_sem_papel(self):
         """Ter acesso ao Lobby significa "pode entrar", não "pode autorizar".
 
-        Sem papel a sessão é recusada — e o certo continua sendo esse. O que a
+        Desde a TSK-1513 o login comum de quem não tem papel entra (200): vende
+        a preço de tabela e não autoriza nada. No modal do gerente
+        (`para: "negociacao"`), sem papel continua recusado. O que a
         configuração muda é só o caso de quem foi provisionado: essa pessoa não
-        precisa mais de uma segunda passagem pelo /django-admin/ antes do
-        primeiro acesso funcionar.
+        precisa mais de uma segunda passagem pelo /django-admin/ antes de
+        autorizar.
         """
-        self.assertEqual(self.entrar().status_code, 403)
+        resposta = self.entrar()
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json()["papel"], "")
+        self.assertFalse(resposta.json()["podeAutorizarNegociacao"])
         vinculo = VinculoIdentidade.objects.get(identidade_id=self.identidade_id)
         self.assertEqual(vinculo.papel, "")
+        self.assertEqual(self.entrar(para="negociacao").status_code, 403)
 
     def test_papel_desconhecido_nao_vira_papel_inventado(self):
         """Fica sem papel, que é o mesmo estado de quem não foi promovido.
@@ -78,9 +85,12 @@ class ProvisionamentoTest(TestCase):
         A conta e o vínculo nascem do mesmo jeito, e a diretoria promove — o
         desfecho é o de antes da configuração existir, não um erro novo.
         """
-        self.assertEqual(self.entrar({"papel": "chefao"}).status_code, 403)
+        resposta = self.entrar({"papel": "chefao"})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json()["papel"], "")
         vinculo = VinculoIdentidade.objects.get(identidade_id=self.identidade_id)
         self.assertEqual(vinculo.papel, "")
+        self.assertEqual(self.entrar({"papel": "chefao"}, para="negociacao").status_code, 403)
 
     def test_configuracao_nao_reaplica_a_cada_login(self):
         self.entrar({"papel": Papel.GERENTE})

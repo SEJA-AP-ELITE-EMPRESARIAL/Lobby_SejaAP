@@ -1,14 +1,14 @@
 """
 As duas rotas dos departamentos.
 
-    GET     /api/departamentos               público    — a lista do dropdown
+    GET     /api/departamentos               logado     — a lista do dropdown
     GET/PUT /api/departamentos/configuracao  diretoria  — a aba Departamentos do /admin
 
-A PÚBLICA
+A DO CONSULTOR
 
-Pública pelo mesmo motivo do catálogo: o consultor não faz login. Lê o banco,
-nunca o Omie (ver `models.py`), então responde na mesma velocidade com o Omie de
-pé ou fora do ar.
+Aberta a qualquer pessoa logada, com ou sem papel, como o catálogo (anônima até
+a TSK-1513). Lê o banco, nunca o Omie (ver `models.py`), então responde na mesma
+velocidade com o Omie de pé ou fora do ar.
 
     { "versao": "<hash>", "sincronizado_em": "<ISO>|null",
       "modo": "lista"|"fixo",
@@ -24,7 +24,7 @@ Mesmo corte do `/api/cobranca`: configurar o departamento vale para todas as
 próximas vendas, alcance de tabela, e não de uma venda. Gerente recebe 403; 401
 fica só para "não autenticado", porque é o que derruba a sessão do `/admin`.
 """
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -48,7 +48,7 @@ def _sem_cache(resposta: Response) -> Response:
 
 
 class DepartamentosView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     throttle_classes = [DepartamentosPublicoThrottle]
 
     def get(self, request):

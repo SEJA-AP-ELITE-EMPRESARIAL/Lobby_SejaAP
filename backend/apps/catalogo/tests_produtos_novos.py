@@ -31,6 +31,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from .models import Categoria, Produto
 from .tests_escrita import cria_pessoa
@@ -53,7 +54,7 @@ class ProdutoNovoNaEliteTest(TestCase):
     """Dois planos novos na Elite, do jeito que serão criados de verdade."""
 
     def setUp(self):
-        self.client = APIClient()
+        self.client = cliente_logado()
         self.elite = Categoria.objects.get(slug="elite")
         self.proxima_ordem = (
             self.elite.produtos.count()
@@ -430,7 +431,7 @@ class PublicarPrecoDeProdutoNovoTest(TestCase):
     """Depois de criado, o plano novo tem que entrar no fluxo de preço da diretoria."""
 
     def setUp(self):
-        self.client = APIClient()
+        self.client = cliente_logado()
         self.diretoria = cria_pessoa("diretoria@sejaap.com.br", Papel.DIRETORIA)
         cria_produto(
             categoria=Categoria.objects.get(slug="elite"),

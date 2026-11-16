@@ -7,12 +7,14 @@ túnel SSH, login pelo Conecta ID.
 
 DUAS COISAS ESPECÍFICAS DESTE APP, que o diferenciam dos irmãos:
 
-1. **O Lobby é anônimo por natureza.** Qualquer consultor abre, cota, cadastra e
-   envia a venda sem login. O que exige credencial é NEGOCIAR — alterar valor de
-   produto ou de parcela — e publicar a tabela de preços. Nunca acrescente
-   `LoginRequiredMiddleware`, `LOGIN_URL` forçado ou `login_required` nas rotas
-   do fluxo de venda: o app inteiro cairia atrás de um portão que não deve
-   existir.
+1. **Login para usar, papel para negociar** (TSK-1513, decisão do dono de
+   14/11/2026; até então o Lobby era anônimo). Toda conta ativa do Conecta entra
+   e cota, cadastra e envia a venda — sem papel nenhum. O que exige PAPEL
+   (`VinculoIdentidade.papel`) é NEGOCIAR — alterar valor de produto ou de
+   parcela, com a autorização de um gerente presa àquela venda — e publicar a
+   tabela de preços. O portão é o JWT do DRF (`DEFAULT_PERMISSION_CLASSES`), e
+   não `LoginRequiredMiddleware` ou `login_required`: abertas ficam só as rotas
+   de entrar e de senha (ver `apps.catalogo.tests_projeto.SuperficieAbertaTest`).
 
 2. **Sem CORS, de propósito.** O `index.html` chama `/api/catalogo` por URL
    relativa. Front e API são servidos na mesma origem pelo nginx do host. Se um
@@ -150,8 +152,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 # === Cache ===
-# Importa mais do que parece: é daqui que o DRF tira o contador de throttle da
-# rota pública. `LocMemCache` é POR PROCESSO — com gunicorn em 3 workers, o teto
+# Importa mais do que parece: é daqui que o DRF tira o contador de throttle das
+# rotas do consultor e do login. `LocMemCache` é POR PROCESSO — com gunicorn em 3 workers, o teto
 # real fica ~3× o configurado e zera a cada deploy.
 #
 # Desde a TSK-1059 o cache compartilhado deixou de ser opcional para uma coisa:
@@ -291,22 +293,27 @@ REST_FRAMEWORK = {
         # valer em até 5 minutos, e não quando vencer, horas depois.
         "apps.contas.autenticacao.JWTRevalidado",
     ),
-    # Fechado por padrão. O que é público abre explicitamente com AllowAny —
-    # hoje, só o GET do catálogo.
+    # Fechado por padrão. O que é aberto abre explicitamente com AllowAny — desde
+    # a TSK-1513, só entrar e as duas rotas de senha (e o `/api/venda/validar`,
+    # que confere o segredo do n8n por conta própria). Catálogo, departamentos,
+    # categorias, valores do DH - Avaliação e comprovante pedem a sessão.
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     # Todo erro sai como {"erro": "..."}, que é o que o front lê. Sem isto, o
     # 403 de permissão chegaria como {"detail": ...} e viraria "Falha ao salvar"
     # na tela, escondendo o motivo real.
     "EXCEPTION_HANDLER": "config.erros.tratar_excecao",
-    # Os throttles anônimos abaixo contam por IP, e o IP que vale é o
-    # REMOTE_ADDR que o `RealIPMiddleware` já trocou pelo do visitante. Sem esta
+    # Os throttles anônimos abaixo (login e senha) contam por IP, e o IP que vale
+    # é o REMOTE_ADDR que o `RealIPMiddleware` já trocou pelo do visitante. Os das
+    # rotas do consultor contam por pessoa desde a TSK-1513
+    # (`apps.contas.throttling.PorPessoaThrottle`), com os mesmos scopes. Sem esta
     # linha o DRF usa o X-Forwarded-For INTEIRO como chave do balde, e trocar o
     # header a cada requisição zerava o limite (TSK-195). Zero, e não o número
     # de saltos: contar saltos quebra em silêncio quando a topologia muda.
     "NUM_PROXIES": 0,
     "DEFAULT_THROTTLE_RATES": {
         # Leitura do catálogo: é a primeira chamada de toda venda, e o consultor
-        # em campo recarrega a página com frequência.
+        # em campo recarrega a página com frequência. Por pessoa desde a
+        # TSK-1513; o nome `_publico` ficou do tempo em que era anônimo.
         "catalogo_publico": os.environ.get("LOBBY_RATE_CATALOGO", "240/hour"),
         # Login. O número precisa conviver com uma característica do produto:
         # a autorização de negociação é POR REGISTRO, não sessão longa — o
@@ -318,18 +325,24 @@ REST_FRAMEWORK = {
         # O que protege de força bruta mesmo não é este número: é o bloqueio por
         # conta e por IP do Conecta ID, mais a cota de 60/min por app de lá.
         # Este teto é contenção de rajada.
+        #
+        # Desde a TSK-1513 TODO consultor faz login (e cada aba nova é um login,
+        # a sessão é do `sessionStorage`), não só o gerente — e o 429 do login
+        # não tem modo degradado: ninguém entra. Num evento com todo mundo no
+        # mesmo Wi-Fi é o primeiro teto a estourar, e a cota por app do Conecta
+        # passa a receber o login de todos. Ver o RUNBOOK, "Login para todo uso".
         "login": os.environ.get("LOBBY_RATE_LOGIN", "120/hour"),
-        # Emissão de comprovante de venda. Folgado: uma venda pode ser
-        # reenviada algumas vezes. Existe para o endpoint não virar oráculo
-        # de "qual valor passa na conferência".
+        # Emissão de comprovante de venda, por pessoa (TSK-1513). Folgado: uma
+        # venda pode ser reenviada algumas vezes. Existe para o endpoint não
+        # virar oráculo de "qual valor passa na conferência".
         "comprovante": os.environ.get("LOBBY_RATE_COMPROVANTE", "120/hour"),
         # Definição de senha por link. Baixo de propósito: o caminho normal é
         # uma pessoa usando um link uma vez. Sobra folga para quem erra a
         # política de senha algumas vezes seguidas e tenta de novo.
         "definir_senha": os.environ.get("LOBBY_RATE_DEFINIR_SENHA", "20/hour"),
-        # Lista de departamentos. O front reconsulta a cada 5 minutos, ao voltar
-        # para a aba e antes de enviar — e vários consultores dividem o IP do
-        # escritório. Uma resposta de 10 linhas lidas do banco, sem Omie no meio.
+        # Lista de departamentos, por pessoa (TSK-1513). O front reconsulta a
+        # cada 5 minutos, ao voltar para a aba e antes de enviar. Uma resposta de
+        # 10 linhas lidas do banco, sem Omie no meio.
         "departamentos_publico": os.environ.get("LOBBY_RATE_DEPARTAMENTOS", "600/hour"),
         # Categorias financeiras da APN (TSK-877): mesmo ritmo dos departamentos.
         "categorias_financeiras_publico": os.environ.get("LOBBY_RATE_CATEGORIAS_FINANCEIRAS", "600/hour"),

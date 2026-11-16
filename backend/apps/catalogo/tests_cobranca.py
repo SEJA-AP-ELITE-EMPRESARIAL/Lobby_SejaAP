@@ -21,6 +21,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from . import vigencias
 from .models import (
@@ -43,7 +44,8 @@ REGRA_PADRAO = {
 
 class BaseCobranca(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        # Quem lê é um consultor logado sem papel (TSK-1513).
+        self.client = cliente_logado()
         self.diretoria = cria_pessoa("diretoria@sejaap.com.br", Papel.DIRETORIA)
 
     def como_diretoria(self):
@@ -56,10 +58,11 @@ class BaseCobranca(TestCase):
 
 
 class LeituraTest(BaseCobranca):
-    def test_get_e_anonimo(self):
-        """O consultor não faz login — sem a política ele não monta cronograma."""
-        resposta = APIClient().get("/api/cobranca")
-        self.assertEqual(resposta.status_code, 200)
+    def test_get_pede_sessao_mas_nao_papel(self):
+        """Sem a política o consultor não monta cronograma: qualquer conta logada
+        lê. Sem sessão, 401, como o catálogo (TSK-1513)."""
+        self.assertEqual(APIClient().get("/api/cobranca").status_code, 401)
+        self.assertEqual(self.client.get("/api/cobranca").status_code, 200)
 
     def test_traz_a_politica_geral_com_os_padroes_da_semente(self):
         corpo = self.client.get("/api/cobranca").json()
@@ -123,10 +126,16 @@ class LeituraTest(BaseCobranca):
 
 class PermissaoTest(BaseCobranca):
     def test_anonimo_nao_publica(self):
-        resposta = self.client.put(
+        resposta = APIClient().put(
             "/api/cobranca", {"geral": REGRA_PADRAO}, format="json"
         )
         self.assertEqual(resposta.status_code, 401)
+
+    def test_consultor_sem_papel_nao_publica(self):
+        resposta = self.client.put(
+            "/api/cobranca", {"geral": REGRA_PADRAO}, format="json"
+        )
+        self.assertEqual(resposta.status_code, 403)
 
     def test_gerente_nao_publica(self):
         """Gerente autoriza exceção numa venda; a política vale para todas."""
@@ -425,7 +434,10 @@ class ValorDeReferenciaDaApnTest(BaseCobranca):
 class HistoricoApiTest(BaseCobranca):
     def test_anonimo_nao_le_o_historico(self):
         """Não é senha, mas é a série histórica de preço da empresa."""
-        self.assertEqual(self.client.get("/api/historico").status_code, 401)
+        self.assertEqual(APIClient().get("/api/historico").status_code, 401)
+
+    def test_consultor_sem_papel_nao_le_o_historico(self):
+        self.assertEqual(self.client.get("/api/historico").status_code, 403)
 
     def test_gerente_nao_le_o_historico(self):
         gerente = cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE)

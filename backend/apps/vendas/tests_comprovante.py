@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 from apps.catalogo.models import Produto
 from apps.catalogo.tests_escrita import cria_pessoa
 from apps.contas.models import Papel, VinculoIdentidade
+from apps.contas.para_testes import cliente_logado, consultor, emite_comprovante, token_de
 
 from .models import ComprovanteVenda
 
@@ -57,17 +58,15 @@ def venda_dh(**mudancas):
 
 
 class EmissaoTest(TestCase):
-    def setUp(self):
-        self.client = APIClient()
+    """Quem vende está sempre logado (TSK-1513): `emitir` manda a sessão de um
+    consultor sem papel e, quando há, o token de quem AUTORIZA no
+    `X-Lobby-Autorizacao`."""
 
-    def emitir(self, dados, usuario=None):
-        cliente = APIClient()
-        if usuario:
-            cliente.force_authenticate(user=usuario)
-        return cliente.post("/api/venda/comprovante", dados, format="json")
+    def emitir(self, dados, autorizador=None):
+        return emite_comprovante(dados, autorizador=autorizador)
 
-    def test_venda_a_preco_de_tabela_e_assinada_sem_ninguem_logar(self):
-        """O caso comum: consultor anônimo, valor da tabela. Tem que passar."""
+    def test_venda_a_preco_de_tabela_e_assinada_sem_ninguem_autorizar(self):
+        """O caso comum: consultor sem papel, valor da tabela. Tem que passar."""
         resposta = self.emitir(venda_de_tabela())
         self.assertEqual(resposta.status_code, 200)
         self.assertIn(".", resposta.json()["comprovante"])
@@ -98,11 +97,12 @@ class EmissaoTest(TestCase):
         resposta = self.emitir(
             venda_de_tabela(negociado=True, valor_total=120000, valor_mensal=10000,
                             entrada=10000, cronograma=[10000] * 11),
-            usuario=gerente,
+            autorizador=gerente,
         )
         self.assertEqual(resposta.status_code, 200)
         c = ComprovanteVenda.objects.get()
         self.assertTrue(c.negociado)
+        # Quem autorizou, e nunca quem está logado vendendo.
         self.assertEqual(c.autorizador_email, "gerente@sejaap.com.br")
 
     def test_conta_sem_papel_nao_autoriza_mesmo_logada(self):
@@ -110,7 +110,7 @@ class EmissaoTest(TestCase):
         resposta = self.emitir(
             venda_de_tabela(negociado=True, valor_total=1, valor_mensal=1,
                             entrada=1, cronograma=[]),
-            usuario=ninguem,
+            autorizador=ninguem,
         )
         self.assertEqual(resposta.status_code, 422)
         self.assertIn("não tem permissão", resposta.json()["erro"])
@@ -177,6 +177,132 @@ class EmissaoTest(TestCase):
         self.assertIn("não encontrado", resposta.json()["erro"])
 
 
+def venda_negociada(**mudancas):
+    return venda_de_tabela(negociado=True, valor_total=120000, valor_mensal=10000,
+                           entrada=10000, cronograma=[10000] * 11, **mudancas)
+
+
+class SessaoEAutorizacaoTest(TestCase):
+    """Duas credenciais, dois cabeçalhos (TSK-1513).
+
+    `Authorization` é a sessão de quem VENDE: obrigatória, e não autoriza nada
+    sozinha. `X-Lobby-Autorizacao` é o token de quem AUTORIZA: lido como o
+    `JWTOpcional` (ruim, vencido ou revogado = sem autorização), e é ele — nunca
+    a sessão — que vai para `autorizado_por`.
+    """
+
+    def setUp(self):
+        self.gerente = cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE)
+        self.diretoria = cria_pessoa("diretoria@sejaap.com.br", Papel.DIRETORIA)
+
+    def assertSemAutorizacao(self, resposta):
+        self.assertEqual(resposta.status_code, 422, resposta.content)
+        self.assertIn("exigem a autorização", resposta.json()["erro"])
+        self.assertFalse(ComprovanteVenda.objects.exists())
+
+    # ----- a sessão de quem vende -----------------------------------------
+
+    def test_sessao_de_verdade_passa_pelo_jwt(self):
+        """Sem `force_authenticate`: o token emitido pelo login vale aqui."""
+        cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {token_de(consultor())}")
+        resposta = cliente.post("/api/venda/comprovante", venda_de_tabela(), format="json")
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+
+    def test_sessao_vencida_e_401_e_nada_e_assinado(self):
+        """É o 401 que leva o lobby de volta ao login, e a venda para lá."""
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        vencido = AccessToken.for_user(consultor())
+        vencido.set_exp(lifetime=-timezone.timedelta(minutes=1))
+        cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {vencido}")
+        resposta = cliente.post("/api/venda/comprovante", venda_de_tabela(), format="json")
+        self.assertEqual(resposta.status_code, 401)
+        self.assertFalse(ComprovanteVenda.objects.exists())
+
+    def test_so_o_token_do_gerente_sem_sessao_nao_basta(self):
+        """O cabeçalho de autorização não substitui a sessão de quem vende."""
+        resposta = APIClient().post(
+            "/api/venda/comprovante", venda_negociada(), format="json",
+            HTTP_X_LOBBY_AUTORIZACAO=f"Bearer {token_de(self.gerente)}",
+        )
+        self.assertEqual(resposta.status_code, 401)
+
+    # ----- quem autoriza ---------------------------------------------------
+
+    def test_autorizado_por_e_o_gerente_e_nunca_o_consultor(self):
+        resposta = emite_comprovante(venda_negociada(), autorizador=self.gerente)
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        comprovante = ComprovanteVenda.objects.get()
+        self.assertEqual(comprovante.autorizador, self.gerente)
+        self.assertEqual(comprovante.autorizador_email, "gerente@sejaap.com.br")
+
+    def test_gerente_logado_nao_autoriza_so_por_estar_logado(self):
+        """Autorizar é ação explícita: a sessão do gerente, sem o cabeçalho, é só
+        a de quem vende."""
+        self.assertSemAutorizacao(emite_comprovante(venda_negociada(), vendedor=self.gerente))
+
+    def test_gerente_logado_autoriza_com_a_propria_sessao(self):
+        """O "autorizar com a minha conta": o front manda o próprio token no
+        `X-Lobby-Autorizacao`."""
+        resposta = emite_comprovante(
+            venda_negociada(), vendedor=self.diretoria, autorizador=self.diretoria
+        )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        self.assertEqual(ComprovanteVenda.objects.get().autorizador_email, "diretoria@sejaap.com.br")
+
+    def test_token_do_gerente_no_authorization_nao_autoriza(self):
+        """Se o token do gerente chegar no lugar da sessão, ele é a sessão — e
+        sessão não autoriza. Fecha a volta ao desenho de antes por engano."""
+        cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {token_de(self.gerente)}")
+        self.assertSemAutorizacao(
+            cliente.post("/api/venda/comprovante", venda_negociada(), format="json")
+        )
+
+    def test_autorizacao_ruim_vira_sem_autorizacao_e_nao_401(self):
+        """Ruim, sem `Bearer` ou vazia: 422 de "exigem a autorização", e a
+        sessão de quem vende segue de pé (o 401 derrubaria o consultor)."""
+        for cabecalho in ("Bearer lixo", "lixo", "Bearer", ""):
+            with self.subTest(cabecalho=cabecalho):
+                self.assertSemAutorizacao(
+                    emite_comprovante(venda_negociada(), HTTP_X_LOBBY_AUTORIZACAO=cabecalho)
+                )
+
+    def test_autorizacao_vencida_vira_sem_autorizacao(self):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        vencido = AccessToken.for_user(self.gerente)
+        vencido.set_exp(lifetime=-timezone.timedelta(minutes=1))
+        self.assertSemAutorizacao(
+            emite_comprovante(venda_negociada(), HTTP_X_LOBBY_AUTORIZACAO=f"Bearer {vencido}")
+        )
+
+    def test_autorizacao_ruim_nao_atrapalha_a_venda_de_tabela(self):
+        resposta = emite_comprovante(venda_de_tabela(), HTTP_X_LOBBY_AUTORIZACAO="Bearer lixo")
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        self.assertIsNone(ComprovanteVenda.objects.get().autorizador)
+
+    def test_o_token_de_quem_autoriza_e_censurado_no_relatorio_de_erro(self):
+        """O `X-Lobby-Autorizacao` leva o JWT do gerente: no relatório de erro do
+        Django ele sai censurado, como o `Authorization` e a asserção."""
+        from django.test import RequestFactory
+
+        from config.erros import FiltroDeRelatorio
+
+        token = token_de(self.gerente)
+        request = RequestFactory().post(
+            "/api/venda/comprovante", HTTP_X_LOBBY_AUTORIZACAO=f"Bearer {token}",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        meta = FiltroDeRelatorio().get_safe_request_meta(request)
+        for cabecalho in ("HTTP_X_LOBBY_AUTORIZACAO", "HTTP_AUTHORIZATION"):
+            self.assertNotIn(token, str(meta[cabecalho]), cabecalho)
+
+    def test_conta_sem_papel_no_cabecalho_nao_autoriza(self):
+        resposta = emite_comprovante(venda_negociada(), autorizador=consultor("novato@sejaap.com.br"))
+        self.assertEqual(resposta.status_code, 422)
+        self.assertIn("não tem permissão", resposta.json()["erro"])
+
+
 @override_settings(LOBBY_N8N_TOKEN=N8N)
 class ValidacaoTest(TestCase):
     """O lado do n8n."""
@@ -184,13 +310,8 @@ class ValidacaoTest(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    def comprovante_de(self, dados, usuario=None):
-        cliente = APIClient()
-        if usuario:
-            cliente.force_authenticate(user=usuario)
-        return cliente.post(
-            "/api/venda/comprovante", dados, format="json"
-        ).json()["comprovante"]
+    def comprovante_de(self, dados, autorizador=None):
+        return emite_comprovante(dados, autorizador=autorizador).json()["comprovante"]
 
     def validar(self, token, valores, auth=f"Bearer {N8N}"):
         return APIClient().post(
@@ -290,9 +411,12 @@ class ConfiguracaoTest(TestCase):
         )
         self.assertEqual(resposta.status_code, 503)
 
-    def test_emitir_comprovante_nao_exige_login(self):
-        """O lobby é anônimo. Isto não pode mudar por causa desta feature."""
+    def test_emitir_comprovante_exige_a_sessao(self):
+        """Era anônimo até a TSK-1513 (decisão do dono de 14/11/2026). Agora pede
+        a sessão de quem vende — e só ela, sem papel."""
         resposta = APIClient().post(
             "/api/venda/comprovante", venda_de_tabela(), format="json"
         )
-        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.status_code, 401)
+        self.assertFalse(ComprovanteVenda.objects.exists())
+        self.assertEqual(emite_comprovante(venda_de_tabela()).status_code, 200)

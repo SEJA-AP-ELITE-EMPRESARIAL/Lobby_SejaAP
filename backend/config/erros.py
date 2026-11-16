@@ -98,14 +98,17 @@ def tratar_excecao(exc, contexto):
 
 
 class FiltroDeRelatorio(SafeExceptionReporterFilter):
-    """Censura a asserção do Conecta no relatório de erro do Django.
+    """Censura a asserção do Conecta e o token de quem autoriza no relatório de
+    erro do Django.
 
     O filtro padrão esconde o que casa com API|AUTH|TOKEN|KEY|SECRET|PASS|
-    SIGNATURE — e `HTTP_X_CONECTA_ASSERCAO` não casa com nenhum. A asserção não
-    pode ir para log nenhum, nem inteira nem em pedaço (ADR-002 §10.2).
+    SIGNATURE — e nem `HTTP_X_CONECTA_ASSERCAO` nem `HTTP_X_LOBBY_AUTORIZACAO`
+    casam com nenhum ("AUTORIZACAO" não contém "AUTH"). A asserção não pode ir
+    para log nenhum, nem inteira nem em pedaço (ADR-002 §10.2); o segundo leva
+    o JWT do gerente que autorizou a negociação (TSK-1513), que vale horas.
     """
 
     hidden_settings = re.compile(
-        SafeExceptionReporterFilter.hidden_settings.pattern + "|ASSERCAO",
+        SafeExceptionReporterFilter.hidden_settings.pattern + "|ASSERCAO|AUTORIZACAO",
         flags=re.IGNORECASE,
     )

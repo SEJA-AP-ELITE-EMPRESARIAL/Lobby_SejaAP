@@ -12,16 +12,21 @@ alcança o container pelo loopback do host.
 
 `/api/diagnostico/erro-de-teste` levanta um erro de propósito, só para
 superusuário, para conferir o GlitchTip depois do deploy (TSK-1142).
+
+`/saude` é o healthcheck do compose (TSK-1513), sem sessão e, como o `/metrics`,
+fora de `/api/`: sem caminho público.
 """
 from django.contrib import admin
 from django.urls import include, path
 
 from .diagnostico import ErroDeTesteView
 from .metricas import metricas
+from .saude import saude
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
     path("metrics", metricas, name="metricas"),
+    path("saude", saude, name="saude"),
     path("api/", include("apps.catalogo.urls")),
     path("api/", include("apps.contas.urls")),
     path("api/", include("apps.vendas.urls")),

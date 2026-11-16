@@ -25,8 +25,11 @@ from django.test import RequestFactory, SimpleTestCase, TestCase, override_setti
 from rest_framework.test import APIClient
 
 from apps.catalogo.throttling import CatalogoPublicoThrottle
+from apps.contas.para_testes import cliente_logado, consultor, emite_comprovante, token_de
+from apps.contas.throttling import LoginThrottle
 from apps.vendas.models import ComprovanteVenda
 from apps.vendas.tests_comprovante import venda_de_tabela
+from apps.vendas.throttling import ComprovanteThrottle
 
 # Visitantes com endereço público de verdade: o middleware recusa no
 # `CF-Connecting-IP` o que não for global, e os TEST-NET (203.0.113.0/24,
@@ -37,7 +40,7 @@ IP_CONTAINER = "172.23.0.5"     # lobby-frontend na rede do compose
 IP_GATEWAY = "172.23.0.1"       # o que o nginx do container anexa
 IP_BORDA_CF = "172.71.238.240"  # uma borda da Cloudflare vista no access log
 IP_PUBLICO = "8.8.8.8"          # quem fala direto com o gunicorn, de fora
-IP_HEALTHCHECK = "127.0.0.1"    # o healthcheck do compose, que bate no catálogo
+IP_HEALTHCHECK = "127.0.0.1"    # quem fala direto com o gunicorn, de dentro (o healthcheck)
 
 # O que a Cloudflare nunca escreve no `CF-Connecting-IP`: quem manda um destes
 # contornou a Cloudflare e quer cair no balde de alguém de dentro.
@@ -197,8 +200,15 @@ class FiacaoTest(SimpleTestCase):
         self.assertEqual(settings.IDENTIDADE_NUM_PROXIES, 0)
 
 
+@override_settings(AUTH_CENTRAL_ATIVO=True)
 class ThrottleAnonimoTest(TestCase):
-    """O balde do throttle anônimo é do visitante, não do texto do header."""
+    """O balde do throttle anônimo é do visitante, não do texto do header.
+
+    Desde a TSK-1513 os tetos anônimos (por IP) são só os de entrar e de senha:
+    as rotas do consultor pedem sessão e contam por pessoa (`ThrottlePorPessoaTest`,
+    abaixo). O login é o que mais importa aqui: é nele que um IP escolhido a dedo
+    fugiria do próprio balde para chutar senha.
+    """
 
     def setUp(self):
         # O contador vive no cache do processo; o rollback do TestCase não o
@@ -206,54 +216,188 @@ class ThrottleAnonimoTest(TestCase):
         cache.clear()
         self.client = APIClient()
 
-    def _catalogo(self, **meta):
-        return self.client.get("/api/catalogo", **meta)
+    def _entrar(self, **meta):
+        # Corpo vazio: 400 da própria view, sem chamar o Conecta. O teto conta
+        # antes da view, então a tentativa gasta o balde igual.
+        return self.client.post("/api/sessao", {}, format="json", **meta)
 
     def _com_teto(self, rate):
         # `THROTTLE_RATES` é atributo de classe, resolvido no import: trocar o
         # REST_FRAMEWORK por override_settings não chega nele (ver tests_senha).
-        return patch.dict(
-            CatalogoPublicoThrottle.THROTTLE_RATES, {"catalogo_publico": rate}
-        )
+        return patch.dict(LoginThrottle.THROTTLE_RATES, {"login": rate})
 
     def test_trocar_o_x_forwarded_for_nao_reabre_o_balde(self):
         with self._com_teto("3/hour"):
             codigos = [
-                self._catalogo(**headers_de_producao(forjado=f"10.9.8.{n}")).status_code
+                self._entrar(**headers_de_producao(forjado=f"10.9.8.{n}")).status_code
                 for n in range(4)
             ]
-        self.assertEqual(codigos, [200, 200, 200, 429])
+        self.assertEqual(codigos, [400, 400, 400, 429])
 
     def test_cada_visitante_tem_o_seu_balde(self):
         with self._com_teto("2/hour"):
             for _ in range(2):
-                self._catalogo(**headers_de_producao(visitante=IP_VISITANTE))
-            bloqueado = self._catalogo(**headers_de_producao(visitante=IP_VISITANTE))
-            outro = self._catalogo(**headers_de_producao(visitante=IP_OUTRO))
+                self._entrar(**headers_de_producao(visitante=IP_VISITANTE))
+            bloqueado = self._entrar(**headers_de_producao(visitante=IP_VISITANTE))
+            outro = self._entrar(**headers_de_producao(visitante=IP_OUTRO))
         self.assertEqual(bloqueado.status_code, 429)
-        self.assertEqual(outro.status_code, 200)
+        self.assertEqual(outro.status_code, 400)
 
-    def test_cf_de_loopback_nao_enche_o_balde_do_healthcheck(self):
-        """O healthcheck do compose faz GET /api/catalogo de 127.0.0.1, sem
-        header. Quem contorna a Cloudflare e manda `CF-Connecting-IP: 127.0.0.1`
-        não pode cair no balde dele: com o balde cheio, o healthcheck leva 429 e
-        o `lobby-backend` vira "unhealthy"."""
+    def test_cf_de_loopback_nao_enche_o_balde_de_dentro(self):
+        """Quem contorna a Cloudflare e manda `CF-Connecting-IP: 127.0.0.1` não
+        cai no balde do loopback (o de quem fala direto com o gunicorn)."""
         ataque = {"REMOTE_ADDR": IP_CONTAINER, "HTTP_CF_CONNECTING_IP": IP_HEALTHCHECK}
         with self._com_teto("3/hour"):
-            codigos_ataque = [self._catalogo(**ataque).status_code for _ in range(3)]
-            healthcheck = self._catalogo(REMOTE_ADDR=IP_HEALTHCHECK).status_code
-        self.assertEqual(codigos_ataque, [200, 200, 200])
-        self.assertEqual(healthcheck, 200)
+            codigos_ataque = [self._entrar(**ataque).status_code for _ in range(3)]
+            de_dentro = self._entrar(REMOTE_ADDR=IP_HEALTHCHECK).status_code
+        self.assertEqual(codigos_ataque, [400, 400, 400])
+        self.assertEqual(de_dentro, 400)
 
     def test_chave_do_throttle_e_o_ip_real(self):
         with self._com_teto("5/hour"):
-            self._catalogo(**headers_de_producao(forjado="8.8.8.8"))
+            self._entrar(**headers_de_producao(forjado="8.8.8.8"))
         chaves = [
-            CatalogoPublicoThrottle.cache_format % {"scope": "catalogo_publico", "ident": ip}
+            LoginThrottle.cache_format % {"scope": "login", "ident": ip}
             for ip in (IP_VISITANTE, "8.8.8.8")
         ]
         self.assertIsNotNone(cache.get(chaves[0]), "o balde tem que ser o do visitante")
         self.assertIsNone(cache.get(chaves[1]), "o IP forjado não pode virar balde")
+
+    def test_token_no_cabecalho_nao_tira_o_login_do_teto(self):
+        """O `AnonRateThrottle` não conta quem está autenticado. Com
+        `authentication_classes([])` no login, um token válido no cabeçalho não
+        abre uma porta sem teto para chutar senha (TSK-1513)."""
+        cabecalho = {"HTTP_AUTHORIZATION": f"Bearer {token_de(consultor())}"}
+        with self._com_teto("2/hour"):
+            codigos = [self._entrar(**cabecalho).status_code for _ in range(3)]
+        self.assertEqual(codigos, [400, 400, 429])
+
+
+class ThrottlePorPessoaTest(TestCase):
+    """O teto das rotas do consultor é da PESSOA logada (TSK-1513).
+
+    Mesmos scopes e mesmas `LOBBY_RATE_*` de quando elas eram anônimas e
+    contavam por IP; o balde agora é o `pk` de quem está logado. Dois
+    consultores atrás do mesmo IP do escritório não dividem balde, e trocar de
+    IP não reabre o de ninguém.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.ana = consultor("ana@sejaap.com.br")
+        self.bia = consultor("bia@sejaap.com.br")
+
+    def _com_teto(self, classe, scope, rate):
+        return patch.dict(classe.THROTTLE_RATES, {scope: rate})
+
+    def _catalogo(self, pessoa, **meta):
+        return cliente_logado(pessoa).get("/api/catalogo", **meta)
+
+    def test_as_rotas_do_consultor_contam_por_pessoa(self):
+        """Classe e scope de cada rota que fechou: nenhum teto anônimo sobrou."""
+        from apps.catalogo.views import CatalogoView, CobrancaView
+        from apps.categorias_financeiras.views import CategoriasFinanceirasView
+        from apps.contas.throttling import PorPessoaThrottle
+        from apps.departamentos.views import DepartamentosView
+        from apps.dh_avaliacao.views import ValoresView
+        from apps.vendas.views import emitir_comprovante
+
+        esperados = {
+            DepartamentosView: "departamentos_publico",
+            CategoriasFinanceirasView: "categorias_financeiras_publico",
+            ValoresView: "dh_avaliacao_publico",
+            emitir_comprovante.cls: "comprovante",
+        }
+        for visao, scope in esperados.items():
+            with self.subTest(visao=visao.__name__):
+                (teto,) = visao.throttle_classes
+                self.assertTrue(issubclass(teto, PorPessoaThrottle))
+                self.assertEqual(teto.scope, scope)
+        for visao in (CatalogoView, CobrancaView):
+            with self.subTest(visao=visao.__name__):
+                instancia = visao()
+                instancia.request = RequestFactory().get("/")
+                (teto,) = instancia.get_throttles()
+                self.assertIsInstance(teto, PorPessoaThrottle)
+                self.assertEqual(teto.scope, "catalogo_publico")
+
+    def test_cada_pessoa_tem_o_seu_balde_atras_do_mesmo_ip(self):
+        with self._com_teto(CatalogoPublicoThrottle, "catalogo_publico", "2/hour"):
+            codigos_ana = [
+                self._catalogo(self.ana, **headers_de_producao()).status_code for _ in range(3)
+            ]
+            bia = self._catalogo(self.bia, **headers_de_producao()).status_code
+        self.assertEqual(codigos_ana, [200, 200, 429])
+        self.assertEqual(bia, 200)
+
+    def test_trocar_de_ip_nao_reabre_o_balde(self):
+        with self._com_teto(CatalogoPublicoThrottle, "catalogo_publico", "2/hour"):
+            codigos = [
+                self._catalogo(self.ana, **headers_de_producao(visitante=ip)).status_code
+                for ip in (IP_VISITANTE, IP_OUTRO, IP_PUBLICO)
+            ]
+        self.assertEqual(codigos, [200, 200, 429])
+
+    def test_chave_do_throttle_e_a_pessoa_e_nao_o_ip(self):
+        self._catalogo(self.ana, **headers_de_producao())
+        por_pessoa = CatalogoPublicoThrottle.cache_format % {
+            "scope": "catalogo_publico", "ident": self.ana.pk,
+        }
+        por_ip = CatalogoPublicoThrottle.cache_format % {
+            "scope": "catalogo_publico", "ident": IP_VISITANTE,
+        }
+        self.assertIsNotNone(cache.get(por_pessoa))
+        self.assertIsNone(cache.get(por_ip))
+
+    def test_sem_sessao_e_401_antes_do_teto(self):
+        """O DRF confere a permissão antes do teto: quem não entrou leva 401 e
+        não cria balde nenhum (nem por IP)."""
+        with self._com_teto(CatalogoPublicoThrottle, "catalogo_publico", "1/hour"):
+            codigos = [
+                APIClient().get("/api/catalogo", **headers_de_producao()).status_code
+                for _ in range(3)
+            ]
+        self.assertEqual(codigos, [401, 401, 401])
+        self.assertEqual(
+            cache.get(CatalogoPublicoThrottle.cache_format % {
+                "scope": "catalogo_publico", "ident": IP_VISITANTE,
+            }),
+            None,
+        )
+
+    def test_comprovante_nao_vira_oraculo_de_valores(self):
+        """O teto do comprovante existe para ninguém testar valores até achar o
+        que passa na conferência. Recusa (422) gasta o balde igual a aceite, e o
+        balde é de quem vende — não do IP, nem de quem autorizou."""
+        from apps.catalogo.tests_escrita import cria_pessoa
+        from apps.contas.models import Papel
+
+        gerente = cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE)
+        tentativa = venda_de_tabela(valor_total=100000, valor_mensal=8000,
+                                    entrada=12000, cronograma=[8000] * 11)
+        with self._com_teto(ComprovanteThrottle, "comprovante", "3/hour"):
+            codigos = [
+                emite_comprovante(tentativa, vendedor=self.ana, autorizador=gerente,
+                                  **headers_de_producao(visitante=ip)).status_code
+                for ip in (IP_VISITANTE, IP_OUTRO, IP_PUBLICO, IP_VISITANTE)
+            ]
+            # A mesma venda, de tabela e por outra pessoa, passa: o balde da
+            # Ana não é o da Bia, e o gerente não tem balde aqui.
+            bia = emite_comprovante(venda_de_tabela(), vendedor=self.bia).status_code
+        self.assertEqual(codigos, [422, 422, 422, 429])
+        self.assertEqual(bia, 200)
+        self.assertIsNone(cache.get(ComprovanteThrottle.cache_format % {
+            "scope": "comprovante", "ident": gerente.pk,
+        }))
+
+    def test_listas_do_consultor_tambem_contam_por_pessoa(self):
+        from apps.departamentos.throttling import DepartamentosPublicoThrottle
+
+        with self._com_teto(DepartamentosPublicoThrottle, "departamentos_publico", "1/hour"):
+            ana = [cliente_logado(self.ana).get("/api/departamentos").status_code for _ in range(2)]
+            bia = cliente_logado(self.bia).get("/api/departamentos").status_code
+        self.assertEqual(ana, [200, 429])
+        self.assertEqual(bia, 200)
 
 
 @override_settings(AUTH_CENTRAL_ATIVO=True)
@@ -280,12 +424,7 @@ class IpAtribuidoTest(TestCase):
         self.assertEqual(kwargs["ip"], IP_VISITANTE)
 
     def test_comprovante_grava_o_ip_real(self):
-        resposta = self.client.post(
-            "/api/venda/comprovante",
-            venda_de_tabela(),
-            format="json",
-            **headers_de_producao(forjado="8.8.8.8"),
-        )
+        resposta = emite_comprovante(venda_de_tabela(), **headers_de_producao(forjado="8.8.8.8"))
         self.assertEqual(resposta.status_code, 200, resposta.content)
         self.assertEqual(
             ComprovanteVenda.objects.get().ip_emissao, IP_VISITANTE
@@ -295,8 +434,6 @@ class IpAtribuidoTest(TestCase):
         """Antes, o texto do header ia cru para uma coluna de IP."""
         meta = headers_de_producao()
         meta["HTTP_X_FORWARDED_FOR"] = "nao-e-um-ip"
-        resposta = self.client.post(
-            "/api/venda/comprovante", venda_de_tabela(), format="json", **meta
-        )
+        resposta = emite_comprovante(venda_de_tabela(), **meta)
         self.assertEqual(resposta.status_code, 200, resposta.content)
         self.assertEqual(ComprovanteVenda.objects.get().ip_emissao, IP_VISITANTE)

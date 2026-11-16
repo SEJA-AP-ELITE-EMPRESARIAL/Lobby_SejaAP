@@ -19,6 +19,7 @@ from rest_framework.test import APIClient
 from apps.catalogo.models import Categoria, Produto, PublicacaoCatalogo, Vigencia
 from apps.contas import autenticacao_conecta
 from apps.contas.models import Papel, VinculoIdentidade
+from apps.contas.para_testes import cliente_logado
 from apps.contas.tests_assercao import BaseAssercao, ParDeTeste
 from apps.departamentos.servicos import sincronizar
 from apps.departamentos.tests_departamentos import dep
@@ -228,7 +229,7 @@ class CategoriaTest(Base):
         self.assertEqual(resposta.status_code, 200, resposta.content)
         confere(self, resposta.json(), "categoria_200")
         self.assertFalse(Categoria.objects.get(slug="treinamentos").travada)
-        treinamentos = next(c for c in APIClient().get("/api/catalogo").json()["cats"] if c["id"] == "treinamentos")
+        treinamentos = next(c for c in cliente_logado().get("/api/catalogo").json()["cats"] if c["id"] == "treinamentos")
         self.assertNotIn("locked", treinamentos)
 
         vigencia = Vigencia.objects.get(chave="categoria:treinamentos", campo="travada", vigente_ate__isnull=True)
@@ -553,8 +554,8 @@ class VersaoDosDepartamentosTest(Base):
     def test_renomear_departamento_com_categorias_divergentes_muda_a_versao(self):
         sincronizar([dep("1001", "Consultoria", "001.001"), dep("1002", "Comercial", "001.002")])
         self.como("put", "/api/departamentos/configuracao", {"categorias": {"elite": {"modo": "fixo", "codigo": "1002"}}})
-        antes = APIClient().get("/api/departamentos").json()["versao"]
+        antes = cliente_logado().get("/api/departamentos").json()["versao"]
         sincronizar([dep("1001", "Consultoria Elite", "001.001"), dep("1002", "Comercial", "001.002")])
-        depois = APIClient().get("/api/departamentos").json()
+        depois = cliente_logado().get("/api/departamentos").json()
         self.assertNotEqual(depois["versao"], antes)
         self.assertEqual(depois["categorias"]["apn"]["departamentos"][0]["descricao"], "Consultoria Elite")

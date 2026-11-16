@@ -4,7 +4,7 @@ A leitura que o lobby consome, a gravação da aba e a conferência do comprovan
 O FIXO É APLICADO AQUI
 
 Quem diz que um valor está travado é `em_vigor()`, e são dois os lugares que a
-leem: a rota pública (o lobby mostra o campo travado) e a emissão do comprovante
+leem: a rota do consultor (o lobby mostra o campo travado) e a emissão do comprovante
 (`apps.vendas.servicos`, que recusa valor diferente do fixo). Se a regra morasse
 no `index.html`, bastaria um payload montado à mão para vender a Devolutiva por
 outro preço.

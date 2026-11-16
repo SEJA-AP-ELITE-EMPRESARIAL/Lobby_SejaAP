@@ -19,6 +19,7 @@ from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+from apps.contas.para_testes import cliente_logado
 
 from .fonte import URL, CategoriaDaFonte, FonteIndisponivel, listar_categorias
 from .models import CategoriaFinanceira
@@ -288,8 +289,10 @@ class SincronizacaoTest(TestCase):
 
 
 class RotaPublicaTest(TestCase):
+    """A rota do consultor. Anônima até a TSK-1513; agora pede a sessão."""
+
     def setUp(self):
-        self.cliente = APIClient()
+        self.cliente = cliente_logado()
 
     def ler(self):
         return self.cliente.get(ROTA)
@@ -360,7 +363,7 @@ class ComandoTest(TestCase):
             call_command("sincronizar_categorias_financeiras", stdout=saida)
 
         self.assertIn("2 ativas", saida.getvalue())
-        corpo = APIClient().get(ROTA).json()
+        corpo = cliente_logado().get(ROTA).json()
         # Sem depender da ordem: o SQLite do CI e o Postgres de produção ordenam
         # a pontuação diferente.
         self.assertCountEqual(

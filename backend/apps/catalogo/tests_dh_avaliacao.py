@@ -22,6 +22,7 @@ from django.db.utils import IntegrityError
 from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
+from apps.contas.para_testes import cliente_logado
 
 from apps.vendas.models import ComprovanteVenda
 
@@ -233,7 +234,7 @@ class DhAvaliacaoNoCatalogoTest(TestCase):
         )
 
     def _produtos(self):
-        cats = APIClient().get("/api/catalogo").json()["cats"]
+        cats = cliente_logado().get("/api/catalogo").json()["cats"]
         return {p["id"]: p for p in next(c for c in cats if c["id"] == "produtos")["products"]}
 
     def test_sai_com_flow_proprio_e_sem_preco(self):

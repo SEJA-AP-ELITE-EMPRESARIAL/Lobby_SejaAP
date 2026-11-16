@@ -14,6 +14,7 @@ from rest_framework.test import APIClient
 from apps.catalogo.models import Categoria, Produto
 from apps.catalogo.tests_escrita import cria_pessoa
 from apps.contas.models import Papel
+from apps.contas.para_testes import emite_comprovante
 from apps.dh_avaliacao.models import ConfiguracaoValores
 
 from .models import ComprovanteVenda
@@ -71,21 +72,18 @@ class Base(TestCase):
             ordem=1,
         )
 
-    def emitir(self, dados, usuario=None):
-        cliente = APIClient()
-        if usuario:
-            cliente.force_authenticate(user=usuario)
-        return cliente.post("/api/venda/comprovante", dados, format="json")
+    def emitir(self, dados, autorizador=None):
+        return emite_comprovante(dados, autorizador=autorizador)
 
-    def assertRecusa(self, dados, trecho, usuario=None):
-        resposta = self.emitir(dados, usuario=usuario)
+    def assertRecusa(self, dados, trecho, autorizador=None):
+        resposta = self.emitir(dados, autorizador=autorizador)
         self.assertEqual(resposta.status_code, 422, resposta.json())
         self.assertIn(trecho, resposta.json()["erro"])
         self.assertFalse(ComprovanteVenda.objects.exists())
 
 
 class ValorLivreTest(Base):
-    def test_venda_com_os_valores_iniciais_e_assinada_sem_login(self):
+    def test_venda_com_os_valores_iniciais_e_assinada_sem_autorizacao(self):
         resposta = self.emitir(venda_avaliacao())
         self.assertEqual(resposta.status_code, 200, resposta.json())
         comprovante = ComprovanteVenda.objects.get()
@@ -130,8 +128,8 @@ class ValorFixoTest(Base):
     def test_nem_gerente_autorizando_passa_valor_diferente_do_fixo(self):
         fixa(devolutiva=480)
         gerente = cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE)
-        self.assertRecusa(venda_avaliacao(), "fixado pela diretoria", usuario=gerente)
-        self.assertRecusa(venda_avaliacao(negociado=True), "não tem negociação", usuario=gerente)
+        self.assertRecusa(venda_avaliacao(), "fixado pela diretoria", autorizador=gerente)
+        self.assertRecusa(venda_avaliacao(negociado=True), "não tem negociação", autorizador=gerente)
 
     def test_o_fixo_de_uma_modalidade_nao_trava_a_outra(self):
         fixa(devolutiva=450)
@@ -315,15 +313,13 @@ class AbaAntigaDoLobbyTest(Base):
         self.assertRecusa(
             self.venda_elite_do_avaliacoes(negociado=True, valor_total=1200, entrada=1200),
             "agora tem formulário próprio",
-            usuario=gerente,
+            autorizador=gerente,
         )
 
 
 class OutrosFluxosNaoMudamTest(TestCase):
     def test_itens_nao_entram_no_que_o_elite_assina(self):
         """Acrescentar a chave em todo fluxo mudaria o hash das vendas de sempre."""
-        resposta = APIClient().post(
-            "/api/venda/comprovante", venda_de_tabela(itens=[{"modalidade": "x"}]), format="json"
-        )
+        resposta = emite_comprovante(venda_de_tabela(itens=[{"modalidade": "x"}]))
         self.assertEqual(resposta.status_code, 200)
         self.assertNotIn("itens", ComprovanteVenda.objects.get().valores)

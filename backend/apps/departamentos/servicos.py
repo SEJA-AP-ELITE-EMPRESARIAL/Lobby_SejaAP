@@ -15,7 +15,7 @@ pode fazer toda tela aberta achar que a lista mudou.
 O DEPARTAMENTO FIXO (TSK-585)
 
 Quando a diretoria fixa um departamento no `/admin`, quem aplica é ESTE arquivo,
-e não o `index.html`: a rota pública passa a devolver só o fixo, com
+e não o `index.html`: a rota do consultor passa a devolver só o fixo, com
 `modo: "fixo"`. O lobby novo lê o modo e trava o campo. Um lobby com o HTML
 antigo, aberto desde antes do deploy, ignora o modo e mostra uma lista de um item
 só, e continua vendendo certo. Se a regra morasse no front, essa tela seguiria
@@ -26,7 +26,7 @@ que a diretoria fixou ou soltou o campo.
 
 POR CATEGORIA (TSK-1059)
 
-Desde 15/10/2026 a escolha é de cada categoria. A rota pública manda, além do
+Desde 15/10/2026 a escolha é de cada categoria. A rota do consultor manda, além do
 que mandava, `categorias: {slug: {modo, departamentos}}`, e o `index.html` lê a
 da categoria da venda. As chaves de sempre (`modo`, `departamentos`) seguem para
 um lobby com o HTML de antes: quando todas as categorias estão iguais — o caso

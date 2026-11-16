@@ -14,7 +14,7 @@ diretoria decide, na aba DH - Avaliação do `/admin`, é:
 
 - uma linha por gravação, e vale a mais recente. Quem fixou o valor, e desde
   quando, é a própria tabela que responde;
-- quem aplica a trava é o backend, pela rota pública que o lobby lê. Um lobby
+- quem aplica a trava é o backend, pela rota do consultor que o lobby lê. Um lobby
   aberto desde antes da gravação pega a trava na reconsulta seguinte, e um
   payload montado à mão para fugir dela não ganha comprovante. O comprovante só
   segura de verdade quando o n8n fatura pelos itens assinados

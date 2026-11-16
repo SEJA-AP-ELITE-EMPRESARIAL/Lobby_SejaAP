@@ -1,7 +1,7 @@
 """
 O endpoint do catálogo — uma URL, dois métodos, duas permissões.
 
-    GET /api/catalogo   público   — todo consultor, sem credencial
+    GET /api/catalogo   logado    — todo consultor com sessão (TSK-1513)
     PUT /api/catalogo   restrito  — publica a tabela de preços
 
 A URL é a MESMA para os dois, e isso não é negociável: o `index.html:2218` faz
@@ -22,8 +22,11 @@ Regras que não podem se perder na migração:
 - **`Cache-Control: no-store` em tudo.** O front pede `cache: 'no-store'`
   (`index.html:2218`), mas quem garante é a resposta — atrás da Cloudflare, uma
   tabela de preços cacheada na borda é venda fechada com valor errado.
-- **401 derruba a sessão do admin** (`admin.html:228`), então 401 é só para
+- **401 derruba a sessão** (do lobby, desde a TSK-1513), então 401 é só para
   "não autenticado". Autenticado sem permissão de publicar recebe 403.
+
+O GET era anônimo até a TSK-1513 (decisão do dono de 14/11/2026): agora toda
+rota do consultor pede a sessão do Lobby, e o teto da leitura é por pessoa.
 
 O CONECTA (TSK-1059)
 
@@ -37,7 +40,7 @@ seguem aqui para o /admin de hoje até a TSK-1062. A permissão é a mesma nos d
 caminhos: `PodePublicarTabela`, pelo papel do Lobby.
 """
 from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -53,19 +56,19 @@ from .throttling import CatalogoPublicoThrottle
 
 
 class CatalogoView(AceitaAssercao, APIView):
-    """Leitura pública, escrita restrita, no mesmo caminho."""
+    """Leitura de quem está logado, escrita restrita, no mesmo caminho."""
 
     def get_permissions(self):
         if self.request.method == "GET":
-            return [AllowAny()]
+            return [IsAuthenticated()]
         # Publicar a tabela é só da diretoria. Gerente autoriza negociação numa
         # venda — alcance de uma venda; a tabela vale para todas as próximas.
         return [IsAuthenticated(), PodePublicarTabela()]
 
     def get_throttles(self):
-        # Só a leitura anônima precisa de teto por IP. A escrita já é limitada
-        # por exigir credencial — e um teto ali atrapalharia a diretoria
-        # corrigindo um preço errado às pressas.
+        # Só a leitura tem teto (por pessoa, e não para a asserção do Conecta,
+        # que tem a cota dela). A escrita é da diretoria — e um teto ali
+        # atrapalharia corrigir um preço errado às pressas.
         if self.request.method == "GET":
             return [CatalogoPublicoThrottle()]
         return []
@@ -103,8 +106,9 @@ class CatalogoView(AceitaAssercao, APIView):
     def get(self, request):
         """A tabela de preços que o lobby carrega ao abrir.
 
-        Anônimo de propósito: qualquer consultor cota e cadastra sem login. O que
-        exige credencial é NEGOCIAR (alterar valor), e isso não passa por aqui.
+        Qualquer pessoa logada lê, com ou sem papel: cotar e cadastrar é de todo
+        consultor. O que exige papel é NEGOCIAR (alterar valor), e isso não passa
+        por aqui.
         """
         return self._sem_cache(
             Response(
@@ -155,10 +159,11 @@ class CatalogoView(AceitaAssercao, APIView):
 
 
 class CobrancaView(AceitaAssercao, APIView):
-    """A regra de data do cronograma — leitura pública, escrita da diretoria.
+    """A regra de data do cronograma — leitura de quem está logado, escrita da
+    diretoria.
 
-    Leitura pública pelo mesmo motivo do catálogo: o consultor não faz login, e
-    sem a política ele não consegue montar cronograma nenhum. Na prática o
+    Leitura de qualquer pessoa logada pelo mesmo motivo do catálogo: sem a
+    política o consultor não monta cronograma nenhum. Na prática o
     `index.html` lê a política junto do catálogo, num envelope só; esta rota
     existe para a TELA da diretoria, que também precisa das exceções e das opções
     válidas de cada campo.
@@ -170,7 +175,7 @@ class CobrancaView(AceitaAssercao, APIView):
 
     def get_permissions(self):
         if self.request.method == "GET":
-            return [AllowAny()]
+            return [IsAuthenticated()]
         return [IsAuthenticated(), PodePublicarTabela()]
 
     def get_throttles(self):
@@ -242,7 +247,8 @@ class HistoricoView(APIView):
 
     Fechada para a diretoria. Não é dado sensível como senha, mas é a série
     histórica de preço da empresa inteira — e o resto do app não precisa dela
-    para funcionar, então não há motivo para deixá-la anônima como o catálogo.
+    para funcionar, então não há motivo para abri-la a todo consultor como o
+    catálogo.
     """
 
     permission_classes = [IsAuthenticated, PodePublicarTabela]

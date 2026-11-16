@@ -6,11 +6,25 @@ O caminho e o formato da resposta são os que o front já usa
 é `{email, senha}` em vez de `{senha}`. Era senha única compartilhada; passa a
 ser a credencial de cada pessoa no Conecta ID.
 
-    POST /api/sessao   {"email": "...", "senha": "..."}
+    POST /api/sessao   {"email": "...", "senha": "...", "para": "negociacao"?}
       200 { token, exp, nome, email, papel, podeAutorizarNegociacao,
             podePublicarTabela, precisaTrocarSenha }
       401 { erro }   credencial inválida
-      403 { erro }   entrou, mas não pode fazer o que pediu
+      403 { erro }   sem acesso ao app no Conecta; ou, com `para: "negociacao"`
+                     (o modal do gerente), conta sem papel que autorize
+
+DUAS PORTAS, UMA ROTA (TSK-1513)
+
+Desde 14/11/2026 o Lobby inteiro pede login (decisão do dono): toda conta ativa
+do Conecta entra, com ou sem papel, e o login comum devolve 200 a ela — com
+`papel` vazio e `podeAutorizarNegociacao: false` quando é o caso. Ninguém ganha
+permissão por entrar: o primeiro login cria a conta local SEM papel
+(`identidade.py`), salvo o que o acesso cadastrado no Conecta já semeia.
+
+O modal em que o gerente digita a senha para destravar UMA venda manda
+`"para": "negociacao"`, e aí vale a regra de antes: sem papel, 403
+`MSG_SEM_PAPEL`. Sem isso, o token de um consultor qualquer digitado no modal
+"autorizaria" e só levaria o 422 na hora do comprovante, longe de quem errou.
       429 { erro }   bloqueado por tentativas
       503 { erro }   Conecta ID fora do ar
       503 { erro: "manutencao", mensagem, previsao }   login central em
@@ -43,6 +57,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.decorators import (
     api_view,
+    authentication_classes,
     permission_classes,
     throttle_classes,
 )
@@ -138,7 +153,16 @@ def _resposta_manutencao(erro):
     )
 
 
+# As três rotas abertas (entrar, esqueci e definir senha) não autenticam nada:
+# `authentication_classes([])`. Um token vencido no `Authorization` — a aba que
+# ficou aberta de um dia para o outro — daria 401 no JWT antes de a view rodar,
+# e a pessoa não conseguiria entrar de novo justamente por ter estado logada.
+# De quebra, o teto (`AnonRateThrottle`) passa a contar sempre por IP: com um
+# token válido no cabeçalho ele deixaria de contar.
+
+
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 @throttle_classes([LoginThrottle])
 def abrir_sessao(request):
@@ -153,6 +177,8 @@ def abrir_sessao(request):
     dados_entrada = request.data or {}
     email = (dados_entrada.get("email") or "").strip().lower()
     senha = dados_entrada.get("senha") or ""
+    # Só o modal de autorização manda; qualquer outro valor é o login comum.
+    para_negociacao = dados_entrada.get("para") == "negociacao"
     if not email or not senha:
         return _resposta("Informe o e-mail e a senha.", status.HTTP_400_BAD_REQUEST)
 
@@ -184,9 +210,10 @@ def abrir_sessao(request):
         return _resposta(MSG_CREDENCIAL, status.HTTP_401_UNAUTHORIZED)
 
     vinculo = usuario.vinculo_identidade
-    if not vinculo.pode_autorizar_negociacao:
-        # Entrou, mas não pode nada. 403 e não 401, porque 401 derruba a sessão
-        # do admin (`admin.html:228`) e a mensagem precisa ser vista.
+    if para_negociacao and not vinculo.pode_autorizar_negociacao:
+        # Entrou no modal do gerente, mas não autoriza nada. 403 e não 401: o
+        # 401 derruba a sessão no lobby, e a mensagem precisa ser vista no modal.
+        # O login comum de quem não tem papel segue abaixo, com 200 (TSK-1513).
         return _resposta(MSG_SEM_PAPEL, status.HTTP_403_FORBIDDEN)
 
     # O login aceito vale como revalidação, e apaga uma recusa antiga do cache.
@@ -232,6 +259,7 @@ def sessao_atual(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 @throttle_classes([DefinicaoSenhaThrottle])
 def definir_senha(request):
@@ -284,6 +312,7 @@ def definir_senha(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 @throttle_classes([DefinicaoSenhaThrottle])
 def esqueci_senha(request):

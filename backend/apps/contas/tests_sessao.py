@@ -25,6 +25,8 @@ from identidade_client import (
 )
 
 from .models import Papel, VinculoIdentidade
+from .para_testes import cliente_logado
+from .views import MSG_SEM_PAPEL
 
 ID_FULANO = str(uuid.uuid4())
 IDENTIDADE_OK = {
@@ -48,9 +50,9 @@ class LoginTest(TestCase):
         # não houver LOBBY_REDIS_URL.
         cache.clear()
 
-    def entrar(self, email="fulano@sejaap.com.br", senha="segredo"):
+    def entrar(self, email="fulano@sejaap.com.br", senha="segredo", **extra):
         return self.client.post(
-            "/api/sessao", {"email": email, "senha": senha}, format="json"
+            "/api/sessao", {"email": email, "senha": senha, **extra}, format="json"
         )
 
     # ----- caminho feliz -------------------------------------------------
@@ -92,18 +94,75 @@ class LoginTest(TestCase):
         # ~1.7e9 em segundos hoje; em milissegundos passaria de 1e12.
         self.assertLess(corpo["exp"], 10**11)
 
-    def test_primeiro_login_cria_conta_sem_papel_e_recusa(self):
-        """Quem entra pela primeira vez não autoriza nada até ser promovido."""
+    def test_primeiro_login_cria_conta_sem_papel_e_entra(self):
+        """Toda conta ativa do Conecta usa o Lobby (TSK-1513, decisão do dono de
+        14/11/2026): o login comum de quem nunca entrou devolve 200 — e a conta
+        nasce SEM papel. Ninguém ganha permissão por entrar."""
         with patch(ALVO) as Cliente:
             Cliente.return_value.verificar.return_value = IDENTIDADE_OK
             resposta = self.entrar()
 
-        self.assertEqual(resposta.status_code, 403)
-        self.assertIn("não tem permissão", resposta.json()["erro"])
-        # Mas a conta e o vínculo existem, para a diretoria poder promover.
+        self.assertEqual(resposta.status_code, 200, resposta.content)
+        corpo = resposta.json()
+        self.assertTrue(corpo["token"])
+        self.assertEqual(corpo["papel"], "")
+        self.assertFalse(corpo["podeAutorizarNegociacao"])
+        self.assertFalse(corpo["podePublicarTabela"])
         vinculo = VinculoIdentidade.objects.get(identidade_id=ID_FULANO)
         self.assertEqual(vinculo.papel, "")
         self.assertEqual(vinculo.usuario.email, "fulano@sejaap.com.br")
+        self.assertFalse(vinculo.usuario.is_staff)
+
+    def test_primeiro_login_com_a_senha_inicial_avisa_a_troca(self):
+        """O primeiro login é justamente o da senha inicial: o aviso tem de vir
+        já nele, e não só no segundo (o vínculo é lido do cache da relação)."""
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = {**IDENTIDADE_OK, "precisa_trocar_senha": True}
+            resposta = self.entrar()
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(resposta.json()["precisaTrocarSenha"])
+        self.assertTrue(VinculoIdentidade.objects.get(identidade_id=ID_FULANO).precisa_trocar_senha)
+
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = IDENTIDADE_OK
+            resposta = self.entrar()
+        self.assertFalse(resposta.json()["precisaTrocarSenha"])
+
+    def test_sem_papel_no_modal_do_gerente_continua_403(self):
+        """O modal de autorização manda `para: "negociacao"`: ali, sem papel, a
+        recusa de sempre — e nada de token."""
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = IDENTIDADE_OK
+            resposta = self.entrar(para="negociacao")
+
+        self.assertEqual(resposta.status_code, 403)
+        self.assertEqual(resposta.json(), {"erro": MSG_SEM_PAPEL})
+        self.assertNotIn("token", resposta.json())
+
+    def test_gerente_no_modal_do_gerente_entra(self):
+        self._com_papel(Papel.GERENTE)
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = IDENTIDADE_OK
+            resposta = self.entrar(para="negociacao")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(resposta.json()["podeAutorizarNegociacao"])
+
+    def test_outro_para_e_o_login_comum(self):
+        """Só `negociacao` liga a conferência de papel."""
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = IDENTIDADE_OK
+            self.assertEqual(self.entrar(para="qualquer").status_code, 200)
+
+    def test_token_vencido_no_cabecalho_nao_impede_de_entrar(self):
+        """A aba aberta de ontem manda o token velho: entrar não pode dar 401
+        por isso (`authentication_classes([])`)."""
+        with patch(ALVO) as Cliente:
+            Cliente.return_value.verificar.return_value = IDENTIDADE_OK
+            resposta = self.client.post(
+                "/api/sessao", {"email": "fulano@sejaap.com.br", "senha": "x"},
+                format="json", HTTP_AUTHORIZATION="Bearer token.vencido.qualquer",
+            )
+        self.assertEqual(resposta.status_code, 200, resposta.content)
 
     def test_conta_local_nasce_sem_senha_utilizavel(self):
         """Senha local seria uma segunda porta, fora da política central."""
@@ -216,9 +275,10 @@ class CentralDesligadaTest(TestCase):
         self.assertEqual(resposta.status_code, 503)
 
     @override_settings(AUTH_CENTRAL_ATIVO=False)
-    def test_mas_o_catalogo_publico_continua_de_pe(self):
-        """O consultor não pode perder a cotação porque o login caiu."""
-        self.assertEqual(APIClient().get("/api/catalogo").status_code, 200)
+    def test_mas_quem_ja_esta_logado_segue_cotando(self):
+        """Quem já entrou não perde a cotação porque o login caiu. Quem não
+        entrou não entra: desde a TSK-1513 o Lobby inteiro pede a sessão."""
+        self.assertEqual(cliente_logado().get("/api/catalogo").status_code, 200)
 
 
 @override_settings(AUTH_CENTRAL_ATIVO=True)
@@ -259,7 +319,7 @@ class PontaAPontaTest(TestCase):
         token = self._logar(Papel.DIRETORIA)
 
         cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {token}")
-        cats = self.client.get("/api/catalogo").json()["cats"]
+        cats = cliente.get("/api/catalogo").json()["cats"]
         pro = next(p for p in cats[0]["products"] if p["id"] == "pro")
         pro["monthly"] = 14000
 
@@ -278,7 +338,7 @@ class PontaAPontaTest(TestCase):
         cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {token}")
         resposta = cliente.put(
             "/api/catalogo",
-            {"cats": self.client.get("/api/catalogo").json()["cats"]},
+            {"cats": cliente.get("/api/catalogo").json()["cats"]},
             format="json",
         )
         self.assertEqual(resposta.status_code, 403)
@@ -289,7 +349,7 @@ class PontaAPontaTest(TestCase):
 
         token = self._logar(Papel.DIRETORIA)
         cliente = APIClient(HTTP_AUTHORIZATION=f"Bearer {token}")
-        cats = self.client.get("/api/catalogo").json()["cats"]
+        cats = cliente.get("/api/catalogo").json()["cats"]
         next(p for p in cats[0]["products"] if p["id"] == "evo")["monthly"] = 31000
         cliente.put("/api/catalogo", {"cats": cats}, format="json")
 

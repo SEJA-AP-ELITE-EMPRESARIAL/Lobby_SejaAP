@@ -2,8 +2,9 @@
 O Redis do cache `default` não pode derrubar a venda (TSK-1059).
 
 Com `LOBBY_REDIS_URL` ligado, o cache `default` vira Redis — e é dele que o DRF
-lê e grava o contador de TODO throttle, inclusive o das rotas anônimas do
-consultor (`GET /api/catalogo`, `/api/departamentos`, o comprovante da venda).
+lê e grava o contador de TODO throttle, inclusive o das rotas do consultor
+(`GET /api/catalogo`, `/api/departamentos`, o comprovante da venda — por pessoa
+desde a TSK-1513).
 O `RedisCache` do Django levanta exceção quando o Redis não responde, e o
 throttle não a trata: um Redis reiniciando viraria 500 no lobby de todo
 consultor, por causa de um CONTADOR.

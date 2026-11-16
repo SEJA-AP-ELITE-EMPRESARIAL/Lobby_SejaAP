@@ -24,6 +24,7 @@ from rest_framework.test import APIClient
 
 from apps.catalogo.tests_escrita import cria_pessoa
 from apps.contas.models import Papel
+from apps.contas.para_testes import cliente_logado
 
 from .models import ConfiguracaoDepartamento
 from .servicos import sincronizar
@@ -50,7 +51,7 @@ class Base(TestCase):
         self.cliente.force_authenticate(user=self.diretoria)
 
     def publico(self):
-        return APIClient().get("/api/departamentos").json()
+        return cliente_logado().get("/api/departamentos").json()
 
     def salva(self, corpo):
         return self.cliente.put(ROTA, corpo, format="json")
@@ -230,7 +231,7 @@ class MigracaoDeDadoTest(TransactionTestCase):
             self.assertEqual(copia.copiada_de_id, original.pk)
 
         # O consultor vê o mesmo que via, com a mesma versão.
-        corpo = APIClient().get("/api/departamentos").json()
+        corpo = cliente_logado().get("/api/departamentos").json()
         self.assertEqual(corpo["modo"], "fixo")
         self.assertEqual(corpo["versao"], versao_de_antes([("2", "2.Comercial", "001.009")], fixo=True))
 
