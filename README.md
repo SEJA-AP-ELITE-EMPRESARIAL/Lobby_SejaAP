@@ -26,15 +26,17 @@ reais da página de pré-contrato.
 | `assets/logo-sejaap.svg` | Logo (também já embutido inline na página funcional). |
 | `support.js` | Runtime do protótipo DC (só usado pelo `.dc.html`). |
 
-## O lobby é anônimo — a negociação não
+## Login para usar, papel para negociar
 
-Esta é a regra que atravessa o projeto inteiro:
+Esta é a regra que atravessa o projeto inteiro (desde a TSK-1513, decisão do dono
+de 14/11/2026; até então o lobby era anônimo):
 
-> **Qualquer consultor abre, navega, cota, cadastra e envia a venda sem nenhuma
-> credencial.** Não existe tela de login no lobby, e nenhuma rota do fluxo de
-> cadastro pode passar a exigir uma.
+> **Toda conta ativa do Conecta entra no Lobby e cota, cadastra e envia a venda.**
+> Quem abre `lobby.sejaap.com.br` sem sessão vê a tela de login (e-mail e senha
+> do Conecta, com "esqueci minha senha") antes de qualquer coisa. Entrar não dá
+> permissão nenhuma: o primeiro login cria a conta local **sem papel**.
 
-O que exige credencial é **negociar** — alterar valor de produto ou cronograma de
+O que exige **papel** é **negociar** — alterar valor de produto ou cronograma de
 parcelas — e **publicar a tabela de preços**. São coisas diferentes, com pessoas
 diferentes e mecanismos diferentes:
 
@@ -43,15 +45,48 @@ diferentes e mecanismos diferentes:
 | **Valor de tabela** | O preço padrão que todo consultor vê. | **Diretoria** | Admin Lobby do Conecta | Login do Conecta; o Lobby atende pela asserção (ver *Administração pelo Conecta*). |
 | **Valor negociado** | O desconto de UMA venda. Não altera a tabela. | **Gerente** ou diretoria | No próprio lobby | Autorização pontual, **válida só para aquela venda**. |
 
-### Por que a autorização de negociação não é sessão
+### Por que a autorização de negociação não é a sessão
 
 O gerente digita a credencial **no aparelho do consultor**, no meio de um
-atendimento. Uma sessão de horas significaria que a primeira autorização do dia
+atendimento. Valer pela sessão significaria que a primeira autorização do dia
 libera todas as vendas seguintes naquele tablet, sem ninguém perceber.
 
 Por isso ela vive só na memória da página e morre ao: enviar o cadastro, trocar
 de produto, voltar ao lobby, ou clicar em "Encerrar autorização". Recarregar a
-página também encerra — não há nada no `sessionStorage`.
+página também encerra — a autorização nunca vai ao `sessionStorage` (a sessão de
+quem vende vai; ver *A sessão do Lobby*, abaixo).
+
+**Gerente ou diretoria logado** autoriza com a própria sessão, mas por uma ação
+explícita: o modal oferece "Autorizar com a minha conta", e a autorização segue
+presa àquela venda. Estar logado como gerente não destrava nada sozinho. Quem não
+autoriza continua chamando o gerente, que digita a senha no modal (o pedido vai
+com `"para": "negociacao"`, e conta sem papel recebe o 403 de sempre).
+
+### A sessão do Lobby (TSK-1513)
+
+- **Onde fica:** `sessionStorage` da aba, com `{token, exp, nome, email, papel,
+  podeAutorizarNegociacao}`. Fechar a aba encerra; o tablet do balcão não
+  amanhece no nome de quem vendeu ontem. Dura o `LOBBY_JWT_MINUTOS` (480).
+- **Ao abrir:** conferida pelo `exp` e por `GET /api/sessao/atual` (que também
+  traz o papel de hoje). Vencida ou derrubada, volta à tela de login com o motivo
+  ("Sua sessão expirou", ou a frase do servidor).
+- **Toda chamada à API** leva o `Authorization` (`apiFetch` no `index.html`). O
+  401 derruba a sessão e volta ao login; rede e 5xx não: o lobby segue com o
+  catálogo embutido e a venda sem comprovante, como sempre. Antes de CNPJ, CEP e
+  Pix (webhooks do n8n chamados direto pelo navegador), o lobby confere a sessão
+  em `/api/sessao/atual`, e só o 401 barra. O token nunca vai aos webhooks.
+- **Sair** limpa a sessão, a autorização e a venda. Sair (ou cair) com uma venda
+  a caminho descarta o que estava pendente: o comprovante que volta depois não
+  vai ao n8n. Se a sessão caiu e a **mesma** pessoa entra de novo, a venda volta
+  como estava; se entra **outra**, o atendimento recomeça do zero.
+- **Rotas abertas** (sem sessão): só `POST /api/sessao`, `senha/esqueci` e
+  `senha/definir` — e as que têm credencial própria: `/api/venda/validar` (o
+  segredo do n8n), `/api/integracao/*` (a asserção do Conecta), `/metrics` (o
+  token do Prometheus) e `/saude` (o healthcheck, sem caminho público). O resto
+  responde 401 sem sessão; o teste `SuperficieAbertaTest` varre a tabela de rotas.
+- **Sair não revoga o token no servidor** (JWT, sem lista de revogação, como já
+  era o `/admin`): ele some do aparelho, e no servidor vale até o `exp` ou até o
+  Conecta desativar a pessoa.
 
 ### Quem confere a senha
 
@@ -64,11 +99,12 @@ acesso é binário, e quem guarda permissão de negócio é cada sistema.
 
 #### Dar acesso a alguém — dois passos, nesta ordem
 
-**1.** Libere a pessoa para o app `lobby` **no login central**: hoje o admin do
-Conecta ID; depois da virada (TSK-1220), o /admin do Conecta, por SuperAdmin. Sem
-isso o comando abaixo não encontra ninguém — e está certo: quem cria login e
-concede acesso é o login central, e nenhum app faz isso (decisão do dono de
-23/10/2026; o cliente 1.5 nem tem mais esses métodos).
+**1.** A pessoa precisa entrar no Lobby pelo **login central**. Desde a TSK-1512
+(Conecta) o app `lobby` está marcado lá como **"aberto a toda conta ativa"**: todo
+`Usuario` ativo do Conecta entra, sem acesso cadastrado um a um. Quem cria login
+é o Conecta, e nenhum app faz isso (decisão do dono de 23/10/2026; o cliente 1.5
+nem tem mais esses métodos). O primeiro login cria a conta local, sem papel —
+sem ele o comando abaixo não encontra ninguém.
 
 **2.** Dê o papel, aqui:
 
@@ -98,16 +134,19 @@ Cliente 1.5 (`backend/identidade_client.py`, cópia do Conecta — não se edita
 aqui), desde a TSK-1238:
 
 - **Desativar a pessoa** (ou revogar o acesso dela ao Lobby) no login central
-  derruba a autorização já emitida em até 5 minutos: o token é conferido de novo
-  a cada requisição (`apps/contas/autenticacao.py`, `JWTRevalidado`), com a
-  resposta guardada por 5 minutos por pessoa. A venda negociada volta a pedir
+  derruba a sessão e a autorização já emitidas em até 5 minutos: o token é
+  conferido de novo a cada requisição (`apps/contas/autenticacao.py`,
+  `JWTRevalidado`), com a resposta guardada por 5 minutos por pessoa. No lobby, a
+  próxima ação volta à tela de login com a frase do servidor ("Sessão
+  encerrada."); a venda negociada com a autorização de quem caiu volta a pedir
   autorização. O mesmo vale para a sessão do `/django-admin/`.
 - **Login central fora do ar ou em manutenção nunca derruba** quem já está
-  autorizado.
+  logado ou autorizado.
 - **Em manutenção**, o login, o esqueci e o definir senha respondem `503
-  {erro: "manutencao", mensagem, previsao}`, e as telas mostram
-  "Temporariamente indisponível / Em manutenção", com o texto do aviso e a
-  previsão de volta. A venda a preço de tabela segue, porque não depende de login.
+  {erro: "manutencao", mensagem, previsao}`, e as telas (a de login do lobby
+  inclusive) mostram "Temporariamente indisponível / Em manutenção", com o texto
+  do aviso e a previsão de volta. Quem já está logado segue vendendo; quem não
+  está espera o login voltar.
 
 #### Rotacionar a chave de aplicação
 
@@ -118,14 +157,16 @@ que o login funciona e **só então** revogue a antiga. Detalhe em
 [`deploy/RUNBOOK.md`](deploy/RUNBOOK.md).
 
 > **Não edite mais preços no `index.html`.** O array `CATS` lá continua existindo,
-> mas é só uma **rede de segurança**: se a API estiver fora do ar, o lobby abre com
-> aqueles valores em vez de quebrar no meio de um evento. A fonte de verdade é o banco.
+> mas é só uma **rede de segurança**: se a API falhar depois do login (rede, 5xx),
+> o lobby abre com aqueles valores em vez de quebrar no meio de um evento. A fonte
+> de verdade é o banco. (Limitação aceita na TSK-1513: com isso a tabela segue
+> legível no código-fonte da página, mesmo sem login.)
 
 ### Como o catálogo chega na página
 
 ```text
 index.html  --GET /api/catalogo-->  Postgres `lobby` (db-sejaap, via túnel SSH)
-   (anônimo)                                   ^
+ (com a sessão)                                ^
                                                |  POST /api/integracao/... (asserção)
                                         Admin Lobby do Conecta
 ```
@@ -147,7 +188,7 @@ cliente. A lista é do Omie e muda sem deploy, por isso não mora no `index.html
 ```text
 Omie ──ListarDepartamentos──► lobby-departamentos (laço, a cada 1 h) ──► Postgres `lobby`
                                                                               │
-index.html ◄──── GET /api/departamentos (anônimo, só os ativos) ──────────────┘
+index.html ◄──── GET /api/departamentos (com a sessão, só os ativos) ─────────┘
 ```
 
 - **O navegador nunca fala com o Omie.** A chave de lá (`OMIE_APP_KEY` /
@@ -193,7 +234,7 @@ no payload), porque "categoria" já é o card do catálogo — a própria APN é
 ```text
 Omie ──ListarCategorias──► lobby-categorias (laço, a cada 1 h) ──► Postgres `lobby`
                                                                        │
-index.html ◄── GET /api/categorias-financeiras (anônimo, só as ativas) ──┘
+index.html ◄── GET /api/categorias-financeiras (sessão, só as ativas) ───┘
 ```
 
 O desenho é o do departamento, item por item: o navegador nunca fala com a
@@ -210,7 +251,8 @@ fixa (`ConfiguracaoCategoriaFinanceira`, uma linha por gravação). O que muda:
   só as categorias sob `CATEGORIAS_FINANCEIRAS_PREFIXOS` (padrão `1.10`, o grupo
   "APN", com uma categoria por turma: "APN 107 FLORIANÓPOLIS"…), sem a
   totalizadora. Turma nova criada no Omie debaixo do grupo aparece sozinha. A
-  rota é anônima, então o resto do plano de contas não vai para o navegador.
+  rota é de todo consultor logado, então o resto do plano de contas não vai para
+  o navegador.
   Mesma chave dos departamentos (`OMIE_APP_KEY`/`OMIE_APP_SECRET`).
 - Para sincronizar na hora:
   `docker exec lobby-backend python manage.py sincronizar_categorias_financeiras`.
@@ -230,7 +272,7 @@ do `/admin`, com que valor cada modalidade abre e se ele fica **fixo**:
 ```text
 admin.html ──PUT /api/dh-avaliacao/valores/configuracao (diretoria)──► ConfiguracaoValores
                                                                           │ (uma linha por gravação)
-index.html ◄── GET /api/dh-avaliacao/valores (anônimo) ───────────────────┘
+index.html ◄── GET /api/dh-avaliacao/valores (com a sessão) ──────────────┘
 ```
 
 - É o desenho do departamento fixo: cada gravação é uma linha nova, com autor e
@@ -266,6 +308,10 @@ com o papel que ela tem **aqui**: só a diretoria publica, como no `/admin`.
 - **Sem a chave pública, ou sem Redis em produção, fica desligada** (503
   `INTEGRACAO_DESLIGADA`) — e só para quem manda o cabeçalho. O consultor não
   percebe nada.
+- **Cotas separadas** (TSK-1513): a chamada pela asserção gasta só a cota da
+  integração, por pessoa; a leitura do catálogo pela sessão do lobby gasta só a
+  do consultor (`LOBBY_RATE_CATALOGO`, também por pessoa). Abrir o Admin Lobby não
+  tira o catálogo de ninguém.
 - **Redis recém-reiniciado fecha por até 130 s** (503 `INTEGRACAO_REINICIANDO`), a
   contar do primeiro uso: o Redis não persiste, e a janela cobre a vida de uma
   asserção usada antes do reinício. Passa sozinha; o Admin Lobby pede para tentar
@@ -313,7 +359,9 @@ python -m venv .venv && ./.venv/Scripts/pip install -r requirements.txt   # Linu
 ```
 
 Sem `.env`, sobe com SQLite e `DEBUG=true` — o suficiente para mexer em tudo menos
-no login, que precisa de um Conecta ID alcançável (`AUTH_CENTRAL_ATIVO`).
+no login, que precisa de um Conecta ID alcançável (`AUTH_CENTRAL_ATIVO`). Desde a
+TSK-1513 o lobby inteiro pede login: sem o Conecta, a página para na tela de
+login (a suíte simula o Conecta, nunca o chama).
 
 A stack completa, igual à de produção:
 
@@ -332,8 +380,11 @@ roda também o `JtiEntreProcessosTest` (o `jti` repetido entre dois processos); 
 ele, esses 3 testes são pulados. **A suíte esvazia o Redis** (`cache.clear()` é
 FLUSHDB): só aponte para um descartável.
 
-Servir só o HTML (`npx serve .`) continua funcionando para mexer em layout: o lobby
-cai no catálogo embutido e a edição de valores fica indisponível.
+Servir só o HTML (`npx serve .`) mostra só a tela de login desde a TSK-1513: sem
+backend não há como entrar. Para mexer no layout do lobby, suba o backend (com um
+Conecta alcançável) ou ponha à mão uma sessão no `sessionStorage` da aba
+(`lobby.sessao`, ver *A sessão do Lobby*): com a API fora, o lobby abre com o
+catálogo embutido.
 
 ## Integrações (webhooks n8n)
 
@@ -342,7 +393,8 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 
 - **CNPJ** — `POST https://n8n.sejaap.com.br/webhook/brasilapi-cnpj` → `{ cnpj, cnpj_formatado }`
 - **CEP** — `POST https://n8n.sejaap.com.br/webhook/busca-cep` → `{ cep, cep_formatado }`
-- **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `protocolo`, `departamento`, `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata`. Erros de negócio voltam em `faultstring`.
+- **Todos os quatro envios** (Cadastro, APN, DH e DH - Avaliação) levam, desde a TSK-1513, o campo novo **`enviado_por: {nome, email}`** — quem estava logado, da sessão conferida pelo backend. Nenhum campo de antes saiu, inclusive `autorizado_por` e os três do comprovante. É montado no navegador como o resto do payload, e o n8n não o confere (limitação aceita). O token da sessão nunca vai aos webhooks.
+- **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `protocolo`, `departamento`, `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata` (e `enviado_por`). Erros de negócio voltam em `faultstring`.
 - **Venda APN** — `POST https://n8n.sejaap.com.br/webhook/lobby-apn` → payload próprio (sem cronograma nem destino), com o mesmo bloco `departamento` e, desde a TSK-877, a `categoria_financeira`.
   - `departamento` — `{ codigo, descricao, estrutura }` como está no Omie, ou `null` quando a lista não pôde ser carregada. O `codigo` é o que o Omie entende. **Os fluxos do n8n ainda não o leem:** até alguém mapear o campo do lado de lá, ele viaja e é ignorado.
   - `categoria_financeira` — só na APN: `{ codigo, descricao }` como o Omie os tem (o `codigo` do plano de contas, ex.: `1.10.99`), ou `null` quando o campo não apareceu (nenhuma sincronização ainda) ou a lista não pôde ser carregada. Não confundir com `categoria`, que é o card do catálogo (`{ id: "apn", nome: "APN" }`). **Também não é lida pelo n8n** até alguém mapear o campo.
@@ -353,7 +405,7 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
   - `itens`: um por modalidade com quantidade > 0 — `modalidade` (`relatorio`/`devolutiva`), `quantidade` (inteiro), `valor_unitario` (número), `observacoes`;
   - `pagamento`: `forma` (`pix`, `cartao` ou `boleto`), `parcelas` (inteiro; > 1 só no cartão, até 12), `data` (`AAAA-MM-DD`, vencimento da 1ª parcela).
   - Documento, CPF e CEP vão **mascarados** (`11.222.333/0001-81`, `529.982.247-25`, `88010-000`), como o lobby já manda nos outros fluxos.
-  - A mais, só as três chaves do comprovante, como no DH: `comprovante`, `comprovante_valores` (com os `itens` assinados) e `comprovante_erro`.
+  - A mais, só as três chaves do comprovante, como no DH: `comprovante`, `comprovante_valores` (com os `itens` assinados) e `comprovante_erro` — e, desde a TSK-1513, o `enviado_por`.
   - **Quem construir o fluxo no n8n:** o `/api/venda/validar` confere os itens de `comprovante_valores`, não os do topo. Fature a partir de `comprovante_valores.itens`, ou compare os dois antes e **bloqueie** a venda quando divergirem (não é caso de conferência: é payload adulterado) — ver [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md).
 - **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `adiantamento_calculado`, `adiantamento_negociado`, `data_pagamento`, `tipo_pagamento`), mais `totais` (com `percentual_adiantamento`), `autorizado_por` e o `comprovante`. O adiantamento é **50% do salário de referência**, calculado pelo formulário e travado — só a autorização de um gerente/diretoria (Conecta ID) libera a edição, e ela vale só para aquela venda.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
@@ -374,8 +426,9 @@ Hoje o servidor **assina** os valores antes do envio:
 
 ```text
 navegador ──POST /api/venda/comprovante──► Lobby   (assina se os valores se sustentam:
-          ◄──── { comprovante, expira_em } ────┘    ou batem com a tabela, ou vêm com
-                                                     a credencial de quem autorizou)
+  Authorization: Bearer <sessão de quem vende>      ou batem com a tabela, ou vêm com
+  X-Lobby-Autorizacao: Bearer <quem autorizou>      a credencial de quem autorizou)
+          ◄──── { comprovante, expira_em } ────┘
 navegador ──POST──► webhook do n8n         (o comprovante vai junto no payload)
 n8n ──POST /api/venda/validar──► Lobby     (confere a assinatura, confere que os
                                             valores não mudaram, consome o nonce)
@@ -383,6 +436,14 @@ n8n ──POST /api/venda/validar──► Lobby     (confere a assinatura, conf
 
 Fecha três coisas: **forjar** (precisa da chave), **reusar** (nonce de uso único) e
 **adulterar** (a assinatura cobre o hash dos valores). Validade de 15 minutos.
+
+Desde a TSK-1513 a rota pede a **sessão de quem vende** (`Authorization`). O token
+de **quem autorizou** a negociação vai noutro cabeçalho, `X-Lobby-Autorizacao`, e
+é ele — nunca a sessão — que vira o `autorizado_por` do comprovante: token ruim,
+vencido ou de quem o Conecta desativou é "sem autorização" (o 422 de sempre). O
+401 da sessão **para** a venda e leva ao login; ela nunca vai ao n8n sem
+comprovante por causa disso. O teto (`LOBBY_RATE_COMPROVANTE`) é por pessoa, para
+o endpoint não virar oráculo de valores.
 
 > ⚠️ **O efeito só existe depois do n8n.** Enquanto o fluxo não chamar
 > `/api/venda/validar`, a assinatura é emitida e ignorada. Passo a passo em
@@ -411,8 +472,8 @@ fazia por lá ficava registrado com autor e período:
 | **Histórico** | O que valeu, de quando até quando — e, abaixo, cada publicação com quem apertou o botão e o que mudou. |
 
 - **Preços e datas:** no **Admin Lobby do Conecta**, com a credencial da diretoria. Não mexa no
-  `CATS` nem nas constantes do `index.html` (veja *O lobby é anônimo — a
-  negociação não*, acima).
+  `CATS` nem nas constantes do `index.html` (veja *Login para usar, papel para
+  negociar*, acima).
 - **Categorias novas, ou destravar uma:** ainda pelo **`/django-admin/`**, sem
   deploy — desmarque *em implementação*. A APN é a única CATEGORIA com `fluxo`
   preenchido, o que a torna somente leitura para o `/admin` e manda o consultor
@@ -528,8 +589,16 @@ do navegador, `lobbyErroDeTesteGlitchtip()`. Roteiro em
 
 ### Se o backend cair
 
-O lobby **continua de pé**. O nginx resolve o backend a cada requisição (não na
-inicialização), então ele sobe e serve o HTML mesmo sem a API; o `/api/catalogo`
-devolve 502, o `boot()` captura e a página abre com o catálogo embutido. O consultor
-segue cotando a preço de tabela — só não consegue negociar, porque não há como
-autorizar.
+O nginx resolve o backend a cada requisição (não na inicialização), então ele sobe
+e serve o HTML mesmo sem a API. Desde a TSK-1513, o que isso dá depende de quem já
+estava logado:
+
+- **Quem já tinha a sessão aberta segue vendendo.** O `/api/catalogo` devolve 502,
+  o lobby captura e abre com o catálogo embutido; a venda sai sem comprovante (a
+  regra degradada de sempre). Só não consegue negociar, porque não há como
+  autorizar.
+- **Quem não tinha não entra**: o login passa pelo backend. A tela de login diz
+  "não foi possível entrar" até a API voltar.
+
+O healthcheck do compose bate no `/saude` (TSK-1513), que confere o Django e o
+banco sem sessão; antes era o `GET /api/catalogo`, que agora pede login.

@@ -77,9 +77,10 @@ docker exec identidade-api python manage.py cadastrar_aplicacao lobby \
 **Sem `--gestao`.** Dar gestão ao Lobby significaria dar a ele leitura da base
 inteira de identidades da empresa. O segredo aparece **uma única vez** — guarde.
 
-Depois, conceda acesso ao app `lobby` a cada pessoa que vai negociar ou publicar
-(admin do Conecta ID ou `POST /api/v1/acessos` pelo kanban). Quem não tem acesso
-recebe uma mensagem própria no login, não "senha incorreta".
+Depois, marque o app `lobby` como **"aberto a toda conta ativa"** no Conecta
+(TSK-1512): desde a TSK-1513 todo uso do Lobby pede a conta do Conecta, e sem a
+marca só entra quem tiver acesso cadastrado um a um. Quem não tem acesso recebe
+uma mensagem própria no login, não "senha incorreta".
 
 ### 4. `.env`
 
@@ -442,6 +443,8 @@ triplo — e são os do `.env.example`:
 Esquecer este passo não quebra nada na hora, mas aperta 3× de uma vez: num evento
 com vários consultores atrás do mesmo IP, o catálogo responde 429 e o `index.html`
 cai no catálogo EMBUTIDO — vende com preço possivelmente velho, sem erro na tela.
+(Desde a TSK-1513 os tetos das rotas do consultor são por pessoa, e o IP do
+escritório não é mais um balde só; ver [Login para todo uso](#login-para-todo-uso-tsk-1513-o-conecta-primeiro).)
 O padrão do código (`settings.py`) segue o antigo; quem manda é o `lobby.env`.
 O de definir senha é baixo de propósito: se quiser o teto exato de 20/hora, deixe
 `LOBBY_RATE_DEFINIR_SENHA=20/hour`.
@@ -681,25 +684,90 @@ Nada mais muda; a rota de diagnóstico continua respondendo 500, só sem o envio
 escrito pelo container), então o console mostra um erro de script ou de tipo
 MIME nessa URL. É inofensivo: a página segue e nada é enviado.
 
+### Login para todo uso (TSK-1513): o Conecta primeiro
+
+Desde a TSK-1513 (decisão do dono de 14/11/2026) o Lobby pede a conta do Conecta
+para qualquer uso: quem abre sem sessão vê a tela de login, e catálogo,
+departamentos, categorias, valores do DH - Avaliação e comprovante respondem 401
+sem sessão. O papel (`gerente`, `diretoria`) continua sendo daqui e só destrava
+negociação e publicação. Sem migration.
+
+**A ordem importa, e o Conecta vem primeiro:**
+
+1. **No Conecta, o app `lobby` marcado "aberto a toda conta ativa"** (TSK-1512,
+   já no ar do lado de lá). Confira a marca ANTES de subir este Lobby. Sem ela,
+   quem não tem acesso cadastrado ao `lobby` leva "Sua conta não tem acesso ao
+   Lobby" no login — e, desde esta tarefa, fica de fora do Lobby inteiro, não só
+   da negociação.
+2. **Front e backend juntos**, roteiro [Front + backend](#front--backend):
+   `sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build`.
+   Nunca o front sozinho: o `index.html` novo com o backend velho recusaria (403)
+   o login de toda conta sem papel. E a aba aberta ANTES do deploy roda o
+   `index.html` velho contra o backend novo: o catálogo leva 401 e ela cai no
+   embutido, e o comprovante leva 401 e a venda sai para o n8n sem ele
+   (`comprovante_erro: "http_401"`, a regra degradada de antes). Avise para
+   recarregarem a página: o HTML é `no-cache`, e a recarga já abre o login.
+
+**O que muda no compose:** só o healthcheck do backend. Ele batia no `GET
+/api/catalogo`, que agora responde 401 sem sessão e deixaria o backend
+`unhealthy` para sempre; passou ao `GET /saude`, que confere o Django e o banco
+sem sessão e fica fora de `/api/` (o nginx do container não o encaminha: em
+`lobby.sejaap.com.br/saude` quem responde é o `index.html`).
+
+**Conferir:**
+
+```bash
+sudo docker compose ps                                     # backend healthy (o healthcheck agora é o /saude)
+curl -s -H 'X-Forwarded-Proto: https' http://127.0.0.1:8096/saude                      # {"ok": true}
+for r in catalogo departamentos categorias-financeiras dh-avaliacao/valores sessao/atual; do
+  curl -s -o /dev/null -w "$r %{http_code}\n" https://lobby.sejaap.com.br/api/$r      # 401 em todas
+done
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '{}' \
+  https://lobby.sejaap.com.br/api/sessao                                               # 400: responde sem sessão
+```
+
+Depois, numa janela anônima: a tela de login aparece, e nada do catálogo. Entre
+com uma conta **sem papel**: o lobby abre, cota e envia; "Editar valor" continua
+pedindo o gerente. O payload que chega ao n8n traz o campo novo `enviado_por:
+{nome, email}` (o n8n o ignora até alguém mapeá-lo; nenhum campo de antes saiu).
+
+**Os tetos.** `LOBBY_RATE_CATALOGO`, `_DEPARTAMENTOS`, `_CATEGORIAS_FINANCEIRAS`,
+`_DH_AVALIACAO` e `_COMPROVANTE` passaram a contar **por pessoa** (antes, por IP),
+com os mesmos valores do `lobby.env` — folgados agora, porque o escritório não
+divide mais um balde. A asserção do Conecta não conta neles (tem a cota dela).
+`LOBBY_RATE_LOGIN` e `_DEFINIR_SENHA` seguem por IP. Se quiser apertar, olhe o log
+de 429 primeiro.
+
+**Voltar:** sem migration, é só a imagem de antes, front e backend juntos
+(`git checkout --detach <SHA de antes>` e `sudo docker compose up -d --build`).
+A marca do `lobby` no Conecta pode ficar: com o Lobby velho, quem não tem papel
+continua recebendo o 403 de sempre no modal.
+
 ## Verificações
 
 ```bash
 sudo docker compose ps                                                           # backend, frontend e redis healthy + db-tunnel, departamentos e categorias running
 sudo docker compose logs --tail 3 departamentos                                  # "Departamentos sincronizados: N ativos…"
-curl -s https://lobby.sejaap.com.br/api/departamentos | head -c 200              # JSON público, só os ativos
 sudo docker compose logs --tail 3 categorias                                     # "Categorias financeiras sincronizadas: N ativas…"
-curl -s https://lobby.sejaap.com.br/api/categorias-financeiras | head -c 200     # JSON público, só as turmas da APN (grupo 1.10)
-curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/            # 200
-curl -s https://lobby.sejaap.com.br/api/catalogo | head -c 200                   # JSON público
+curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/            # 200 (a tela de login)
+curl -s -H 'X-Forwarded-Proto: https' http://127.0.0.1:8096/saude                # {"ok": true} — o healthcheck
+curl -s -o /dev/null -w '%{http_code}\n' https://lobby.sejaap.com.br/api/catalogo # 401: pede sessão (TSK-1513)
 curl -s -o /dev/null -w '%{http_code}\n' -X PUT https://lobby.sejaap.com.br/api/catalogo  # 401
 ```
+
+As listas e o catálogo pedem sessão desde a TSK-1513. Para ler o que o consultor
+recebe (departamentos, categorias da APN, o catálogo), entre no lobby ou leia pelo
+backend: `sudo docker compose exec backend python manage.py shell -c "from
+apps.departamentos.servicos import estado_publico; print(estado_publico())"`.
 
 Com migration nova, confirme também que ela subiu. Aqui o `exec` é o certo — o
 container que está no ar já é o da imagem nova:
 
 ```bash
 sudo docker compose exec backend python manage.py showmigrations catalogo vendas | tail -5
-curl -s https://lobby.sejaap.com.br/api/catalogo | head -c 300    # o campo novo aparece?
+# o campo novo aparece? (o catálogo pede sessão desde a TSK-1513: leia pelo backend)
+sudo docker compose exec backend python manage.py shell -c \
+  "from apps.catalogo.views import CatalogoView; import json; print(json.dumps(CatalogoView._cats())[:300])"
 ```
 
 A segunda linha vale mais que a primeira: `showmigrations` diz o que a tabela
@@ -716,8 +784,13 @@ Se der `0`, foi cache do navegador que enganou você ou o `--build` não pegou. 
 `/` responde `Cache-Control: no-cache` e a Cloudflare devolve `cf-cache-status:
 DYNAMIC`, então HTML velho no `curl` é problema de servidor, não de borda.
 
-O `GET /api/catalogo` **tem que continuar anônimo** — é a primeira chamada de toda
-venda. Se ele passar a pedir credencial, o lobby quebra para todo consultor em campo.
+O `GET /api/catalogo` **pede a sessão** desde a TSK-1513 (até então tinha de ser
+anônimo, e esta linha dizia isso). Abertas, sem sessão, ficam só as rotas de entrar
+e de senha (`/api/sessao`, `senha/esqueci`, `senha/definir`) — mais as de
+credencial própria: `/api/venda/validar`, `/api/integracao/*`, `/metrics` e o
+`/saude` do healthcheck. O teste `SuperficieAbertaTest` varre a tabela de rotas:
+rota nova que nascer aberta quebra a suíte. Se o healthcheck voltar a bater numa
+rota do consultor, o backend fica `unhealthy` para sempre.
 
 ## Monitoramento
 
@@ -755,15 +828,18 @@ ninguém confere).
 
 ## Incidentes
 
-**Conecta ID fora do ar** → ninguém autoriza negociação e ninguém entra no `/admin`.
-O lobby continua vendendo a preço de tabela. O login responde **503**, nunca "senha
-incorreta" — se todo mundo lesse "senha incorreta" ao mesmo tempo, a leitura natural
-seria vazamento de credenciais.
+**Conecta ID fora do ar** → ninguém novo entra no lobby, ninguém autoriza negociação
+e ninguém entra no `/admin`. Quem já estava logado segue vendendo a preço de tabela:
+a revalidação da sessão nunca derruba ninguém por o Conecta estar fora. O login
+responde **503**, nunca "senha incorreta" — se todo mundo lesse "senha incorreta"
+ao mesmo tempo, a leitura natural seria vazamento de credenciais.
 
-**Backend fora do ar** → o lobby continua de pé, servindo o HTML e caindo no catálogo
-embutido. `/api/catalogo` devolve 502 e o `boot()` captura. O nginx resolve o backend
-a cada requisição, de propósito: com o nome resolvido só na inicialização, ele
-recusaria subir sem o backend e derrubaria o lobby junto.
+**Backend fora do ar** → o lobby continua de pé, servindo o HTML. Quem já estava
+logado segue cotando com o catálogo embutido (`/api/catalogo` devolve 502 e o lobby
+captura) e a venda sai sem comprovante, na regra degradada. Quem não estava logado
+não entra: o login passa pelo backend (TSK-1513). O nginx resolve o backend a cada
+requisição, de propósito: com o nome resolvido só na inicialização, ele recusaria
+subir sem o backend e derrubaria o lobby junto.
 
 **Omie fora do ar, ou chave do Omie revogada** → o lobby segue vendendo, e o
 dropdown de departamento fica com a última lista sincronizada — nada some. O
