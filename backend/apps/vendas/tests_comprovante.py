@@ -281,6 +281,22 @@ class SessaoEAutorizacaoTest(TestCase):
         self.assertEqual(resposta.status_code, 200, resposta.content)
         self.assertIsNone(ComprovanteVenda.objects.get().autorizador)
 
+    def test_o_token_de_quem_autoriza_e_censurado_no_relatorio_de_erro(self):
+        """O `X-Lobby-Autorizacao` leva o JWT do gerente: no relatório de erro do
+        Django ele sai censurado, como o `Authorization` e a asserção."""
+        from django.test import RequestFactory
+
+        from config.erros import FiltroDeRelatorio
+
+        token = token_de(self.gerente)
+        request = RequestFactory().post(
+            "/api/venda/comprovante", HTTP_X_LOBBY_AUTORIZACAO=f"Bearer {token}",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        meta = FiltroDeRelatorio().get_safe_request_meta(request)
+        for cabecalho in ("HTTP_X_LOBBY_AUTORIZACAO", "HTTP_AUTHORIZATION"):
+            self.assertNotIn(token, str(meta[cabecalho]), cabecalho)
+
     def test_conta_sem_papel_no_cabecalho_nao_autoriza(self):
         resposta = emite_comprovante(venda_negociada(), autorizador=consultor("novato@sejaap.com.br"))
         self.assertEqual(resposta.status_code, 422)
