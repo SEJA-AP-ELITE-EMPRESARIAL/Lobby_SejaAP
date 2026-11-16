@@ -156,3 +156,11 @@ jobs:
         run: |
           TZ=America/Sao_Paulo node --test tests/front/manutencao.test.mjs
           TZ=UTC node --test tests/front/manutencao.test.mjs
+
+      - name: Sessão do Lobby (login, 401, sair com comprovante pendente, enviado_por)
+        # TSK-1513: o Lobby pede a conta do Conecta. Roda os trechos de JS puro do
+        # index.html com fetch e sessionStorage de mentira: o 401 volta ao login
+        # com o motivo, o comprovante leva a sessão e o X-Lobby-Autorizacao, o
+        # 401 dele para a venda, sair com o comprovante a caminho não manda nada
+        # ao n8n, e o payload ganha o enviado_por sem perder campo.
+        run: node --test tests/front/sessao.test.mjs

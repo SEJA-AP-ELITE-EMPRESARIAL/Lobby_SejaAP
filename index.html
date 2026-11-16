@@ -90,7 +90,11 @@ select.inp option{background:#1E1E1C;color:var(--text);}
 .btn-ghost:hover:not(:disabled){border-color:var(--primary);color:var(--primary);}
 .btn-ghost:disabled{opacity:.5;cursor:not-allowed;}
 
-/* Top bar */
+/* Top bar: a marca, quem está logado e o Sair (TSK-1513) */
+.topbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;height:56px;padding:0 28px;border-bottom:1px solid var(--border-light);background:var(--surface-alt);}
+.who{display:inline-flex;align-items:center;gap:8px;min-width:0;font:400 12.5px var(--font-secondary);color:var(--text-muted);}
+.who strong{font:600 12.5px var(--font-primary);color:var(--text);}
+.who-curto{display:none;font:600 12.5px var(--font-primary);color:var(--text);}
 .topbtn{display:flex;align-items:center;gap:7px;height:38px;padding:0 14px;border-radius:9px;border:1px solid var(--border-light);background:transparent;color:var(--text-secondary);font:600 12.5px var(--font-primary);cursor:pointer;transition:border-color .2s,color .2s;}
 .topbtn:hover{border-color:var(--primary);color:var(--primary);}
 
@@ -135,6 +139,8 @@ select.inp option{background:#1E1E1C;color:var(--text);}
 @media (max-width:560px){
   .topbar{padding:0 16px !important;gap:12px !important;}
   .who{display:none !important;}
+  /* No celular o nome completo e o e-mail não cabem: fica o primeiro nome. */
+  .who-curto{display:inline !important;}
   .flow-grid{padding:22px 16px 32px;gap:20px;}
   /* Stepper: sem a largura mínima por etapa ele cabe inteiro em 360px, em vez
      de cortar o "Resumo" na borda direita. */
@@ -259,7 +265,7 @@ const normalizaDepartamentos = (lista) => lista
 // Devolve { versao, modo, lista, porCategoria } ou lança — quem chama decide o
 // que fazer sem ela.
 async function buscaDepartamentos() {
-  const r = await fetch(DEPARTAMENTOS_URL, { cache: 'no-store' });
+  const r = await apiFetch(DEPARTAMENTOS_URL, { cache: 'no-store' });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const d = await r.json();
   if (!d || !Array.isArray(d.departamentos)) throw new Error('resposta sem departamentos');
@@ -304,7 +310,7 @@ const departamentoParaPayload = (d) => (d ? { codigo: d.codigo, descricao: d.des
 const CATEGORIAS_FIN_URL = '/api/categorias-financeiras';
 
 async function buscaCategoriasFin() {
-  const r = await fetch(CATEGORIAS_FIN_URL, { cache: 'no-store' });
+  const r = await apiFetch(CATEGORIAS_FIN_URL, { cache: 'no-store' });
   if (r.status === 404) return { versao: '', modo: 'lista', lista: [], sincronizado: false };
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const d = await r.json();
@@ -324,24 +330,26 @@ const categoriaFinParaPayload = (c) => (c ? { codigo: c.codigo, descricao: c.des
 /* ============================================================================
  * AUTORIZAÇÃO DE NEGOCIAÇÃO — destrava a alteração de valores numa venda.
  *
- * O LOBBY NÃO TEM TELA DE LOGIN. Qualquer consultor abre, navega, cota, cadastra
- * e envia a venda sem credencial nenhuma. Isso é o produto, não um descuido.
+ * Desde a TSK-1513 o lobby pede login (ver "Sessão do Lobby", acima), mas a
+ * SESSÃO não autoriza nada: o consultor sem papel cota, cadastra e envia a
+ * venda a preço de tabela, e só.
  *
- * O que exige credencial é NEGOCIAR: alterar o valor do produto ou o cronograma
- * de parcelas. Aí o consultor chama alguém autorizado (gerente ou diretoria),
- * que digita e-mail e senha do Conecta ID NO APARELHO DO CONSULTOR.
+ * O que exige papel é NEGOCIAR: alterar o valor do produto ou o cronograma de
+ * parcelas. Aí o consultor chama alguém autorizado (gerente ou diretoria), que
+ * digita e-mail e senha do Conecta NO APARELHO DO CONSULTOR. Se quem está logado
+ * já é gerente ou diretoria, ele autoriza com a própria sessão — mas por uma
+ * ação explícita ("Autorizar com a minha conta"), nunca só por estar logado.
  *
  * A AUTORIZAÇÃO É ÚNICA E VALE SÓ PARA AQUELE REGISTRO.
  *
  * Por isso ela NÃO vai para o sessionStorage — vive só no estado do React e
  * morre ao enviar o cadastro, ao trocar de produto e ao voltar ao lobby. Uma
- * sessão de horas num tablet que fica no balcão significaria que a primeira
- * autorização do dia libera todas as vendas seguintes, sem ninguém perceber.
+ * autorização de horas num tablet que fica no balcão significaria que a primeira
+ * do dia libera todas as vendas seguintes, sem ninguém perceber. O token de
+ * quem autorizou vai ao comprovante no `X-Lobby-Autorizacao`, separado da
+ * sessão de quem vende (`Authorization`).
  *
- * (A tela da diretoria em /admin é outra coisa: lá é sessão de verdade, porque
- * publicar a tabela de preços é trabalho continuado, não um ato pontual.)
- *
- * Nenhuma senha mora neste arquivo. Quem confere é o Conecta ID, pelo backend.
+ * Nenhuma senha mora neste arquivo. Quem confere é o Conecta, pelo backend.
  * ========================================================================== */
 
 // Mensagens por caso. Trocar uma pela outra custa caro: "senha incorreta"
@@ -384,9 +392,225 @@ function erroDeManutencao(r, d) {
 }
 /* ===== fim do login central em manutenção ===== */
 
+/* ===== Sessão do Lobby (TSK-1513) ===== */
+// Desde 14/11/2026 (decisão do dono) o Lobby pede a conta do Conecta para
+// qualquer uso: quem abre sem sessão vê a tela de login antes de qualquer coisa.
+// Toda conta ativa entra. O PAPEL (gerente, diretoria) continua sendo do Lobby e
+// só destrava negociação: entrar não dá permissão nenhuma.
+//
+// A sessão fica no `sessionStorage`, nunca no `localStorage`: fechar a aba a
+// encerra, e o tablet do balcão não amanhece no nome de quem vendeu ontem.
+// Guarda só { token, exp, nome, email, papel, podeAutorizarNegociacao }.
+//
+// O estado mora aqui, fora do React, porque quem chama a API (o `apiFetch`, o
+// comprovante, o envio ao n8n) não recebe props. O App é avisado da queda por
+// `sessaoLobby.aoDerrubar`.
+//
+// A GERAÇÃO. Entrar, sair e cair mudam `sessaoLobby.geracao`. Operação que
+// começou numa geração e termina noutra é descartada (`SessaoTrocada`): a
+// resposta que chega tarde não mexe na tela, e nada vai ao webhook depois de
+// sair — nem a venda cujo comprovante estava a caminho na hora do clique.
+const SESSAO_CHAVE = 'lobby.sessao';
+const MSG_SESSAO_EXPIRADA = 'Sua sessão expirou. Entre de novo para continuar.';
+const MSG_SESSAO_ENCERRADA = 'Sua sessão foi encerrada. Entre de novo para continuar.';
+const MSG_SEM_PAPEL_PARA_AUTORIZAR = 'Esta conta não tem permissão para autorizar negociação. Peça à diretoria para liberar.';
+
+const sessaoLobby = { atual: null, geracao: 0, aoDerrubar: null };
+
+// O 401 derrubou a sessão: a operação para e a tela volta ao login.
+class SessaoDerrubada extends Error {
+  constructor(motivo) { super(motivo); this.sessaoDerrubada = true; this.handled = true; }
+}
+// A operação é de uma sessão que já acabou (saiu, caiu, ou entrou outra pessoa).
+class SessaoTrocada extends Error {
+  constructor() { super('A sessão mudou no meio da operação.'); this.sessaoTrocada = true; this.handled = true; }
+}
+const fimDeSessao = (e) => !!(e && (e.sessaoDerrubada || e.sessaoTrocada));
+
+function sessaoVigente(sessao, agora = Date.now()) {
+  return !!(sessao && sessao.token && Number(sessao.exp) * 1000 > agora);
+}
+
+// Só o que a tela usa. O login devolve mais (`podePublicarTabela`,
+// `precisaTrocarSenha`), que não precisa ficar guardado.
+function normalizaSessao(d) {
+  return {
+    token: String((d && d.token) || ''),
+    exp: Number(d && d.exp) || 0,
+    nome: String((d && (d.nome || d.email)) || ''),
+    email: String((d && d.email) || ''),
+    papel: String((d && d.papel) || ''),
+    podeAutorizarNegociacao: !!(d && d.podeAutorizarNegociacao),
+  };
+}
+
+// O `sessionStorage` pode faltar ou recusar gravar (aba anônima de alguns
+// navegadores): aí a sessão vale enquanto a página estiver aberta, e recarregar
+// pede o login de novo.
+function guardaDaSessao() {
+  try { return sessionStorage; } catch { return null; }
+}
+function guardaSessao(sessao) {
+  try { guardaDaSessao().setItem(SESSAO_CHAVE, JSON.stringify(sessao)); } catch { /* sem onde guardar */ }
+}
+function apagaSessaoGuardada() {
+  try { guardaDaSessao().removeItem(SESSAO_CHAVE); } catch { /* nada a apagar */ }
+}
+
+// A sessão guardada nesta aba, ao abrir a página: { sessao, motivo }. A vencida
+// sai do armazenamento, e o motivo diz à tela de login por que ela voltou.
+function abreSessaoGuardada(agora = Date.now()) {
+  let bruta = null;
+  try { bruta = guardaDaSessao().getItem(SESSAO_CHAVE); } catch { bruta = null; }
+  if (!bruta) return { sessao: null, motivo: null };
+  let sessao = null;
+  try { sessao = normalizaSessao(JSON.parse(bruta)); } catch { sessao = null; }
+  if (sessaoVigente(sessao, agora)) return { sessao, motivo: null };
+  apagaSessaoGuardada();
+  return { sessao: null, motivo: sessao && sessao.token ? MSG_SESSAO_EXPIRADA : null };
+}
+
+function iniciaSessao(dados) {
+  const sessao = normalizaSessao(dados);
+  sessaoLobby.atual = sessao;
+  sessaoLobby.geracao += 1;
+  guardaSessao(sessao);
+  return sessao;
+}
+
+// Sair: a sessão some daqui e do armazenamento, e a geração muda.
+function encerraSessao() {
+  sessaoLobby.atual = null;
+  sessaoLobby.geracao += 1;
+  apagaSessaoGuardada();
+}
+
+// A queda (401, ou o `exp` que passou): como sair, mais o aviso ao App, com o
+// motivo e a sessão que caiu.
+function derrubaSessao(motivo) {
+  const caiu = sessaoLobby.atual;
+  encerraSessao();
+  if (sessaoLobby.aoDerrubar) sessaoLobby.aoDerrubar(motivo, caiu);
+}
+
+// Por que a sessão caiu, na frase que a tela de login mostra: passou do `exp`,
+// ou a do servidor (o Conecta desativou a pessoa: "Sessão encerrada.").
+function motivoDaQueda(sessao, d, agora = Date.now()) {
+  if (!sessao || Number(sessao.exp) * 1000 <= agora) return MSG_SESSAO_EXPIRADA;
+  return (d && d.erro) || MSG_SESSAO_ENCERRADA;
+}
+
+// Toda chamada à API do Lobby passa por aqui — e só ela: os webhooks do n8n
+// nunca recebem o token. Põe o `Authorization` da sessão; o 401 derruba a
+// sessão e lança `SessaoDerrubada`. Rede e 5xx NÃO são tratados aqui: cada
+// chamador degrada como sempre degradou (catálogo embutido, lista que já estava
+// na tela, venda sem comprovante).
+async function apiFetch(url, opcoes = {}) {
+  const sessao = sessaoLobby.atual;
+  const geracao = sessaoLobby.geracao;
+  if (!sessao) throw new SessaoTrocada();
+  if (!sessaoVigente(sessao)) {
+    derrubaSessao(MSG_SESSAO_EXPIRADA);
+    throw new SessaoDerrubada(MSG_SESSAO_EXPIRADA);
+  }
+  const headers = { ...(opcoes.headers || {}), Authorization: `Bearer ${sessao.token}` };
+  const r = await fetch(url, { ...opcoes, headers });
+  if (geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
+  if (r.status !== 401) return r;
+  const d = await r.json().catch(() => ({}));
+  if (geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
+  const motivo = motivoDaQueda(sessao, d);
+  derrubaSessao(motivo);
+  throw new SessaoDerrubada(motivo);
+}
+
+// Troca e-mail e senha pela sessão. NÃO passa pelo `apiFetch`: aqui o 401 é
+// "senha errada", e não a sessão que caiu. Devolve o corpo do login (com o
+// `precisaTrocarSenha`), ou lança Error com a frase da vez — a de manutenção
+// com `.manutencao`, como o modal de autorização.
+async function entraNoLobby(email, senha) {
+  let r;
+  try {
+    r = await fetch('/api/sessao', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha }),
+    });
+  } catch {
+    throw new Error('Sem conexão para entrar. Verifique a internet e tente de novo.');
+  }
+  const d = await r.json().catch(() => ({}));
+  const manutencao = erroDeManutencao(r, d);
+  if (manutencao) throw manutencao;
+  if (!r.ok || !d.token) throw new Error(d.erro || 'Não foi possível entrar. Tente de novo.');
+  return d;
+}
+
+// Ao abrir a página com uma sessão guardada: o `exp` já foi conferido; falta o
+// backend dizer que o Conecta não a derrubou, e trazer o papel de hoje (a
+// diretoria pode ter promovido alguém). Só o 401 barra; rede e 5xx seguem com o
+// que estava guardado. Devolve a sessão atualizada, ou null.
+async function confereSessaoAoAbrir() {
+  const geracao = sessaoLobby.geracao;
+  let r;
+  try {
+    r = await apiFetch('/api/sessao/atual', { cache: 'no-store' });
+  } catch (e) {
+    if (fimDeSessao(e)) throw e;
+    return null;
+  }
+  if (!r.ok) return null;
+  const d = await r.json().catch(() => null);
+  if (geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
+  if (!d || !sessaoLobby.atual) return null;
+  const atual = sessaoLobby.atual;
+  sessaoLobby.atual = normalizaSessao({
+    ...atual, nome: d.nome || atual.nome, papel: d.papel, podeAutorizarNegociacao: d.podeAutorizarNegociacao,
+  });
+  guardaSessao(sessaoLobby.atual);
+  return sessaoLobby.atual;
+}
+
+// Antes dos webhooks que o navegador chama direto (CNPJ, CEP, Pix): eles não
+// passam pelo backend, e sem esta pergunta quem o Conecta desativou seguiria
+// consultando. Só o 401 barra (lança); rede e 5xx deixam seguir.
+async function confereSessao() {
+  try {
+    await apiFetch('/api/sessao/atual', { cache: 'no-store' });
+  } catch (e) {
+    if (fimDeSessao(e)) throw e;
+  }
+}
+
+// Quem enviou a venda, para o n8n, da sessão que o backend conferiu. Campo
+// novo: nenhum dos de antes sai. É montado no navegador como o resto do payload,
+// e o n8n não o confere (limitação aceita na TSK-1513).
+function enviadoPor(sessao) {
+  return { nome: sessao.nome, email: sessao.email };
+}
+
+// O fim comum dos quatro envios (Elite, APN, DH e DH - Avaliação), nesta ordem:
+// o comprovante, a sessão ainda é a mesma?, o webhook. `geracao` é a da sessão
+// em que se clicou em Finalizar. O 401 do comprovante sobe daqui como
+// `SessaoDerrubada` e a venda NÃO vai ao n8n.
+async function enviaVenda({ url, payload, valores, tokenDeQuemAutoriza, geracao }) {
+  const atestado = await pedeComprovante(valores, tokenDeQuemAutoriza);
+  if (geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
+  payload.comprovante = atestado.comprovante;
+  payload.comprovante_valores = valores;
+  payload.comprovante_erro = atestado.erro;
+  return postCadastro(url, payload, geracao);
+}
+/* ===== fim da sessão do Lobby ===== */
+
 /**
  * Troca e-mail + senha por uma autorização de negociação.
  * Devolve { token, nome, email, papel }. Lança Error com a mensagem da vez.
+ *
+ * `para: 'negociacao'`: desde a TSK-1513 o login comum entra sem papel, e é
+ * isto que mantém o 403 de quem não autoriza nada. Fetch puro, e não o
+ * `apiFetch`: a senha errada do gerente (401) não pode derrubar a sessão de
+ * quem está vendendo.
  */
 async function autorizaNegociacao(email, senha) {
   let r;
@@ -394,7 +618,7 @@ async function autorizaNegociacao(email, senha) {
     r = await fetch('/api/sessao', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, senha }),
+      body: JSON.stringify({ email, senha, para: 'negociacao' }),
     });
   } catch {
     // Falha de rede: o consultor pode estar em campo, com sinal ruim. Dizer
@@ -406,6 +630,9 @@ async function autorizaNegociacao(email, senha) {
   const manutencao = erroDeManutencao(r, d);
   if (manutencao) throw manutencao;
   if (!r.ok) throw new Error(d.erro || ERRO_AUTORIZACAO_PADRAO);
+  // O backend já recusa (403) quem não autoriza; esta é a segunda trava, para
+  // o modal nunca fechar dizendo "autorizado" com o token de quem não pode.
+  if (!d.podeAutorizarNegociacao) throw new Error(MSG_SEM_PAPEL_PARA_AUTORIZAR);
   return d;
 }
 
@@ -430,6 +657,10 @@ async function autorizaNegociacao(email, senha) {
  * - INDISPONÍVEL (rede, 5xx): o servidor não respondeu. A venda SEGUE, sem
  *   comprovante e com o motivo anotado — o n8n a encaminha para conferência
  *   manual. Consultor em campo não pode perder venda por causa de infra.
+ *
+ * E uma terceira, desde a TSK-1513: SESSÃO CAÍDA (401). Não é falha do
+ * servidor, é quem vende que não está mais logado. A venda PARA e volta ao
+ * login, como a recusa — nunca segue sem comprovante.
  * ========================================================================== */
 class ComprovanteRecusado extends Error {
   constructor(mensagem) {
@@ -441,17 +672,21 @@ class ComprovanteRecusado extends Error {
   }
 }
 
-async function pedeComprovante(valores, token) {
+async function pedeComprovante(valores, tokenDeQuemAutoriza) {
   const cab = { 'Content-Type': 'application/json' };
-  // Só vai credencial quando houve negociação — o consultor é anônimo.
-  if (token) cab.Authorization = `Bearer ${token}`;
+  // A sessão de quem vende vai no `Authorization` (o `apiFetch` põe). O token de
+  // quem AUTORIZOU a negociação vai noutro cabeçalho, e só quando há (TSK-1513).
+  if (tokenDeQuemAutoriza) cab['X-Lobby-Autorizacao'] = `Bearer ${tokenDeQuemAutoriza}`;
 
   let r;
   try {
-    r = await fetch('/api/venda/comprovante', {
+    r = await apiFetch('/api/venda/comprovante', {
       method: 'POST', headers: cab, body: JSON.stringify(valores),
     });
-  } catch {
+  } catch (e) {
+    // 401: a sessão caiu. A venda PARA e a tela vai ao login — nunca segue ao
+    // n8n sem comprovante por causa disso. Rede: a regra degradada de sempre.
+    if (fimDeSessao(e)) throw e;
     return { comprovante: null, erro: 'servidor_indisponivel' };
   }
 
@@ -832,22 +1067,29 @@ function extractWebhookError(body) {
 // POST do cadastro num webhook n8n, com o mesmo tratamento de erro para todos os
 // fluxos: erro de negócio volta em `faultstring` e é mostrado ao consultor
 // (err.handled); o resto vira mensagem genérica.
-async function postCadastro(url, payload) {
+//
+// Comum aos quatro fluxos, e por isso é aqui que entra o `enviado_por` (quem
+// estava logado, TSK-1513). Só sai na sessão em que a venda foi finalizada
+// (`geracao`): depois de sair, nada vai ao webhook. O token da sessão NUNCA vai:
+// o webhook é público.
+async function postCadastro(url, payload, geracao = sessaoLobby.geracao) {
   if (!url) throw new Error('Webhook de envio não configurado.');
+  const sessao = sessaoLobby.atual;
+  if (!sessao || geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
+  const corpo = { ...payload, enviado_por: enviadoPor(sessao) };
   let res;
   try {
-    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(payload), mode: 'cors' });
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(corpo), mode: 'cors' });
   } catch (e) { throw new Error('Falha de conexão ao enviar o cadastro'); }
+  // A venda já foi. Se a sessão acabou enquanto o n8n respondia, a resposta não
+  // mexe mais na tela (de outra pessoa, talvez).
+  if (geracao !== sessaoLobby.geracao) throw new SessaoTrocada();
   let body = null; try { body = await res.json(); } catch { body = null; }
   const errInfo = extractWebhookError(body);
   if (errInfo) { const err = new Error(errInfo.message); err.handled = true; err.errorType = errInfo.errorType; throw err; }
   if (!res.ok) throw new Error(`Erro ao enviar (HTTP ${res.status})`);
   return body || {};
 }
-const sendPreContrato = (payload) => postCadastro(SEND_WEBHOOK_URL, payload);
-const sendVendaApn = (payload) => postCadastro(APN_SEND_WEBHOOK_URL, payload);
-const sendVendaDh = (payload) => postCadastro(DH_SEND_WEBHOOK_URL, payload);
-const sendVendaDhAvaliacao = (payload) => postCadastro(DH_AVALIACAO_SEND_WEBHOOK_URL, payload);
 
 // ===== Cobrança Pix da entrada =====
 // Gera a imagem do QR a partir do código copia-e-cola (EMV) com qrcode-generator.
@@ -1098,7 +1340,7 @@ const formaAvaliacao = (id) => FORMAS_AVALIACAO.find((f) => f.id === id) || null
 // Devolve { versao, valores } ou lança. Modalidade ausente ou sem número cai no
 // padrão LIVRE: nunca se trava um campo num valor que não veio.
 async function buscaValoresAvaliacao() {
-  const r = await fetch(VALORES_AVALIACAO_URL, { cache: 'no-store' });
+  const r = await apiFetch(VALORES_AVALIACAO_URL, { cache: 'no-store' });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const d = await r.json();
   if (!d || !Array.isArray(d.modalidades)) throw new Error('resposta sem modalidades');
@@ -1275,9 +1517,14 @@ function EditToggle({ on, onToggle, label, restrito }) {
  * O texto da tela precisa deixar isso claro, senão o consultor tenta usar o
  * próprio e-mail e não entende por que não funciona.
  *
+ * Se quem está logado já autoriza (gerente ou diretoria, TSK-1513), o modal
+ * oferece "Autorizar com a minha conta": o token da própria sessão vira a
+ * autorização desta venda. É clique explícito, e vale só para este registro,
+ * como a do gerente chamado ao balcão.
+ *
  * Nenhuma senha mora neste arquivo — quem confere é o Conecta ID.
  */
-function ModalAutorizacao({ alvo, onOk, onCancelar }) {
+function ModalAutorizacao({ alvo, sessao, onOk, onCancelar }) {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
@@ -1296,6 +1543,12 @@ function ModalAutorizacao({ alvo, onOk, onCancelar }) {
       : alvo === 'adiantamento'
         ? 'alterar o adiantamento das vagas'
         : 'alterar as parcelas e o cronograma';
+  // Quem está logado autoriza com a própria conta (TSK-1513). Só a sessão que
+  // ainda vale: a vencida levaria o 422 no comprovante, longe do clique.
+  const comAMinhaConta = !!(sessao && sessao.podeAutorizarNegociacao && sessaoVigente(sessao));
+  const autorizarComAMinhaConta = () => onOk({
+    token: sessao.token, nome: sessao.nome, email: sessao.email, papel: sessao.papel,
+  });
 
   const enviar = async (e) => {
     e.preventDefault();
@@ -1405,6 +1658,16 @@ function ModalAutorizacao({ alvo, onOk, onCancelar }) {
           <br />
           <strong style={{ color: 'var(--text-secondary)' }}>A liberação vale só para esta venda.</strong>
         </p>
+        {comAMinhaConta && (
+          <div style={{ marginBottom: 20 }}>
+            <button type="button" className="btn-prim" style={{ width: '100%', justifyContent: 'center' }} onClick={autorizarComAMinhaConta}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>verified_user</span>Autorizar com a minha conta
+            </button>
+            <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '8px 0 0', lineHeight: 1.5, textAlign: 'center' }}>
+              Como <strong style={{ color: 'var(--text-secondary)' }}>{sessao.nome || sessao.email}</strong>, que está logado. Ou outra pessoa autoriza abaixo.
+            </p>
+          </div>
+        )}
         <label className="lbl">E-mail de quem autoriza</label>
         <input
           className="inp" type="email" value={email} autoFocus autoComplete="off"
@@ -1442,6 +1705,199 @@ function ModalAutorizacao({ alvo, onOk, onCancelar }) {
   );
 }
 
+/* ===== Tela de login (TSK-1513) =====
+ * O que quem abre o Lobby sem sessão vê, antes de qualquer coisa: e-mail e senha
+ * da conta do Conecta — a mesma do kanban, do CRM e dos Formulários. Toda conta
+ * ativa entra; entrar não dá papel nenhum.
+ *
+ * `motivo` é a frase de por que a tela voltou ao login ("Sua sessão expirou",
+ * ou a do servidor quando o Conecta derrubou a sessão), ou null. Ela fica até a
+ * pessoa entrar de novo.
+ */
+const CAIXA_DO_LOGIN = { width: '100%', maxWidth: 420 };
+
+function TelaDeLogin({ motivo, onEntrar }) {
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
+  const [erro, setErro] = useState('');
+  const [carregando, setCarregando] = useState(false);
+  // Login central em manutenção: `{ mensagem, previsao }`, ou null.
+  const [manutencao, setManutencao] = useState(null);
+  // Entrou, mas o Conecta marcou a senha para troca: avisa ANTES de abrir o
+  // lobby, como o modal de autorização faz — depois, o aviso se perde.
+  const [trocarSenha, setTrocarSenha] = useState(null);
+
+  const enviar = async (e) => {
+    e.preventDefault();
+    if (!email || !senha || carregando) return;
+    setCarregando(true); setErro(''); setManutencao(null);
+    try {
+      const dados = await entraNoLobby(email.trim(), senha);
+      if (dados.precisaTrocarSenha) { setTrocarSenha(dados); setCarregando(false); return; }
+      onEntrar(dados);
+    } catch (err) {
+      if (err.manutencao) setManutencao(err.manutencao);
+      else setErro(err.message);
+      setSenha('');
+      setCarregando(false);
+    }
+  };
+
+  let conteudo;
+  if (trocarSenha) {
+    conteudo = (
+      <div className="card" style={CAIXA_DO_LOGIN}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span className="ms-icon" style={{ color: 'var(--warning)' }}>key</span>
+          <strong style={{ font: '700 16px var(--font-primary)' }}>Você entrou — mas troque sua senha</strong>
+        </div>
+        <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 20px', lineHeight: 1.55 }}>
+          A sua senha do Conecta está marcada para troca — provavelmente é a
+          senha inicial. Peça o link em{' '}
+          <a href="/esqueci-senha" style={{ color: 'var(--primary)' }}>/esqueci-senha</a>:
+          ele chega no seu e-mail e abre aqui mesmo, em{' '}
+          <strong style={{ color: 'var(--text-secondary)' }}>/definir-senha</strong>.
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-prim" autoFocus onClick={() => onEntrar(trocarSenha)}>
+            <span className="ms-icon" style={{ fontSize: 18 }}>check</span>Entendi, continuar
+          </button>
+        </div>
+      </div>
+    );
+  } else if (manutencao) {
+    // Não é erro de ninguém, e a tela não pode parecer: âmbar, sem "senha
+    // incorreta". Quem já estava logado segue vendendo; quem não está, espera.
+    conteudo = (
+      <div className="card" role="alertdialog" aria-labelledby="login-manutencao" style={CAIXA_DO_LOGIN}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+          <span style={{ display: 'grid', placeItems: 'center', width: 40, height: 40, borderRadius: 10, background: 'rgba(255,193,7,.12)', border: '1px solid rgba(255,193,7,.28)', flexShrink: 0 }}>
+            <span className="ms-icon" style={{ color: 'var(--warning)', fontSize: 22 }}>construction</span>
+          </span>
+          <div>
+            <strong id="login-manutencao" style={{ display: 'block', font: '700 16px var(--font-primary)' }}>Temporariamente indisponível</strong>
+            <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--warning)' }}>Em manutenção</span>
+          </div>
+        </div>
+        <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.55, whiteSpace: 'pre-line' }}>
+          {manutencao.mensagem}
+        </p>
+        {manutencao.previsao && (
+          <p style={{ display: 'flex', alignItems: 'center', gap: 6, font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+            <span className="ms-icon" style={{ fontSize: 17, color: 'var(--text-muted)' }}>schedule</span>
+            Previsão de volta: {manutencao.previsao}
+          </p>
+        )}
+        <p style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 20px', lineHeight: 1.55 }}>
+          O login do Lobby é o do Conecta, e volta junto com ele.
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-prim" autoFocus onClick={() => setManutencao(null)}>
+            <span className="ms-icon" style={{ fontSize: 18 }}>refresh</span>Tentar de novo
+          </button>
+        </div>
+      </div>
+    );
+  } else {
+    conteudo = (
+      <form onSubmit={enviar} className="card" style={CAIXA_DO_LOGIN}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span className="ms-icon" style={{ color: 'var(--primary)' }}>login</span>
+          <strong style={{ font: '700 17px var(--font-primary)' }}>Entrar no Lobby</strong>
+        </div>
+        <p style={{ font: '400 13.5px var(--font-secondary)', color: 'var(--text-muted)', margin: '0 0 20px', lineHeight: 1.55 }}>
+          Use a sua conta do Conecta: o mesmo e-mail e a mesma senha do kanban,
+          do CRM e dos Formulários.
+        </p>
+        {motivo && (
+          <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 14px', margin: '0 0 18px', borderRadius: 10, background: 'var(--primary-subtle)', border: '1px solid rgba(199,164,68,.35)', font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)', flexShrink: 0 }}>schedule</span>{motivo}
+          </div>
+        )}
+        <label className="lbl" htmlFor="login-email">E-mail</label>
+        <input
+          id="login-email" className="inp" type="email" value={email} autoFocus autoComplete="off"
+          onChange={(e) => { setEmail(e.target.value); setErro(''); }}
+          placeholder="nome@sejaap.com.br"
+        />
+        <label className="lbl" htmlFor="login-senha" style={{ marginTop: 14 }}>Senha</label>
+        <input
+          id="login-senha" className="inp" type="password" value={senha} autoComplete="off"
+          onChange={(e) => { setSenha(e.target.value); setErro(''); }}
+          placeholder="••••••••"
+        />
+        {erro && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, font: '400 13px var(--font-secondary)', color: '#F1969E', lineHeight: 1.5 }}>
+            <span className="ms-icon" style={{ fontSize: 18, flexShrink: 0 }}>error</span>{erro}
+          </div>
+        )}
+        <button type="submit" className="btn-prim" disabled={!email || !senha || carregando} style={{ width: '100%', justifyContent: 'center', marginTop: 22 }}>
+          {carregando
+            ? <><span className="ms-icon rot" style={{ fontSize: 18 }}>progress_activity</span>Entrando…</>
+            : <><span className="ms-icon" style={{ fontSize: 18 }}>login</span>Entrar</>}
+        </button>
+        <div style={{ marginTop: 16, textAlign: 'center' }}>
+          <a href="/esqueci-senha" style={{ font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)', textDecoration: 'none' }}>
+            Esqueci minha senha
+          </a>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="scrollarea" style={{ display: 'grid', placeItems: 'center', padding: '32px 20px' }}>
+        <div style={{ width: '100%', maxWidth: 420, display: 'grid', gap: 22, justifyItems: 'center', animation: 'slideUpFade .45s both' }}>
+          <div style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>
+            <Logo />
+            <span style={{ font: '600 12px var(--font-primary)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Lobby de Produtos</span>
+          </div>
+          {conteudo}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Entre o login e o lobby: a sessão sendo conferida e o catálogo chegando.
+function TelaAbrindo() {
+  return (
+    <div className="app-shell" style={{ display: 'grid', placeItems: 'center' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, font: '500 13.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
+        <span className="ms-icon rot" style={{ fontSize: 20, color: 'var(--primary)' }}>progress_activity</span>
+        Abrindo o lobby…
+      </div>
+    </div>
+  );
+}
+
+// Quem está logado e o Sair. No celular o `.who` some (CSS) e fica o primeiro
+// nome; o nome inteiro e o e-mail vão no `title` do botão.
+const ROTULO_DO_PAPEL = { gerente: 'Gerente', diretoria: 'Diretoria' };
+
+function BarraDoTopo({ sessao, onSair }) {
+  const nome = sessao.nome || sessao.email;
+  return (
+    <div className="topbar">
+      <Logo />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+        <span className="who">
+          <span className="ms-icon" style={{ fontSize: 19, color: 'var(--primary)' }}>account_circle</span>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <strong>{nome}</strong>{sessao.email && sessao.email !== nome ? ` · ${sessao.email}` : ''}
+          </span>
+          {ROTULO_DO_PAPEL[sessao.papel] && <span className="chip">{ROTULO_DO_PAPEL[sessao.papel]}</span>}
+        </span>
+        <span className="who-curto">{nome.split(/[\s@]/)[0]}</span>
+        <button type="button" className="topbtn" onClick={onSair} title={`Sair (${nome}${sessao.email && sessao.email !== nome ? ` · ${sessao.email}` : ''})`}>
+          <span className="ms-icon" style={{ fontSize: 17 }}>logout</span>Sair
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ===== Contagem regressiva de validade do Pix (baseada em expireAt) ===== */
 function PixCountdown({ expireAt, onRegenerate }) {
   const [now, setNow] = useState(Date.now());
@@ -1474,7 +1930,22 @@ function PixCountdown({ expireAt, onRegenerate }) {
 /* ===================================================================== */
 /* ===========================  APP  =================================== */
 /* ===================================================================== */
-function App() {
+function App({ motivoAoAbrir }) {
+  // ----- Sessão (TSK-1513) -----
+  // `sessao` espelha `sessaoLobby.atual` para a tela; `motivoDoLogin` é a frase
+  // de por que a tela voltou ao login, ou null. O catálogo é buscado uma vez por
+  // página, depois da primeira entrada (`catalogoPronto`). `logado` libera o
+  // lobby e as reconsultas das listas.
+  const [sessao, setSessao] = useState(sessaoLobby.atual);
+  const [motivoDoLogin, setMotivoDoLogin] = useState(motivoAoAbrir || null);
+  const [catalogoPronto, setCatalogoPronto] = useState(false);
+  const temSessao = !!sessao;
+  const logado = temSessao && catalogoPronto;
+  // De quem é o atendimento na memória. A sessão que cai não apaga a venda: se
+  // a MESMA pessoa entrar de novo, ela continua de onde parou; se entrar outra,
+  // o atendimento recomeça do zero.
+  const donoDoAtendimento = useRef(sessaoLobby.atual ? sessaoLobby.atual.email : null);
+
   const [s, setS] = useState({
     screen: 'lobby', step: 0, catId: null, product: null,
     cnpj: '', cnpjStatus: 'idle', cnpjErr: '',
@@ -1546,7 +2017,8 @@ function App() {
     try {
       novo = await buscaDepartamentos();
     } catch (e) {
-      console.warn('[lobby] departamentos indisponíveis; mantendo a lista atual.', e);
+      // Sessão que caiu no meio: quem cuida é o login, e a lista fica como estava.
+      if (!fimDeSessao(e)) console.warn('[lobby] departamentos indisponíveis; mantendo a lista atual.', e);
       setDeps((d) => (d.estado === 'carregando' ? { ...d, estado: 'erro' } : d));
       return null;
     }
@@ -1573,7 +2045,10 @@ function App() {
     });
     return novo;
   };
+  // Só com sessão (TSK-1513): a rota pede login, e a reconsulta de quem saiu
+  // não tem o que buscar. Entrou de novo, reconsulta na hora.
   useEffect(() => {
+    if (!logado) return undefined;
     atualizaDepartamentos();
     const id = setInterval(atualizaDepartamentos, DEPARTAMENTOS_RECONSULTA_MS);
     // Tablet no balcão: a aba pode ter passado horas em segundo plano, com o
@@ -1581,7 +2056,7 @@ function App() {
     const aoVoltar = () => { if (document.visibilityState === 'visible') atualizaDepartamentos(); };
     document.addEventListener('visibilitychange', aoVoltar);
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
-  }, []);
+  }, [logado]);
 
   // Lista de categorias financeiras da APN: o mesmo que `deps`, com um campo a
   // mais. `sincronizado`: se o backend já sincronizou alguma vez — sem isso o
@@ -1594,7 +2069,7 @@ function App() {
     try {
       novo = await buscaCategoriasFin();
     } catch (e) {
-      console.warn('[lobby] categorias financeiras indisponíveis; mantendo a lista atual.', e);
+      if (!fimDeSessao(e)) console.warn('[lobby] categorias financeiras indisponíveis; mantendo a lista atual.', e);
       setCfins((c) => (c.estado === 'carregando' ? { ...c, estado: 'erro' } : c));
       return null;
     }
@@ -1612,12 +2087,13 @@ function App() {
     return novo;
   };
   useEffect(() => {
+    if (!logado) return undefined;
     atualizaCategoriasFin();
     const id = setInterval(atualizaCategoriasFin, DEPARTAMENTOS_RECONSULTA_MS);
     const aoVoltar = () => { if (document.visibilityState === 'visible') atualizaCategoriasFin(); };
     document.addEventListener('visibilitychange', aoVoltar);
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
-  }, []);
+  }, [logado]);
 
   // Valores das modalidades do DH - Avaliação: o mesmo que `deps`. Fora do `s`
   // porque são referência, não dado da venda — o `restart` não os apaga.
@@ -1632,7 +2108,7 @@ function App() {
     try {
       novo = await buscaValoresAvaliacao();
     } catch (e) {
-      console.warn('[lobby] valores do DH - Avaliação indisponíveis; mantendo os atuais.', e);
+      if (!fimDeSessao(e)) console.warn('[lobby] valores do DH - Avaliação indisponíveis; mantendo os atuais.', e);
       setValsAval((v) => (v.estado === 'carregando' ? { ...v, estado: 'erro' } : v));
       return null;
     }
@@ -1647,12 +2123,13 @@ function App() {
     return novo;
   };
   useEffect(() => {
+    if (!logado) return undefined;
     atualizaValoresAvaliacao();
     const id = setInterval(atualizaValoresAvaliacao, DEPARTAMENTOS_RECONSULTA_MS);
     const aoVoltar = () => { if (document.visibilityState === 'visible') atualizaValoresAvaliacao(); };
     document.addEventListener('visibilitychange', aoVoltar);
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', aoVoltar); };
-  }, []);
+  }, [logado]);
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' }); }, [s.step, s.screen]);
 
   // Espelha o endereço da empresa no representante quando "mesmo endereço".
@@ -1740,11 +2217,17 @@ function App() {
   };
 
   // ----- CNPJ (webhook real) -----
+  // O webhook é do n8n, direto do navegador: antes dele, a sessão ainda vale?
+  // (`confereSessao`, TSK-1513). Só o 401 barra, e aí quem cuida é o login.
   const validateCnpj = async () => {
     if (!isCNPJ(s.cnpj) || s.cnpjStatus === 'loading') { if (!isCNPJ(s.cnpj)) patch({ cnpjStatus: 'error', cnpjErr: 'CNPJ inválido' }); return; }
     patch({ cnpjStatus: 'loading', cnpjErr: '' });
+    const geracao = sessaoLobby.geracao;
     try {
+      await confereSessao();
       const r = await fetchCnpj(s.cnpj);
+      // A resposta de uma sessão que já acabou não preenche a tela de ninguém.
+      if (geracao !== sessaoLobby.geracao) return;
       patch((d) => ({
         cnpjStatus: 'done',
         razaoSocial: r.razaoSocial || d.razaoSocial,
@@ -1753,6 +2236,8 @@ function App() {
         bairro: r.bairro || d.bairro, cidade: r.cidade || d.cidade, estado: r.estado || d.estado, cep: r.cep || d.cep,
       }));
     } catch (e) {
+      if (fimDeSessao(e)) { patch((d) => (d.cnpjStatus === 'loading' ? { cnpjStatus: 'idle' } : {})); return; }
+      if (geracao !== sessaoLobby.geracao) return;
       // Permite preenchimento manual mesmo se a consulta falhar.
       patch({ cnpjStatus: 'manual', cnpjErr: 'Não foi possível consultar. Preencha manualmente.' });
     }
@@ -1762,10 +2247,17 @@ function App() {
   const validateCep = async () => {
     if (!isCEP(s.cep) || s.cepStatus === 'loading') return;
     patch({ cepStatus: 'loading' });
+    const geracao = sessaoLobby.geracao;
     try {
+      await confereSessao();
       const r = await fetchCep(s.cep);
+      if (geracao !== sessaoLobby.geracao) return;
       patch((d) => ({ cepStatus: 'done', endereco: r.logradouro || d.endereco, complemento: r.complemento || d.complemento, bairro: r.bairro || d.bairro, cidade: r.cidade || d.cidade, estado: r.estado || d.estado, cep: r.cep || d.cep }));
-    } catch (e) { patch({ cepStatus: 'error' }); }
+    } catch (e) {
+      if (fimDeSessao(e)) { patch((d) => (d.cepStatus === 'loading' ? { cepStatus: 'idle' } : {})); return; }
+      if (geracao !== sessaoLobby.geracao) return;
+      patch({ cepStatus: 'error' });
+    }
   };
 
   // ----- Pagamento (total âncora derivado do valor EDITÁVEL do produto) -----
@@ -1833,7 +2325,7 @@ function App() {
   // Encerra a autorização e devolve os valores ao de tabela. Existe para o caso
   // de a negociação ser descartada no meio — o aparelho não pode ficar liberado
   // esperando a próxima venda.
-  const encerrarAutorizacao = () => patch((d) => ({
+  const semAutorizacao = (d) => ({
     autorizacao: null,
     priceEdit: false,
     editMode: false,
@@ -1845,7 +2337,8 @@ function App() {
     // ela não pode continuar escrita no cadastro.
     observacao: '',
     ...(d.product ? { unitValue: d.product.recurring ? d.product.monthly : d.product.price, ...initPayment(d.product, getCat(d.catId), d.vendaData) } : {}),
-  }));
+  });
+  const encerrarAutorizacao = () => patch(semAutorizacao);
 
   // ----- Igualar parcelas: ao alterar a 1ª parcela, oferecer aplicar o valor às demais -----
   const askEqualizar = (n) => { const v = Number.isFinite(n) ? Math.max(0, n) : 0; if (v > 0 && s.parcelas.length > 1) patch({ showEqualizar: true, equalizarValor: v }); };
@@ -2157,7 +2650,7 @@ function App() {
     avalParcelas: forma === 'cartao' ? Math.max(1, Number(d.avalParcelas) || 1) : 1,
   }));
 
-  // ----- Payload + envio (reusa sendPreContrato → SEND_WEBHOOK_URL) -----
+  // ----- Payload + envio (`enviaVenda` → SEND_WEBHOOK_URL) -----
   const buildPayload = (departamento) => {
     const nowIso = new Date().toISOString();
     const formas = Array.from(new Set([s.entradaForma].concat(s.parcelas.map((p) => p.forma))));
@@ -2279,10 +2772,14 @@ function App() {
 
   const finalizeApn = async () => {
     if (!apnPagamentoValid || !apnEnvioConfigurado || !departamentoOk || !categoriaFinOk || s.sendState === 'sending') return;
+    // A sessão em que se clicou: se ela acabar no meio, a venda não sai (TSK-1513).
+    const geracao = sessaoLobby.geracao;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
     const departamento = await departamentoNoEnvio();
+    if (geracao !== sessaoLobby.geracao) return;
     if (departamento === false) { patch({ sendState: 'idle', step: 0 }); return; }
     const categoriaFin = await categoriaFinNoEnvio();
+    if (geracao !== sessaoLobby.geracao) return;
     if (categoriaFin === false) { patch({ sendState: 'idle', step: 0 }); return; }
     // Mesmo formato de protocolo do Elite; a sigla vem da categoria (APN).
     const protocolo = buildProtocol({ sigla: (cat && cat.sigla) || 'APN' }, s.apnForma, new Date());
@@ -2304,16 +2801,16 @@ function App() {
         cronograma: [],
         protocolo,
       };
-      const atestado = await pedeComprovante(valores, s.autorizacao?.token);
-      payload.comprovante = atestado.comprovante;
-      payload.comprovante_valores = valores;
-      payload.comprovante_erro = atestado.erro;
-
-      const response = await sendVendaApn(payload);
+      const response = await enviaVenda({
+        url: APN_SEND_WEBHOOK_URL, payload, valores, tokenDeQuemAutoriza: s.autorizacao?.token, geracao,
+      });
       // Venda enviada: a autorização se esgota aqui. Ela valia para este
       // registro, e ele acabou de ser fechado.
       patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null });
     } catch (e) {
+      // A sessão acabou no meio (saiu, caiu, ou o 401 do comprovante): nada foi
+      // ao n8n depois disso, e quem cuida da tela é o sair ou o `aoDerrubar`.
+      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
   };
@@ -2393,6 +2890,7 @@ function App() {
 
   const finalizeDh = async () => {
     if (!dhContratanteValid || !dhQuadroValid || !dhEnvioConfigurado || s.sendState === 'sending') return;
+    const geracao = sessaoLobby.geracao;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
     // Mesmo formato de protocolo dos demais (SSS-YYMMDDPRRRRR). A sigla é a do
     // produto (RES) e o dígito da forma vem da PRIMEIRA vaga — no DH cada vaga
@@ -2416,14 +2914,12 @@ function App() {
         cronograma: dhVagas.map(dhAdiantamentoDaVaga),
         protocolo,
       };
-      const atestado = await pedeComprovante(valores, s.autorizacao?.token);
-      payload.comprovante = atestado.comprovante;
-      payload.comprovante_valores = valores;
-      payload.comprovante_erro = atestado.erro;
-
-      const response = await sendVendaDh(payload);
+      const response = await enviaVenda({
+        url: DH_SEND_WEBHOOK_URL, payload, valores, tokenDeQuemAutoriza: s.autorizacao?.token, geracao,
+      });
       patch({ screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null, dhAdiantamentoEdit: false });
     } catch (e) {
+      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
   };
@@ -2476,6 +2972,7 @@ function App() {
 
   const finalizeDhAvaliacao = async () => {
     if (!avalContratanteValid || !avalItensValid || !avalPagamentoValid || !dhAvaliacaoEnvioConfigurado || s.sendState === 'sending') return;
+    const geracao = sessaoLobby.geracao;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
     // Última conferência dos valores, no momento que importa. Se a diretoria
     // fixou (ou mudou) o valor de uma modalidade vendida, a reconsulta já levou o
@@ -2483,6 +2980,7 @@ function App() {
     // Itens, em vez de mandar um total que o consultor não viu. Consulta que
     // falha segue com o que a tela mostra — o comprovante confere no servidor.
     const novo = await atualizaValoresAvaliacao();
+    if (geracao !== sessaoLobby.geracao) return;
     if (novo && valoresQueMudaram(s.avalItens, novo.valores).length) {
       patch({ sendState: 'idle', step: 2 });
       return;
@@ -2509,12 +3007,7 @@ function App() {
         protocolo,
         itens: payload.itens.map((i) => ({ modalidade: i.modalidade, quantidade: i.quantidade, valor_unitario: i.valor_unitario })),
       };
-      const atestado = await pedeComprovante(valores);
-      payload.comprovante = atestado.comprovante;
-      payload.comprovante_valores = valores;
-      payload.comprovante_erro = atestado.erro;
-
-      const response = await sendVendaDhAvaliacao(payload);
+      const response = await enviaVenda({ url: DH_AVALIACAO_SEND_WEBHOOK_URL, payload, valores, geracao });
       patch({
         screen: 'success', response: response || {}, protocol: protocolo, sendState: 'idle', autorizacao: null,
         avalEnviado: {
@@ -2526,6 +3019,7 @@ function App() {
         },
       });
     } catch (e) {
+      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
       // Recusa do servidor (um valor fixo que a reconsulta não pegou, por
       // exemplo): reconsulta de novo, para a etapa Itens já mostrar o certo.
@@ -2535,8 +3029,10 @@ function App() {
 
   const finalize = async () => {
     if (!pagamentoValid || !departamentoOk || s.sendState === 'sending') return;
+    const geracao = sessaoLobby.geracao;
     patch({ sendState: 'sending', sendErr: '', sendErrHandled: false });
     const departamento = await departamentoNoEnvio();
+    if (geracao !== sessaoLobby.geracao) return;
     if (departamento === false) { patch({ sendState: 'idle', step: etapaEmpresa }); return; }
     // Código da venda gerado no cliente (formato SSS-YYMMDDPRRRRR) e enviado ao
     // webhook dentro do payload. Também é o protocolo exibido na tela de sucesso.
@@ -2559,17 +3055,15 @@ function App() {
         cronograma: s.parcelas.map((p) => round2(Number(p.valor) || 0)),
         protocolo,
       };
-      const atestado = await pedeComprovante(valores, s.autorizacao?.token);
-      payload.comprovante = atestado.comprovante;
-      payload.comprovante_valores = valores;
-      payload.comprovante_erro = atestado.erro;
-
-      const response = await sendPreContrato(payload);
+      const response = await enviaVenda({
+        url: SEND_WEBHOOK_URL, payload, valores, tokenDeQuemAutoriza: s.autorizacao?.token, geracao,
+      });
       const r = response || {};
       // Venda enviada: a autorização se esgota aqui. Ela valia para este
       // registro, e ele acabou de ser fechado.
       patch({ screen: 'success', response: r, protocol: protocolo, sendState: 'idle', autorizacao: null });
     } catch (e) {
+      if (fimDeSessao(e)) return;
       patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
     }
   };
@@ -2589,6 +3083,8 @@ function App() {
     avalForma: 'pix', avalParcelas: 1, avalData: '', avalEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
+    // Atendimento novo não herda autorização (e o "sair" passa por aqui).
+    autorizacao: null, pedindoAutorizacao: null,
   }); };
 
   // ===== Fluxo de cobrança Pix da entrada =====
@@ -2649,6 +3145,13 @@ function App() {
     pixTxidRef.current = '';
     patch({ pixState: 'generating', pixErr: '', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '' });
     try {
+      // Webhook direto do navegador, como o CNPJ: a sessão ainda vale? (TSK-1513)
+      try {
+        await confereSessao();
+      } catch (e) {
+        if (fimDeSessao(e)) { patch({ pixState: 'idle' }); return; }
+        throw e;
+      }
       const res = await fetch(PIX_CREATE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify({ ...pixBase.current, acao: 'gerar' }), mode: 'cors' });
       let raw = null; try { raw = await res.json(); } catch { raw = null; }
       if (!res.ok) throw new Error('Falha ao criar a cobrança (HTTP ' + res.status + ')');
@@ -2678,6 +3181,70 @@ function App() {
     patch((d) => (d.pixState !== 'idle' ? { pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '' } : {}));
   }, [s.entradaValor, s.entradaForma]);
   useEffect(() => () => stopPixPolling(), []);
+
+  // ===== Sessão: entrar, sair, cair (TSK-1513) =====
+  // Abre o lobby depois de entrar: confere no backend a sessão guardada e busca
+  // o catálogo, uma vez por página. O 401 de qualquer dos dois derruba a sessão
+  // (o `aoDerrubar`, abaixo, leva ao login); rede e 5xx não barram.
+  useEffect(() => {
+    if (!temSessao || catalogoPronto) return;
+    const geracao = sessaoLobby.geracao;
+    (async () => {
+      try {
+        const conferida = await confereSessaoAoAbrir();
+        if (geracao !== sessaoLobby.geracao) return;
+        if (conferida) setSessao(conferida);
+        await carregaCatalogo();
+        if (geracao === sessaoLobby.geracao) setCatalogoPronto(true);
+      } catch (e) {
+        if (fimDeSessao(e)) return;
+        // Defeito, e não rede: o lobby abre com o catálogo embutido em vez de
+        // ficar parado em "Abrindo…", e o erro fica no console.
+        console.error('[lobby] falha ao abrir o lobby; seguindo com o catálogo embutido.', e);
+        if (geracao === sessaoLobby.geracao) setCatalogoPronto(true);
+      }
+    })();
+  }, [temSessao, catalogoPronto]);
+
+  // A queda (401 ou `exp` vencido, em qualquer chamada): volta ao login com o
+  // motivo. A venda fica na memória, para quem entrar de novo continuar; o que
+  // não sobrevive é o envio em andamento (descartado pela geração), o modal de
+  // autorização aberto e a autorização dada com a própria sessão que caiu.
+  useEffect(() => {
+    sessaoLobby.aoDerrubar = (motivo, caiu) => {
+      stopPixPolling();
+      setMotivoDoLogin(motivo);
+      setSessao(null);
+      patch((d) => ({
+        sendState: d.sendState === 'sending' ? 'idle' : d.sendState,
+        pixState: d.pixState === 'generating' || d.pixState === 'awaiting' ? 'idle' : d.pixState,
+        pedindoAutorizacao: null,
+        ...(caiu && d.autorizacao && d.autorizacao.token === caiu.token ? semAutorizacao(d) : {}),
+      }));
+    };
+    return () => { sessaoLobby.aoDerrubar = null; };
+  }, []);
+
+  const onEntrar = (dados) => {
+    const nova = iniciaSessao(dados);
+    const quem = (nova.email || '').toLowerCase();
+    // Outra pessoa no aparelho: o atendimento que estava na memória não é dela.
+    if (donoDoAtendimento.current && donoDoAtendimento.current.toLowerCase() !== quem) restart();
+    donoDoAtendimento.current = nova.email;
+    setMotivoDoLogin(null);
+    setSessao(nova);
+  };
+
+  // Sair limpa a sessão, a autorização e a venda. A geração nova descarta o que
+  // estava a caminho: o comprovante pendente volta e não vai ao webhook.
+  const sair = () => {
+    if (s.screen === 'flow' && !window.confirm('Sair agora descarta a venda em andamento. Sair mesmo assim?')) return;
+    encerraSessao();
+    restart();
+    donoDoAtendimento.current = null;
+    setMotivoDoLogin(null);
+    setSessao(null);
+  };
 
   const destinoChips = [s.omie ? 'Omie' : null, s.conecta ? 'Conecta' : null, s.d4 ? 'D4' : null].filter(Boolean);
   const destinoText = destinoChips.length ? destinoChips.join(', ').replace(/, ([^,]*)$/, ' e $1') : 'nenhum sistema';
@@ -4363,9 +4930,17 @@ function App() {
     : (s.step === 3 && (sending || s.pixState === 'generating' || s.pixState === 'awaiting'));
 
   /* ======================= RENDER ======================= */
+  // Sem sessão, a tela de login e mais nada: nem catálogo, nem formulário
+  // (TSK-1513). A venda que estava na memória continua no estado, invisível,
+  // para quem entrar de novo.
+  if (!sessao) return <TelaDeLogin motivo={motivoDoLogin} onEntrar={onEntrar} />;
+  if (!catalogoPronto) return <TelaAbrindo />;
+
   return (
     <div className="app-shell">
-      {/* Sem header em nenhuma tela — navegação pelo stepper e pelos botões de Voltar. */}
+      {/* A única barra do app: a marca, quem está logado e o Sair. A navegação
+          continua pelo stepper e pelos botões de Voltar. */}
+      <BarraDoTopo sessao={sessao} onSair={sair} />
 
       {/* STEPPER */}
       {s.screen === 'flow' && renderStepper()}
@@ -4525,6 +5100,7 @@ function App() {
       {s.pedindoAutorizacao && (
         <ModalAutorizacao
           alvo={s.pedindoAutorizacao}
+          sessao={sessao}
           onOk={onAutorizacaoOk}
           onCancelar={() => patch({ pedindoAutorizacao: null })}
         />
@@ -4553,17 +5129,19 @@ function App() {
 }
 
 /* ============================================================================
- * BOOT — busca valores de tabela E regra de cobrança antes de montar a tela.
+ * CATÁLOGO — valores de tabela E regra de cobrança, antes de abrir o lobby.
  *
- * Os dois vêm do mesmo GET /api/catalogo (editáveis em /admin, sem deploy). Se a
- * chamada falhar por qualquer motivo, seguimos com o CATS e a COBRANCA embutidos
- * no arquivo: o lobby abre com os últimos valores versionados em vez de quebrar.
- * Vender com um preço possivelmente desatualizado é ruim; não conseguir abrir a
- * página no meio de um evento é pior.
+ * Os dois vêm do mesmo GET /api/catalogo (editáveis no Admin Lobby, sem deploy).
+ * Desde a TSK-1513 a rota pede a sessão: a busca acontece depois de entrar, uma
+ * vez por página, e o 401 derruba a sessão (volta ao login). Se a chamada
+ * falhar por qualquer outro motivo (rede, 5xx), seguimos com o CATS e a COBRANCA
+ * embutidos no arquivo: o lobby abre com os últimos valores versionados em vez
+ * de quebrar. Vender com um preço possivelmente desatualizado é ruim; não
+ * conseguir abrir a página no meio de um evento é pior.
  * ========================================================================== */
-async function boot() {
+async function carregaCatalogo() {
   try {
-    const r = await fetch('/api/catalogo', { cache: 'no-store' });
+    const r = await apiFetch('/api/catalogo', { cache: 'no-store' });
     if (r.ok) {
       const d = await r.json();
       if (Array.isArray(d?.cats) && d.cats.length) CATS = d.cats;
@@ -4573,9 +5151,22 @@ async function boot() {
       if (d?.cobranca) COBRANCA = normalizaCobranca(d.cobranca, COBRANCA);
     }
   } catch (e) {
+    if (fimDeSessao(e)) throw e;
     console.warn('[lobby] catálogo remoto indisponível; usando os valores embutidos.', e);
   }
-  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+}
+
+/* ============================================================================
+ * BOOT — a sessão guardada nesta aba, se ainda vale, e a tela.
+ *
+ * Sem sessão (ou com a vencida, que vira o motivo na tela de login), o App abre
+ * no login. Com ela, o App a confere no backend e busca o catálogo antes de
+ * mostrar o lobby.
+ * ========================================================================== */
+function boot() {
+  const { sessao, motivo } = abreSessaoGuardada();
+  sessaoLobby.atual = sessao;
+  ReactDOM.createRoot(document.getElementById('root')).render(<App motivoAoAbrir={motivo} />);
 }
 boot();
 </script>
