@@ -32,3 +32,10 @@ __pycache__/
 # Segredos do backend. Em produção vivem em /opt/conecta/env/, modo 600.
 backend/.env
 .env
+
+# ---- E2E (tests/e2e/, TSK-1520) ----
+# O relatório do Playwright e os prints de cada rodada. Os de referência, em
+# tests/e2e/prints/, entram no git (renovados com E2E_PRINTS=tests/e2e/prints).
+tests/e2e/test-results/
+tests/e2e/prints-da-rodada/
+tests/e2e/playwright-report/

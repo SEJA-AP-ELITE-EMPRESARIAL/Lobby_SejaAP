@@ -240,6 +240,52 @@ Lobby usa por `getattr`, fica como apelido nesta versão e sai na próxima.
 cabeçalho da 1.5 e os docstrings de `esqueci_senha`, `definir_senha` e
 `trocar_senha` diziam que não.
 
+## 1.6.0 — o sinal de presença (TSK-1516)
+
+Só acrescenta: nenhuma assinatura nem comportamento da 1.5.3 mudou, e o app que
+não chamar a função nova segue igual.
+
+O Conecta ganhou o painel "Uso em tempo real" do SuperAdmin: quem está online,
+em qual sistema, há quanto tempo e parado ou não. A tela de cada app manda ao
+backend dele, uma vez por minuto, onde a pessoa está e o momento da última
+interação (clique, digitação ou troca de tela), e o backend repassa ao Conecta
+com `enviar_presenca(request.user, ...)`:
+
+    # a rota que a TELA do app chama a cada minuto (nunca a do MCP)
+    @api_view(["POST"])
+    def presenca(request):
+        identidade_client.enviar_presenca(
+            request.user,
+            modulo=request.data.get("modulo", ""),          # ex.: "Quadro"
+            tela=request.data.get("tela", ""),              # ex.: "projeto Conecta"
+            ultima_interacao=request.data.get("ultima_interacao"),  # o toISOString() da tela
+        )
+        return Response(status=204)
+
+`enviar_presenca` **nunca levanta exceção nem segura a requisição**: timeout de
+no máximo `TIMEOUT_DA_PRESENCA` segundos, nenhuma nova tentativa, e depois de
+uma falha do Conecta (fora do ar, manutenção, chave recusada, limite) o
+processo fica `PAUSA_DA_PRESENCA_DEPOIS_DE_FALHA` segundos sem mandar sinal, com
+uma linha no log. Devolve True quando o Conecta gravou, False em todo o resto.
+Não manda nada com `AUTH_CENTRAL_ATIVO` desligado, para quem não está
+autenticado e para a conta local, sem vínculo. O sistema é o da chave do app
+(`IDENTIDADE_APP_KEY`), nunca um campo do corpo; o Selo e as Inscrições não
+entram no painel, e o Conecta recusa o sinal deles (403).
+
+**Só a tela conta como presença.** O MCP, os crons e as integrações não chamam
+`enviar_presenca`: um agente lendo o kanban pelo MCP apareceria como uma pessoa
+online.
+
+`ClienteIdentidade().presenca(identidade_id, ...)` é a chamada crua, que
+levanta os erros como as outras (`NaoEncontrado` para quem não tem acesso ao
+app): é para teste e diagnóstico, e não para a rota da tela.
+
+## Quem vem da 1.5.3 (todos os apps)
+
+Nenhuma configuração muda, e voltar para a 1.5.3 também não pede nada. O sinal é
+opcional: copie o arquivo, e a rota de presença do app entra quando a tela dele
+for mandar o sinal.
+
 ## Quem vem da 1.5.2 (Formulário e Lobby)
 
 Nenhuma configuração muda, e voltar para a 1.5.2 (o rollback da imagem) também
@@ -268,18 +314,20 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 
 from django.conf import settings
 from django.contrib.auth.backends import BaseBackend
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.module_loading import import_string
 
 logger = logging.getLogger("identidade_client")
 
-VERSAO = "1.5.3"
+VERSAO = "1.6.0"
 
 
 # === IP do usuário ========================================================
@@ -597,6 +645,26 @@ class ClienteIdentidade:
         if ip:
             corpo["ip"] = ip
         self._pedir("POST", f"/api/v1/identidades/{identidade_id}/senha", corpo)
+
+    def presenca(self, identidade_id, modulo="", tela="", ultima_interacao=None):
+        """O sinal de presença, cru (`api/v1/presenca`, desde a 1.6.0): levanta os erros como as outras chamadas.
+
+        A rota da tela usa `enviar_presenca`, que nunca levanta. `ultima_interacao`
+        é `datetime` ou o texto ISO 8601 que a tela mandou (sem fuso, vale o do
+        app; a tela manda o `toISOString()` do navegador, que leva o fuso); o que
+        não é data não vai. `modulo` e `tela` vão como texto, até
+        `TAMANHO_DO_TEXTO_NO_SINAL`: o que vem da tela de uma pessoa não faz o
+        Conecta recusar o pedido, e quem corta em 60 e 120, com reticências, é ele.
+        """
+        corpo = {
+            "identidade_id": str(identidade_id),
+            "modulo": _texto_do_sinal(modulo),
+            "tela": _texto_do_sinal(tela),
+        }
+        quando = _momento(ultima_interacao)
+        if quando:
+            corpo["ultima_interacao"] = quando
+        self._pedir("POST", "/api/v1/presenca", corpo)
 
     def saudavel(self):
         """Para healthcheck do app: True se o Conecta ID responde.
@@ -1099,6 +1167,104 @@ def _guardar_resposta(chave, resposta, inicio):
     cache.set(chave, resposta, REVALIDAR_A_CADA)
     cache.set(chave + _ULTIMA, resposta, GUARDAR_A_ULTIMA_RESPOSTA)
     return _RECUSADA if _recusada(chave, resposta) else _VALIDA
+
+
+# === Presença (1.6.0) =====================================================
+#: Teto do timeout do sinal de presença, em segundos: o sinal não vale uma requisição presa.
+TIMEOUT_DA_PRESENCA = 2
+#: Depois de uma falha do Conecta, o processo fica este tempo sem mandar sinal, em segundos.
+PAUSA_DA_PRESENCA_DEPOIS_DE_FALHA = 60
+#: Até onde vão o módulo e a tela: o Conecta recusa mais de 500 e grava 60 e 120, com reticências.
+TAMANHO_DO_TEXTO_NO_SINAL = 500
+
+_PRESENCA_PAUSADA_ATE = 0.0
+
+
+def enviar_presenca(usuario, modulo="", tela="", ultima_interacao=None):
+    """Manda ao Conecta "esta pessoa está nesta tela agora". Nunca levanta (1.6.0).
+
+    Para a rota que a TELA do app chama a cada minuto, e só para ela (nunca o
+    MCP, um cron ou uma integração): é o que alimenta o painel "Uso em tempo
+    real" do SuperAdmin. `modulo` e `tela` são texto curto (o Conecta corta em
+    60 e 120 caracteres); `ultima_interacao` é o momento do último clique,
+    digitação ou troca de tela, em `datetime` ou no texto ISO 8601 que a tela
+    mandou.
+
+    True quando o Conecta gravou; False sem perguntar nada com `AUTH_CENTRAL_ATIVO`
+    desligado, para quem não está autenticado e para a conta sem vínculo; False
+    também com o Conecta fora, lento, em manutenção, com a chave recusada ou o
+    limite estourado. Nesses casos, uma linha no log e nenhuma nova tentativa:
+    o processo fica `PAUSA_DA_PRESENCA_DEPOIS_DE_FALHA` segundos sem mandar
+    sinal, para um Conecta pendurado não custar `TIMEOUT_DA_PRESENCA` segundos a
+    cada requisição. A pessoa que o Conecta não deixa este app ver (sem acesso,
+    `NaoEncontrado`) não pausa os outros, e o texto que vem da tela dela também
+    não: ele vai cortado, e a data que não é data não vai (`presenca`).
+
+    O timeout é o do `urllib`, por operação de socket: não cobre a resolução do
+    nome, e uma resposta que chega aos pingos pode passar dele. É a pausa que
+    protege as requisições seguintes.
+    """
+    global _PRESENCA_PAUSADA_ATE
+    identidade_id = None
+    try:
+        if not central_ativa() or not getattr(usuario, "is_authenticated", False):
+            return False
+        if time.time() < _PRESENCA_PAUSADA_ATE:
+            return False
+        identidade_id = _identidade_de(usuario)
+        if identidade_id is None:
+            return False
+        timeout = min(TIMEOUT_DA_PRESENCA, getattr(settings, "IDENTIDADE_TIMEOUT", None) or 5)
+        ClienteIdentidade(timeout=timeout).presenca(
+            identidade_id, modulo=modulo, tela=tela, ultima_interacao=ultima_interacao
+        )
+        return True
+    except NaoEncontrado:
+        logger.info("presença não registrada: o Conecta não mostra a identidade %s a este app",
+                    identidade_id)
+        return False
+    except ErroIdentidade as erro:
+        _PRESENCA_PAUSADA_ATE = time.time() + PAUSA_DA_PRESENCA_DEPOIS_DE_FALHA
+        logger.warning(
+            "presença não registrada (%s: %s); sem sinal deste processo por %s s",
+            type(erro).__name__, erro, PAUSA_DA_PRESENCA_DEPOIS_DE_FALHA,
+        )
+        return False
+    except Exception:
+        _PRESENCA_PAUSADA_ATE = time.time() + PAUSA_DA_PRESENCA_DEPOIS_DE_FALHA
+        logger.exception("falha ao mandar a presença; sem sinal deste processo por %s s",
+                         PAUSA_DA_PRESENCA_DEPOIS_DE_FALHA)
+        return False
+
+
+def _momento(valor):
+    """A `ultima_interacao` como o Conecta lê (ISO 8601 com fuso), ou `None` para não mandar.
+
+    O texto que não é data (ou é data impossível) não vai: um 400 do Conecta por
+    causa do relógio de uma pessoa pausaria a presença de todo o processo.
+    """
+    try:
+        if isinstance(valor, str):
+            valor = parse_datetime(valor.strip())
+        if not isinstance(valor, datetime):
+            return None
+        if timezone.is_naive(valor):
+            valor = timezone.make_aware(valor)
+        return valor.isoformat()
+    except (ValueError, OverflowError, TypeError):
+        return None
+
+
+def _texto_do_sinal(valor):
+    """O módulo ou a tela como texto de até `TAMANHO_DO_TEXTO_NO_SINAL` caracteres; o que não é texto vai vazio.
+
+    Sem o caractere nulo e o "surrogate" solto, que o Conecta recusa com 400 (e o
+    400 pausaria a presença do processo inteiro).
+    """
+    if not isinstance(valor, str):
+        return ""
+    limpo = "".join(c for c in valor if c != "\x00" and not "\ud800" <= c <= "\udfff")
+    return limpo.strip()[:TAMANHO_DO_TEXTO_NO_SINAL]
 
 
 # === Provisionamento ======================================================

@@ -95,6 +95,90 @@ com `"para": "negociacao"`, e conta sem papel recebe o 403 de sempre).
   era o `/admin`): ele some do aparelho, e no servidor vale até o `exp` ou até o
   Conecta desativar a pessoa.
 
+### Quem está com a tela aberta: o sinal de presença (TSK-1520)
+
+O painel **"Uso em tempo real"** do Conecta (só SuperAdmin) mostra quem está
+online agora em cada sistema, e em qual tela. Regras do dono (16/11/2026):
+**online** = sinal nos últimos 2 min; **parado** = sem clique nem digitação há
+mais de 3 min. Cada sistema manda o seu sinal; o Conecta guarda só o estado de
+agora, e o Lobby **não guarda nada** (sem model, sem migration, sem cache
+próprio; o teste prova que o caminho não faz INSERT, UPDATE nem DELETE).
+
+```text
+index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presenca (AppKey)──► Conecta
+  1 por minuto, na troca de tela          204 sempre que       cliente 1.6.0
+  e na volta à aba                        o corpo vale
+```
+
+- **Quando sai** (`criaSinalDePresenca`, no `index.html`): só com a pessoa logada
+  e o lobby aberto. Um por minuto, também com a aba em segundo plano; um na troca
+  de tela, depois de 500 ms (a troca que leva a outra logo atrás manda um só, o
+  da tela onde a pessoa ficou), e o minuto recomeça dali; um na volta à aba, se o
+  último saiu há 30 s ou mais. Nada na tela de login, no "Abrindo o lobby…", nas
+  telas de senha nem no `/django-admin/`. Com a aba escondida o sinal é marcado
+  a cada 55 s: escondida há mais de 5 min, o Chrome só confere os timers uma vez
+  por minuto, e o marcado para 60 s perderia a conferência seguinte por
+  milissegundos e sairia a cada 2 min (a pessoa piscaria offline no painel).
+- **A última interação** é o último clique, tecla, gesto de rolagem (roda ou
+  dedo) ou Voltar/Avançar do navegador, em `new Date(ts).toISOString()`. O evento
+  `scroll` não conta: a página rola sozinha na troca de etapa. Antes do primeiro,
+  vale a abertura da página.
+- **Várias abas, ou o tablet e o notebook:** cada aba manda a sua tela e a sua
+  última interação, e quem junta é o Conecta (`apps/presenca/regras.py`, no
+  ConectaAP): uma linha por pessoa no sistema, a última interação só avança, e a
+  tela é a do sinal com a interação mais nova. A aba esquecida aberta mantém a
+  pessoa online, mas não tira a tela da que está em uso nem a faz parecer parada
+  (o e2e prova com duas abas, com o Conecta falso seguindo a mesma regra).
+- **O texto de cada tela** (`telaDaPresenca`): o módulo é a categoria da venda,
+  a tela é a etapa do stepper, com o produto quando já há um. Só rótulos do
+  catálogo e das etapas — nada do cliente. Cortado em 60 e 120 caracteres, como o
+  Conecta grava.
+
+  | Onde a pessoa está | Módulo · tela |
+  |---|---|
+  | Grade de categorias | `Lobby · Categorias` |
+  | Elite, etapa *Empresa*, sem plano escolhido | `Elite · Empresa` |
+  | Elite, etapa *Pagamento*, plano ELITE PRO | `Elite · Pagamento · ELITE PRO` |
+  | APN (Cliente, Pagamento, Resumo) | `APN · Cliente` … |
+  | Produtos, escolhendo | `Produtos · Produto` |
+  | Produtos, Recrutamento e Seleção, *Quadro comercial* | `Produtos · Quadro comercial · Recrutamento e Seleção` |
+  | Produtos, DH - Avaliação, *Itens* | `Produtos · Itens · DH - Avaliação` |
+  | Modal do gerente aberto | `Elite · Autorização de negociação · ELITE PRO` |
+  | Tela de sucesso | `APN · Venda enviada` |
+
+  Categoria nova, etapa nova ou produto novo aparecem sozinhos: o texto sai do
+  catálogo e das listas `STEPS_*`.
+- **O erro nunca aparece:** o sinal não passa pelo `apiFetch`, então o 401 dele
+  não derruba a sessão nem leva ao login (quem cuida da sessão são as chamadas da
+  própria tela). Sem aviso, sem nova tentativa (o próximo minuto manda outro),
+  corte em 10 s. Depois de um 401, o mesmo token não manda mais.
+- **Só a tela conta:** a rota aceita só a sessão do lobby (`JWTRevalidado`,
+  declarado nela). A asserção do Conecta leva 403 `ROTA_NAO_LIBERADA`; o segredo
+  do n8n, o token do Prometheus e a sessão do `/django-admin/`, 401; o cabeçalho
+  `X-Lobby-Autorizacao` nem é lido — e nenhum chega ao `enviar_presenca`.
+- **A rota:** `POST /api/presenca` com `{modulo, tela, ultima_interacao}`
+  (`apps/contas/presenca.py`). 204 sempre que o corpo vale, inclusive com o
+  Conecta fora, em manutenção ou recusando (o cliente nunca levanta, tem teto de
+  2 s e pausa o processo por 60 s depois de uma falha); 400 para o corpo que não
+  é sinal; 401 sem sessão. Teto por pessoa: `LOBBY_RATE_PRESENCA` (20/min).
+- **O freio do Conecta lento:** o repasse é dentro da requisição, e o backend
+  tem 3 workers síncronos. Com o Conecta lento mas respondendo não há falha, e o
+  cliente não pausaria: cada sinal prenderia um worker, e o catálogo e o
+  comprovante entrariam na fila. Por isso o repasse que leva mais de 1 s faz o
+  processo ficar 60 s sem repassar (`LENTO_DEMAIS`, em `presenca.py`), com uma
+  linha no log; a tela recebe 204 do mesmo jeito.
+- **Deploy:** nenhuma variável nova obrigatória. O cliente 1.6.0 manda com a
+  `IDENTIDADE_APP_KEY` de sempre, e o Conecta reconhece o sistema pela chave
+  (`lobby`). O `LOBBY_RATE_PRESENCA` é opcional (sem ele, 20/min).
+- **Ponta a ponta:** `tests/e2e/rodar-presenca.sh` sobe um Conecta falso, o
+  backend com SQLite descartável e o papel do nginx, cada um numa porta conferida
+  livre antes, e roda o Playwright contra a tela real (na primeira vez: `npm ci`
+  em `tests/e2e/` e `npx playwright install chromium`; `PYTHON=` aponta outro
+  interpretador). Os prints de cada rodada vão para `tests/e2e/prints-da-rodada/`
+  (fora do git); os de referência, versionados, estão em `tests/e2e/prints/`
+  (`E2E_PRINTS=tests/e2e/prints` os renova). Fora do CI: precisa da CDN do
+  React, como a página em produção.
+
 ### Quem confere a senha
 
 O **[Conecta ID](https://github.com/SEJA-AP-ELITE-EMPRESARIAL/conecta-id)**, o
@@ -138,7 +222,8 @@ incidente.
 #### Desativou no login central, caiu aqui; manutenção não derruba ninguém
 
 Cliente 1.5 (`backend/identidade_client.py`, cópia do Conecta — não se edita
-aqui), desde a TSK-1238:
+aqui), desde a TSK-1238; hoje na 1.6.0 (TSK-1520), que só acrescentou o sinal de
+presença, com o sha256 conferido no `ClienteCopiadoTest`:
 
 - **Desativar a pessoa** (ou revogar o acesso dela ao Lobby) no login central
   derruba a sessão e a autorização já emitidas em até 5 minutos: o token é

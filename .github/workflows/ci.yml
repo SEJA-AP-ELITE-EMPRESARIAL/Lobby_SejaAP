@@ -164,3 +164,11 @@ jobs:
         # 401 dele para a venda, sair com o comprovante a caminho não manda nada
         # ao n8n, e o payload ganha o enviado_por sem perder campo.
         run: node --test tests/front/sessao.test.mjs
+
+      - name: Sinal de presença da tela (um por minuto, troca de tela, nada sem login)
+        # TSK-1520: o painel "Uso em tempo real" do Conecta. Roda o trecho de JS
+        # puro do index.html com relógio, fetch e document de mentira: um sinal
+        # por minuto, um na troca de tela (o redirecionamento manda um só), um
+        # na volta à aba; nada sem login; o erro engolido (o 401 não derruba a
+        # sessão); e a última interação de verdade.
+        run: node --test tests/front/presenca.test.mjs

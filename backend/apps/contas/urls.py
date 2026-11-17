@@ -7,7 +7,7 @@ login por pessoa mexa só no corpo da requisição, não na URL.
 """
 from django.urls import path
 
-from . import views
+from . import presenca, views
 
 urlpatterns = [
     path("sessao", views.abrir_sessao, name="abrir-sessao"),
@@ -17,4 +17,7 @@ urlpatterns = [
     # Conecta ID manda por e-mail; `definir` consome o token daquele link.
     path("senha/esqueci", views.esqueci_senha, name="esqueci-senha"),
     path("senha/definir", views.definir_senha, name="definir-senha"),
+    # O sinal da tela para o painel "Uso em tempo real" do Conecta (TSK-1520).
+    # Só a sessão do lobby: ver `presenca.py`.
+    path("presenca", presenca.presenca, name="presenca"),
 ]
