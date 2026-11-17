@@ -26,6 +26,16 @@ as duas coisas é o Conecta: daqui sai só o sinal.
   recusando a chave: o `enviar_presenca` nunca levanta, tem teto de 2 s e pausa
   o processo por 60 s depois de uma falha. O sinal é acessório, e a tela não faz
   nada com a resposta.
+- **O freio do Conecta lento** (revisão do Codex): o repasse é dentro da
+  requisição, e o backend tem 3 workers síncronos. Com o Conecta fora ou
+  pendurado, a pausa do cliente já limita a uma chamada presa por worker por
+  minuto; com ele LENTO mas respondendo (1 a 2 s), não há falha, e cada sinal
+  prenderia um worker — com dezenas de abas abertas, catálogo e comprovante
+  entrariam na fila. Por isso, o repasse que leva mais de `LENTO_DEMAIS` faz
+  este processo ficar `PAUSA_DEPOIS_DE_LENTO` sem repassar (responde 204 do
+  mesmo jeito), com uma linha no log. A resolução do nome do Conecta não tem
+  teto no socket (ver o `enviar_presenca`): é o mesmo risco do login e da
+  revalidação da sessão, e a pausa do cliente o limita a uma vez por minuto.
 - **400** para o corpo sem a forma abaixo; **401** sem a sessão.
 - **Teto por pessoa:** `LOBBY_RATE_PRESENCA` (20/min). A tela manda 1 por minuto
   por aba, mais 1 por troca de tela e 1 por volta à aba (no máximo a cada 30 s).
@@ -45,6 +55,9 @@ Corpo:
 
 Os tamanhos são os que o Conecta grava; a tela já manda cortado.
 """
+import logging
+import time
+
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers, status
 from rest_framework.decorators import (
@@ -61,8 +74,17 @@ import identidade_client
 from .autenticacao import JWTRevalidado
 from .throttling import PresencaThrottle
 
+logger = logging.getLogger(__name__)
+
 TAMANHO_DO_MODULO = 60
 TAMANHO_DA_TELA = 120
+# O freio do Conecta lento (ver o docstring). Em segundos. O Conecta responde
+# o sinal em décimos de segundo; um segundo inteiro já é ele com problema.
+LENTO_DEMAIS = 1.0
+PAUSA_DEPOIS_DE_LENTO = 60
+
+_PAUSADO_ATE = 0.0
+_relogio = time.monotonic
 
 
 class SinalDePresencaSerializer(serializers.Serializer):
@@ -101,12 +123,28 @@ def presenca(request):
         )
     sinal = SinalDePresencaSerializer(data=request.data)
     sinal.is_valid(raise_exception=True)
-    dados = sinal.validated_data
+    _repassa(request.user, sinal.validated_data)
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _repassa(usuario, dados):
+    """O `enviar_presenca`, com o freio do Conecta lento. Nunca levanta."""
+    global _PAUSADO_ATE
+    inicio = _relogio()
+    if inicio < _PAUSADO_ATE:
+        return
     # Devolve True/False e nunca levanta: o resultado não muda a resposta.
     identidade_client.enviar_presenca(
-        request.user,
+        usuario,
         modulo=dados["modulo"],
         tela=dados["tela"],
         ultima_interacao=dados["ultima_interacao"],
     )
-    return Response(status=status.HTTP_204_NO_CONTENT)
+    fim = _relogio()
+    levou = fim - inicio
+    if levou > LENTO_DEMAIS:
+        _PAUSADO_ATE = fim + PAUSA_DEPOIS_DE_LENTO
+        logger.warning(
+            "presença: o repasse ao Conecta levou %.1f s; sem sinal deste processo por %s s",
+            levou, PAUSA_DEPOIS_DE_LENTO,
+        )

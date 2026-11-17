@@ -161,6 +161,12 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   Conecta fora, em manutenção ou recusando (o cliente nunca levanta, tem teto de
   2 s e pausa o processo por 60 s depois de uma falha); 400 para o corpo que não
   é sinal; 401 sem sessão. Teto por pessoa: `LOBBY_RATE_PRESENCA` (20/min).
+- **O freio do Conecta lento:** o repasse é dentro da requisição, e o backend
+  tem 3 workers síncronos. Com o Conecta lento mas respondendo não há falha, e o
+  cliente não pausaria: cada sinal prenderia um worker, e o catálogo e o
+  comprovante entrariam na fila. Por isso o repasse que leva mais de 1 s faz o
+  processo ficar 60 s sem repassar (`LENTO_DEMAIS`, em `presenca.py`), com uma
+  linha no log; a tela recebe 204 do mesmo jeito.
 - **Deploy:** nenhuma variável nova obrigatória. O cliente 1.6.0 manda com a
   `IDENTIDADE_APP_KEY` de sempre, e o Conecta reconhece o sistema pela chave
   (`lobby`). O `LOBBY_RATE_PRESENCA` é opcional (sem ele, 20/min).

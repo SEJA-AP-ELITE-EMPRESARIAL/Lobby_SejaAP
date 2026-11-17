@@ -10,7 +10,8 @@ Regras do contrato, uma por bloco:
 - só a sessão da TELA conta: a asserção do Conecta, o segredo do n8n, o token
   do Prometheus, a sessão do /django-admin/ e o token de quem autoriza a
   negociação nunca chegam ao `enviar_presenca`;
-- teto por pessoa (20/min);
+- teto por pessoa (20/min), e o freio do Conecta lento (o repasse que leva
+  mais de 1 s deixa o processo um minuto sem repassar);
 - nada de presença fica no banco do Lobby: o caminho inteiro não faz INSERT,
   UPDATE nem DELETE.
 
@@ -56,10 +57,18 @@ def cliente_com_sessao(usuario):
     return APIClient(HTTP_AUTHORIZATION=f"Bearer {token_de(usuario)}")
 
 
+def sem_freio(teste):
+    """O freio do Conecta lento é do PROCESSO (global do módulo): cada teste começa sem ele."""
+    freio = patch("apps.contas.presenca._PAUSADO_ATE", 0.0)
+    freio.start()
+    teste.addCleanup(freio.stop)
+
+
 class BasePresenca(TestCase):
     def setUp(self):
         # O teto por pessoa mora no cache: sem limpar, um teste herdaria o balde.
         cache.clear()
+        sem_freio(self)
         self.carla = consultor("carla@sejaap.com.br")
         self.cliente = cliente_com_sessao(self.carla)
         repasse = patch(ALVO, return_value=True)
@@ -114,6 +123,53 @@ class RepasseTest(BasePresenca):
         """`enviar_presenca` devolve False com o Conecta fora: a tela não tem o que fazer com isso."""
         self.enviar.return_value = False
         self.assertEqual(self.sinal().status_code, 204)
+
+
+class FreioDoConectaLentoTest(BasePresenca):
+    """O Conecta lento mas respondendo não pode prender os workers do Lobby.
+
+    O cliente só pausa depois de FALHA; o repasse que dá certo em 1,5 s não
+    pausaria nada, e cada sinal seguraria um dos 3 workers síncronos.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.agora = 1000.0
+        relogio = patch("apps.contas.presenca._relogio", side_effect=lambda: self.agora)
+        relogio.start()
+        self.addCleanup(relogio.stop)
+
+    def conecta_leva(self, segundos):
+        def repasse(*args, **kwargs):
+            self.agora += segundos
+            return True
+        self.enviar.side_effect = repasse
+
+    def test_repasse_lento_pausa_este_processo_por_um_minuto(self):
+        self.conecta_leva(1.5)
+        with self.assertLogs("apps.contas.presenca", level="WARNING") as logs:
+            self.assertEqual(self.sinal().status_code, 204)
+        self.assertIn("levou 1.5 s", logs.output[0])
+        self.assertEqual(self.enviar.call_count, 1)
+
+        # No minuto seguinte, 204 sem nem chamar o Conecta.
+        for _ in range(3):
+            self.agora += 10
+            self.assertEqual(self.sinal().status_code, 204)
+        self.assertEqual(self.enviar.call_count, 1)
+
+        # Passado o minuto, volta a repassar; rápido, sem pausar de novo.
+        self.agora += 31
+        self.conecta_leva(0.2)
+        self.assertEqual(self.sinal().status_code, 204)
+        self.assertEqual(self.sinal().status_code, 204)
+        self.assertEqual(self.enviar.call_count, 3)
+
+    def test_repasse_rapido_nao_pausa(self):
+        self.conecta_leva(0.9)
+        for _ in range(5):
+            self.assertEqual(self.sinal().status_code, 204)
+        self.assertEqual(self.enviar.call_count, 5)
 
 
 class CorpoInvalidoTest(BasePresenca):
@@ -280,6 +336,7 @@ class PresencaContraOConectaTest(ConectaFalsoTest):
         pausa = patch("identidade_client._PRESENCA_PAUSADA_ATE", 0.0)
         pausa.start()
         self.addCleanup(pausa.stop)
+        sem_freio(self)
         self.carla = consultor("carla@sejaap.com.br")
         self.identidade_id = str(self.carla.vinculo_identidade.identidade_id)
         self.cliente = cliente_com_sessao(self.carla)
