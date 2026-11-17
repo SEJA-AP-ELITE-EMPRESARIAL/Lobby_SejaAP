@@ -16,13 +16,15 @@ suíte. A segunda fala com um servidor HTTP falso, no loopback, para passar pelo
 cliente de verdade: o 503 de manutenção só vira `IdentidadeEmManutencao` lá
 dentro, na tradução da resposta. Nada aqui chama servidor de fora.
 """
+import hashlib
 import http.server
 import json
 import threading
 from unittest.mock import MagicMock, patch
 
+from django.conf import settings
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -400,7 +402,8 @@ class ManutencaoNoLoginTest(ConectaFalsoTest):
         cabecalhos = _ConectaFalso.recebidas[0]["cabecalhos"]
         self.assertEqual(cabecalhos["User-Agent"], f"ConectaIdentidadeClient/{VERSAO}")
         self.assertEqual(cabecalhos["Authorization"], CHAVE)
-        self.assertEqual(VERSAO, "1.5.3")
+        # 1.6.0 desde a TSK-1520 (o sinal de presença); só acrescentou.
+        self.assertEqual(VERSAO, "1.6.0")
 
     def test_esqueci_senha_em_manutencao(self):
         self.responde("POST", "/api/v1/senha/esqueci", 503, MANUTENCAO)
@@ -476,3 +479,22 @@ class SemEscritaDeGestaoTest(TestCase):
                        "revogar_acesso", "emitir_token_de_senha"):
             with self.subTest(metodo=metodo):
                 self.assertFalse(hasattr(ClienteIdentidade, metodo))
+
+
+class ClienteCopiadoTest(SimpleTestCase):
+    """O cliente é cópia byte a byte do Conecta, e não se edita aqui.
+
+    Fonte: `backend/backend/app/saas/conectaap/apps/identidade/cliente/
+    identidade_client.py`, no repositório do Conecta (`origin/main`). Este teste
+    falha com qualquer edição local, e é para falhar: corrija lá e recopie (e
+    atualize o hash aqui junto, sabendo o que mudou). A 1.6.0 (TSK-1520) só
+    acrescentou o sinal de presença (`enviar_presenca`); nada do que o login, a
+    revalidação e o /django-admin/ usam mudou.
+    """
+
+    SHA256 = "8c068427755586daafbe80478627b40e0360ab7461c54f272d51b1f3fbf568a1"
+
+    def test_e_a_1_6_0_sem_edicao(self):
+        caminho = settings.BASE_DIR / "identidade_client.py"
+        self.assertEqual(hashlib.sha256(caminho.read_bytes()).hexdigest(), self.SHA256)
+        self.assertEqual(VERSAO, "1.6.0")
