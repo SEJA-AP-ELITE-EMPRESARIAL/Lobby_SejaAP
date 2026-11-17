@@ -17,8 +17,11 @@ as duas coisas é o Conecta: daqui sai só o sinal.
   nunca chegam ao `enviar_presenca`: a asserção do Conecta (`X-Conecta-Assercao`)
   leva o 403 `ROTA_NAO_LIBERADA` do `FechaRotasForaDaLista` antes da view; o
   segredo do n8n e o token do Prometheus não são JWT do Lobby (401); a sessão do
-  /django-admin/ não é lida (401). Um agente, um cron ou uma integração que
-  chamasse esta rota faria a pessoa aparecer online sem estar.
+  /django-admin/ e o cabeçalho `X-Lobby-Autorizacao` não são lidos (401). Um
+  agente, um cron ou uma integração que chamasse esta rota faria a pessoa
+  aparecer online sem estar. (O token que o modal do gerente recebe é um JWT de
+  sessão como o do login: o lobby o manda só no `X-Lobby-Autorizacao` do
+  comprovante, nunca no `Authorization`.)
 - **204 sempre que o corpo vale**, com o Conecta fora, lento, em manutenção ou
   recusando a chave: o `enviar_presenca` nunca levanta, tem teto de 2 s e pausa
   o processo por 60 s depois de uma falha. O sinal é acessório, e a tela não faz
@@ -27,8 +30,10 @@ as duas coisas é o Conecta: daqui sai só o sinal.
 - **Teto por pessoa:** `LOBBY_RATE_PRESENCA` (20/min). A tela manda 1 por minuto
   por aba, mais 1 por troca de tela e 1 por volta à aba (no máximo a cada 30 s).
 - **Nada fica gravado aqui:** sem model, sem migration, sem cache próprio, sem
-  log por sinal. O Conecta guarda só o estado de agora. (O teto e a revalidação
-  da sessão usam o cache de sempre, que não guarda a tela de ninguém.)
+  linha de log da aplicação por sinal. O Conecta guarda só o estado de agora. (O
+  teto e a revalidação da sessão usam o cache de sempre, que não guarda a tela
+  de ninguém; o access log do gunicorn e do nginx registra o POST, como o de
+  qualquer rota, sem o corpo.)
 
 Corpo:
 

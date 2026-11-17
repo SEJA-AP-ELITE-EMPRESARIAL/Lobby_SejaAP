@@ -747,18 +747,31 @@ async function enviaSinalDePresenca({ modulo, tela, ultimaInteracao }) {
 // O relógio do sinal. `em(onde)` diz a tela de agora (`{ modulo, tela }`), ou
 // null para desligar (sem sessão, ou abrindo o lobby); `interagiu()` marca a
 // última interação; `voltouAAba()` é o `visibilitychange`.
+//
+// O minuto conta de quando o sinal DEVIA sair, e não de quando saiu. Com a aba
+// escondida há mais de 5 minutos, o Chrome só confere os timers uma vez por
+// minuto: o sinal que sai na conferência e marca o próximo para 60 s depois
+// daquele instante perde a conferência seguinte por milissegundos e só sai na
+// outra, a 2 minutos — e o painel mostraria a pessoa offline. Descontando o
+// atraso deste, o próximo vence a tempo. Atraso de um minuto ou mais (o
+// computador suspenso) recomeça a conta, em vez de mandar vários de uma vez.
 function criaSinalDePresenca({ envia = enviaSinalDePresenca, visivel = () => document.visibilityState === 'visible' } = {}) {
   let onde = null;
   let ultimaInteracao = Date.now();
   let ultimoEnvio = -Infinity;
   let proximo = null;
+  let previsto = null;   // quando o sinal do minuto devia sair, ou null
   const manda = () => {
     clearTimeout(proximo);
     proximo = null;
     if (!onde) return;
-    ultimoEnvio = Date.now();
+    const agora = Date.now();
+    ultimoEnvio = agora;
     envia({ ...onde, ultimaInteracao });
-    proximo = setTimeout(manda, PRESENCA_INTERVALO_MS);
+    const atraso = previsto === null ? 0 : agora - previsto;
+    const espera = atraso > 0 && atraso < PRESENCA_INTERVALO_MS ? PRESENCA_INTERVALO_MS - atraso : PRESENCA_INTERVALO_MS;
+    previsto = agora + espera;
+    proximo = setTimeout(manda, espera);
   };
   return {
     interagiu() { ultimaInteracao = Date.now(); },
@@ -767,10 +780,13 @@ function criaSinalDePresenca({ envia = enviaSinalDePresenca, visivel = () => doc
       if (igual) return;
       onde = nova ? { modulo: nova.modulo, tela: nova.tela } : null;
       clearTimeout(proximo);
+      previsto = null;
       proximo = onde ? setTimeout(manda, PRESENCA_ESPERA_NA_TROCA_MS) : null;
     },
     voltouAAba() {
-      if (onde && visivel() && Date.now() - ultimoEnvio >= PRESENCA_VOLTA_SEM_SINAL_MS) manda();
+      if (!onde || !visivel() || Date.now() - ultimoEnvio < PRESENCA_VOLTA_SEM_SINAL_MS) return;
+      previsto = null;
+      manda();
     },
   };
 }

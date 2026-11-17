@@ -7,7 +7,8 @@
 #
 # Na primeira vez: `npm ci` nesta pasta e `npx playwright install chromium`.
 # Sobe os três em 127.0.0.1, roda o `presenca.spec.mjs` e derruba tudo ao sair,
-# com sucesso ou não. Os prints vão para tests/e2e/prints/. Nada aqui fala com
+# com sucesso ou não. Os prints vão para tests/e2e/prints-da-rodada/ (fora do
+# git); `E2E_PRINTS=tests/e2e/prints` renova os de referência. Nada aqui fala com
 # produção: ver apoio/settings_e2e.py. O index.html puxa React e Babel da CDN
 # (unpkg), como em produção: sem internet, a tela não abre.
 set -euo pipefail

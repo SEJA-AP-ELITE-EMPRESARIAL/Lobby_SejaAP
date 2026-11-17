@@ -276,6 +276,48 @@ test('a aba em segundo plano segue mandando (o relógio não para ao esconder)',
   assert.equal(enviados.length, 4);
 });
 
+// O Chrome, com a aba escondida há mais de 5 minutos, só confere os timers uma
+// vez por minuto, na virada do minuto. O sinal sai na conferência, e o callback
+// leva uns milissegundos até marcar o próximo: sem descontar o atraso, o próximo
+// venceria logo DEPOIS da conferência seguinte e sairia só na outra, a 2 min.
+test('aba estrangulada (o Chrome confere os timers 1 vez por minuto): segue um sinal por minuto', (t) => {
+  const anda = comRelogio(t);
+  const l = lobby();
+  const enviados = [];
+  const sinal = l.criaSinalDePresenca({
+    envia: () => {
+      enviados.push(Date.now() - INICIO);
+      mock.timers.setTime(Date.now() + 5);   // o callback leva 5 ms até marcar o próximo
+    },
+  });
+  sinal.em(ELITE);
+  anda(500);
+  assert.deepEqual(enviados, [500]);
+
+  // Dali em diante, só as conferências da virada de cada minuto.
+  for (let i = 0; i < 10; i++) {
+    const viradaDoMinuto = Math.ceil((Date.now() + 1) / 60000) * 60000;
+    mock.timers.tick(viradaDoMinuto - Date.now());
+  }
+  const depoisDoPrimeiro = enviados.slice(1);
+  assert.ok(depoisDoPrimeiro.length >= 8, `um por conferência: ${depoisDoPrimeiro}`);
+  for (let i = 1; i < depoisDoPrimeiro.length; i++) {
+    assert.equal(depoisDoPrimeiro[i] - depoisDoPrimeiro[i - 1], 60 * 1000, `intervalo ${i}: ${depoisDoPrimeiro}`);
+  }
+});
+
+test('o computador suspenso por 10 minutos: um sinal ao acordar, e não dez', (t) => {
+  const { sinal, enviados, anda } = relogioComEspiao(t);
+  sinal.em(ELITE);
+  anda(500);
+  mock.timers.tick(10 * 60 * 1000);   // um salto só: o timer acorda atrasado
+  assert.equal(enviados.length, 2);
+  anda(60 * 1000 - 100);
+  assert.equal(enviados.length, 2, 'e o minuto recomeça de quando acordou');
+  anda(100);
+  assert.equal(enviados.length, 3);
+});
+
 test('trocar de tela manda na hora, e o minuto recomeça dali', (t) => {
   const { sinal, enviados, anda } = relogioComEspiao(t);
   sinal.em(LOBBY);

@@ -12,15 +12,20 @@
  * - o erro do sinal (Conecta fora, 500, 401) nunca aparece, não repete em laço
  *   e não tira ninguém do lobby; sair cala o sinal.
  *
- * Os prints vão para tests/e2e/prints/.
+ * Os prints vão para tests/e2e/prints-da-rodada/ (fora do git), ou para
+ * `E2E_PRINTS`; os versionados, de referência, estão em tests/e2e/prints/.
  */
 import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
 const CONECTA = process.env.E2E_CONECTA;
-const PRINTS = fileURLToPath(new URL('./prints/', import.meta.url));
+// Por padrão numa pasta fora do git: cada rodada muda a hora no painel e
+// reescreveria os PNG versionados. Para renovar os de tests/e2e/prints/:
+// `E2E_PRINTS=tests/e2e/prints tests/e2e/rodar-presenca.sh`.
+const PRINTS = `${resolve(process.env.E2E_PRINTS || fileURLToPath(new URL('./prints-da-rodada/', import.meta.url)))}/`;
 const ROTA = '/api/presenca';
 const EMAIL = 'carla@e2e.sejaap.com.br';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -179,8 +184,13 @@ test('um sinal por minuto com a aba aberta, e um na volta à aba', async ({ page
   await esperarSinal(request, { modulo: 'Lobby', tela: 'Categorias' }, { prazo: 5000 });
   expect(saidos).toHaveLength(1);
 
-  await page.clock.runFor(2 * 60 * 1000);
-  await expect.poll(async () => (await sinais(request)).length, { timeout: 5000 }).toBe(3);
+  // Minuto a minuto, esperando cada sinal chegar: num salto de 2 minutos, o
+  // corte de 10 s do pedido (`PRESENCA_TEMPO_MAXIMO_MS`) venceria no relógio de
+  // mentira com o pedido de verdade ainda a caminho, e o abortaria.
+  for (const total of [2, 3]) {
+    await page.clock.runFor(60 * 1000);
+    await expect.poll(async () => (await sinais(request)).length, { timeout: 5000 }).toBe(total);
+  }
   expect(saidos).toHaveLength(3);
 
   // A volta à aba, 40 s depois do último: na hora.
@@ -215,42 +225,38 @@ test('sem login, nenhum sinal: a tela de login e as de senha, abertas por 3 minu
   await printDoPainel(context, '09-painel-falso-sem-login-sem-sinal.png');
 });
 
+async function continuaNoLobby(page) {
+  await expect(categoria(page, 'APN')).toBeVisible();
+  await expect(page.getByLabel('E-mail')).toHaveCount(0);
+}
+
 test('o erro do sinal nunca aparece, não repete e não tira ninguém do lobby; sair cala', async ({ page, request }) => {
   await page.clock.install();
   await entrar(page);
   await esperarSinal(request, { modulo: 'Lobby', tela: 'Categorias' });
   const saidos = vigiarSinais(page);
-  const respostas = [];
-  page.on('response', (r) => { if (new URL(r.url()).pathname === ROTA) respostas.push(r.status()); });
-  const continuaNoLobby = async () => {
-    await expect(categoria(page, 'APN')).toBeVisible();
-    await expect(page.getByLabel('E-mail')).toHaveCount(0);
-  };
-
-  // O Conecta fora: o backend responde 204 do mesmo jeito.
-  await request.post(`${CONECTA}/_falhar`);
-  await page.clock.runFor(60 * 1000);
-  await expect.poll(() => respostas.length, { timeout: 5000 }).toBe(1);
-  expect(respostas).toEqual([204]);
-  await request.post(`${CONECTA}/_voltar`);
-  await continuaNoLobby();
 
   // O backend com erro (500): um pedido por minuto, sem repetir em laço.
+  // Minuto a minuto, pelo mesmo motivo do teste do relógio (o corte de 10 s).
   await page.route(`**${ROTA}`, (rota) => rota.fulfill({ status: 500, body: '{"erro": "x"}', contentType: 'application/json' }));
-  await page.clock.runFor(3 * 60 * 1000);
-  await expect.poll(() => saidos.length, { timeout: 5000 }).toBe(4);
-  await continuaNoLobby();
+  for (const total of [1, 2, 3]) {
+    await page.clock.runFor(60 * 1000);
+    await expect.poll(() => saidos.length, { timeout: 5000 }).toBe(total);
+  }
+  await page.waitForTimeout(500);
+  expect(saidos).toHaveLength(3);
+  await continuaNoLobby(page);
 
   // O 401 do sinal: a sessão fica, a tela fica, e o mesmo token não manda mais.
   await page.unroute(`**${ROTA}`);
   await page.route(`**${ROTA}`, (rota) => rota.fulfill({ status: 401, body: '{"erro": "Sessão encerrada."}', contentType: 'application/json' }));
   await page.clock.runFor(60 * 1000);
-  await expect.poll(() => saidos.length, { timeout: 5000 }).toBe(5);
+  await expect.poll(() => saidos.length, { timeout: 5000 }).toBe(4);
   await page.clock.runFor(3 * 60 * 1000);
   await voltarAAba(page);
   await page.waitForTimeout(500);
-  expect(saidos).toHaveLength(5);
-  await continuaNoLobby();
+  expect(saidos).toHaveLength(4);
+  await continuaNoLobby(page);
   expect(await page.evaluate(() => sessionStorage.getItem('lobby.sessao'))).not.toBeNull();
   await page.screenshot({ path: PRINTS + '10-erro-do-sinal-nao-aparece.png' });
   await page.unroute(`**${ROTA}`);
@@ -261,5 +267,28 @@ test('o erro do sinal nunca aparece, não repete e não tira ninguém do lobby; 
   await page.clock.runFor(3 * 60 * 1000);
   await voltarAAba(page);
   await page.waitForTimeout(500);
-  expect(saidos).toHaveLength(5);
+  expect(saidos).toHaveLength(4);
+});
+
+// POR ÚLTIMO, de propósito: a falha do Conecta pausa o `enviar_presenca` do
+// backend por 60 s de relógio de verdade (é do processo, no cliente 1.6.0), e um
+// teste depois deste não veria sinal nenhum chegar. Teste novo entra ACIMA.
+test('por último: com o Conecta fora, o backend responde 204 e a tela nem percebe', async ({ page, request }) => {
+  await page.clock.install();
+  await entrar(page);
+  await esperarSinal(request, { modulo: 'Lobby', tela: 'Categorias' });
+  await limparSinais(request);
+  const respostas = [];
+  page.on('response', (r) => { if (new URL(r.url()).pathname === ROTA) respostas.push(r.status()); });
+
+  await request.post(`${CONECTA}/_falhar`);
+  await page.clock.runFor(60 * 1000);
+  await expect.poll(() => respostas.length, { timeout: 5000 }).toBe(1);
+  expect(respostas).toEqual([204]);
+  // E o próximo minuto também (agora com o cliente em pausa, sem nem chamar).
+  await page.clock.runFor(60 * 1000);
+  await expect.poll(() => respostas.length, { timeout: 5000 }).toBe(2);
+  expect(respostas).toEqual([204, 204]);
+  await continuaNoLobby(page);
+  expect(await sinais(request)).toEqual([]);
 });

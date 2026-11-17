@@ -115,7 +115,9 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   de tela, depois de 500 ms (a troca que leva a outra logo atrás manda um só, o
   da tela onde a pessoa ficou), e o minuto recomeça dali; um na volta à aba, se o
   último saiu há 30 s ou mais. Nada na tela de login, no "Abrindo o lobby…", nas
-  telas de senha nem no `/django-admin/`.
+  telas de senha nem no `/django-admin/`. O minuto conta de quando o sinal devia
+  sair: com a aba escondida há mais de 5 min o Chrome só confere os timers uma
+  vez por minuto, e sem esse desconto o sinal sairia a cada 2.
 - **A última interação** é o último clique, tecla, gesto de rolagem (roda ou
   dedo) ou Voltar/Avançar do navegador, em `new Date(ts).toISOString()`. O evento
   `scroll` não conta: a página rola sozinha na troca de etapa. Antes do primeiro,
@@ -145,8 +147,8 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   corte em 10 s. Depois de um 401, o mesmo token não manda mais.
 - **Só a tela conta:** a rota aceita só a sessão do lobby (`JWTRevalidado`,
   declarado nela). A asserção do Conecta leva 403 `ROTA_NAO_LIBERADA`; o segredo
-  do n8n, o token do Prometheus, a sessão do `/django-admin/` e o
-  `X-Lobby-Autorizacao`, 401 — e nenhum chega ao `enviar_presenca`.
+  do n8n, o token do Prometheus e a sessão do `/django-admin/`, 401; o cabeçalho
+  `X-Lobby-Autorizacao` nem é lido — e nenhum chega ao `enviar_presenca`.
 - **A rota:** `POST /api/presenca` com `{modulo, tela, ultima_interacao}`
   (`apps/contas/presenca.py`). 204 sempre que o corpo vale, inclusive com o
   Conecta fora, em manutenção ou recusando (o cliente nunca levanta, tem teto de
@@ -159,8 +161,10 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   backend com SQLite descartável e o papel do nginx, cada um numa porta conferida
   livre antes, e roda o Playwright contra a tela real (na primeira vez: `npm ci`
   em `tests/e2e/` e `npx playwright install chromium`; `PYTHON=` aponta outro
-  interpretador). Os prints ficam em `tests/e2e/prints/`. Fora do CI: precisa da
-  CDN do React, como a página em produção.
+  interpretador). Os prints de cada rodada vão para `tests/e2e/prints-da-rodada/`
+  (fora do git); os de referência, versionados, estão em `tests/e2e/prints/`
+  (`E2E_PRINTS=tests/e2e/prints` os renova). Fora do CI: precisa da CDN do
+  React, como a página em produção.
 
 ### Quem confere a senha
 

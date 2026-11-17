@@ -187,8 +187,13 @@ class SoASessaoDaTelaTest(BasePresenca):
         cliente.force_login(diretoria)
         self.assertRecusada(self.sinal(cliente=cliente))
 
-    def test_o_token_de_quem_autoriza_a_negociacao_nao_e_a_sessao(self):
-        """O `X-Lobby-Autorizacao` só existe no comprovante; aqui não é lido."""
+    def test_o_cabecalho_de_quem_autoriza_a_negociacao_nao_e_lido(self):
+        """O `X-Lobby-Autorizacao` só existe no comprovante; aqui não é lido.
+
+        O token dele é um JWT de sessão como o do login (o modal do gerente
+        entra pelo mesmo `POST /api/sessao`): o que segura é a tela mandá-lo só
+        nesse cabeçalho, e nunca no `Authorization`.
+        """
         gerente = cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE)
         cliente = APIClient(HTTP_X_LOBBY_AUTORIZACAO=f"Bearer {token_de(gerente)}")
         self.assertRecusada(self.sinal(cliente=cliente))
