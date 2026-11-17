@@ -15,9 +15,11 @@ Responde ao que o cliente 1.6.0 pede no caminho do e2e:
 E portas para o teste olhar o que chegou, que o Conecta de verdade não tem:
 
 - `GET /_sinais` (JSON), `POST /_sinais/limpar`, `POST /_falhar` e `POST /_voltar`;
-- `GET /_painel`: uma página no jeito do "Uso em tempo real", com o estado de
-  agora de cada pessoa (o último sinal) e a lista do que chegou. É dela o print
-  que mostra a pessoa no sistema Lobby, na tela certa.
+- `GET /_estado` (JSON): o estado de agora de cada pessoa, pela regra do Conecta
+  de verdade entre abas (`_estado`, abaixo);
+- `GET /_painel`: uma página no jeito do "Uso em tempo real", com esse estado e
+  a lista do que chegou. É dela o print que mostra a pessoa no sistema Lobby, na
+  tela certa.
 
 Uso: python conecta_falso.py <porta>.
 """
@@ -35,7 +37,7 @@ SISTEMAS = {"lobby": "Lobby"}
 _trava = threading.Lock()
 _sinais = []
 _pessoas = {}  # identidade_id -> e-mail
-_estado = {"falhando": False}
+_conecta = {"falhando": False}
 
 
 def _identidade(email):
@@ -49,24 +51,60 @@ def _hora(iso):
         return "—"
 
 
-def _painel():
+def _momento(iso):
+    try:
+        return datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return None
+
+
+def _estado():
+    """O estado de agora de cada pessoa, pela regra do Conecta de verdade.
+
+    É a do `_gravar` de `apps/presenca/regras.py` no ConectaAP (TSK-1516): uma
+    linha por pessoa e sistema; a última interação só avança (fica a maior que
+    chegou); e a tela só troca quando o sinal traz interação igual ou mais nova
+    que a guardada. Assim a aba esquecida aberta mantém a pessoa online, mas não
+    tira a tela da aba em uso nem a faz parecer parada. (Sem a regra da sessão
+    nova depois de 5 min sem sinal, que o e2e não alcança.)
+    """
     with _trava:
         sinais = list(_sinais)
         pessoas = dict(_pessoas)
-    agora = {}
+    estado = {}
     for sinal in sinais:
-        agora[sinal["corpo"].get("identidade_id")] = sinal
+        corpo = sinal["corpo"]
+        ident = corpo.get("identidade_id")
+        interacao = _momento(corpo.get("ultima_interacao"))
+        atual = estado.get(ident)
+        if atual is None:
+            estado[ident] = atual = {"pessoa": pessoas.get(ident, ident or "?"), "sistema": sinal["sistema"],
+                                     "modulo": corpo.get("modulo", ""), "tela": corpo.get("tela", ""),
+                                     "ultima_interacao": corpo.get("ultima_interacao")}
+        else:
+            anterior = _momento(atual["ultima_interacao"])
+            if anterior is None or (interacao is not None and interacao >= anterior):
+                atual["modulo"], atual["tela"] = corpo.get("modulo", ""), corpo.get("tela", "")
+            if interacao is not None and (anterior is None or interacao > anterior):
+                atual["ultima_interacao"] = corpo.get("ultima_interacao")
+        atual["ultimo_sinal"] = sinal["recebido_em"]
+    return estado
+
+
+def _painel():
+    with _trava:
+        sinais = list(_sinais)
     linhas = "".join(
         "<tr><td>{pessoa}</td><td>{sistema}</td><td><b>{modulo}</b> · {tela}</td>"
         "<td>{sinal}</td><td>{interacao}</td></tr>".format(
-            pessoa=html.escape(pessoas.get(ident, ident or "?")),
-            sistema=html.escape(s["sistema"]),
-            modulo=html.escape(s["corpo"].get("modulo", "")),
-            tela=html.escape(s["corpo"].get("tela", "")),
-            sinal=_hora(s["recebido_em"]),
-            interacao=_hora(s["corpo"].get("ultima_interacao")),
+            pessoa=html.escape(e["pessoa"]),
+            sistema=html.escape(e["sistema"]),
+            modulo=html.escape(e["modulo"]),
+            tela=html.escape(e["tela"]),
+            sinal=_hora(e["ultimo_sinal"]),
+            interacao=_hora(e["ultima_interacao"]),
         )
-        for ident, s in agora.items()
+        for e in _estado().values()
     ) or '<tr><td colspan="5" class="vazio">Ninguém mandou sinal.</td></tr>'
     historico = "".join(
         "<li><code>{hora}</code> {modulo} · {tela}</li>".format(
@@ -131,7 +169,7 @@ class Atendente(BaseHTTPRequestHandler):
             slug = chave.removeprefix("AppKey ").split(":")[0]
             corpo = self._corpo()
             with _trava:
-                if _estado["falhando"]:
+                if _conecta["falhando"]:
                     falhou = True
                 else:
                     falhou = False
@@ -151,7 +189,7 @@ class Atendente(BaseHTTPRequestHandler):
             return self._responder(204)
         if self.path in ("/_falhar", "/_voltar"):
             with _trava:
-                _estado["falhando"] = self.path == "/_falhar"
+                _conecta["falhando"] = self.path == "/_falhar"
             return self._responder(204)
         return self._responder(404, {"erro": "nao_encontrado"})
 
@@ -162,6 +200,8 @@ class Atendente(BaseHTTPRequestHandler):
         if self.path == "/_sinais":
             with _trava:
                 return self._responder(200, list(_sinais))
+        if self.path == "/_estado":
+            return self._responder(200, _estado())
         if self.path == "/_painel":
             return self._responder(200, _painel(), tipo="text/html")
         return self._responder(404, {"erro": "nao_encontrado"})

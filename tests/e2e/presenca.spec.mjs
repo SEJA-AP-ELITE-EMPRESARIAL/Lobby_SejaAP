@@ -284,6 +284,47 @@ test('o erro do sinal nunca aparece, não repete e não tira ninguém do lobby; 
   expect(saidos).toHaveLength(4);
 });
 
+// Cada aba manda a SUA tela e a SUA última interação, e quem junta as abas é o
+// Conecta (`_estado` do Conecta falso, com a regra do de verdade): a aba
+// esquecida aberta mantém a pessoa online, mas, com a interação mais velha, não
+// tira a tela da aba em uso nem a faz parecer parada.
+test('duas abas da mesma pessoa: a esquecida não tira a tela nem a interação da que está em uso', async ({ context, request }) => {
+  await context.clock.install();   // um relógio só, para as duas abas
+  const esquecida = await context.newPage();
+  await entrar(esquecida);
+  await esperarSinal(request, { modulo: 'Lobby', tela: 'Categorias' });
+
+  // A outra aba entra por conta própria (a sessão é do sessionStorage da aba).
+  const emUso = await context.newPage();
+  await entrar(emUso);
+  await categoria(emUso, 'APN').click();
+  const apn = await esperarSinal(request, { modulo: 'APN', tela: 'Cliente' }, { prazo: 5000 });
+  await pararORelogio(emUso);
+  const saidosDaEsquecida = vigiarSinais(esquecida);
+
+  // Os sinais do minuto das duas, até a esquecida mandar o dela. De 5 em 5 s, com
+  // uma pausa de verdade entre os passos: as duas abas não estão na mesma fase
+  // do minuto, e num salto maior o corte de 10 s do pedido de uma delas cairia
+  // dentro do próprio salto, com o pedido ainda a caminho.
+  for (let passo = 0; passo < 24 && !saidosDaEsquecida.length; passo++) {
+    await emUso.clock.runFor(5 * 1000);
+    await emUso.waitForTimeout(300);
+  }
+  await emUso.waitForTimeout(1000);
+  expect(saidosDaEsquecida.length).toBeGreaterThan(0);
+  await expect
+    .poll(async () => (await sinais(request)).filter((x) => x.corpo.tela === 'Categorias' && x.recebido_em > apn.recebido_em).length, { timeout: 5000 })
+    .toBeGreaterThan(0);
+  const ultimoDaEsquecida = (await sinais(request)).filter((x) => x.corpo.tela === 'Categorias').at(-1);
+  expect(Date.parse(ultimoDaEsquecida.corpo.ultima_interacao)).toBeLessThan(Date.parse(apn.corpo.ultima_interacao));
+
+  const estado = Object.values(await (await request.get(`${CONECTA}/_estado`)).json());
+  expect(estado).toHaveLength(1);
+  expect(estado[0]).toMatchObject({ pessoa: EMAIL, sistema: 'Lobby', modulo: 'APN', tela: 'Cliente', ultima_interacao: apn.corpo.ultima_interacao });
+  expect(estado[0].ultimo_sinal >= ultimoDaEsquecida.recebido_em).toBe(true);
+  await printDoPainel(context, '11-painel-falso-duas-abas.png');
+});
+
 // POR ÚLTIMO, de propósito: a falha do Conecta pausa o `enviar_presenca` do
 // backend por 60 s de relógio de verdade (é do processo, no cliente 1.6.0), e um
 // teste depois deste não veria sinal nenhum chegar. Teste novo entra ACIMA.

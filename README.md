@@ -123,6 +123,12 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   dedo) ou Voltar/Avançar do navegador, em `new Date(ts).toISOString()`. O evento
   `scroll` não conta: a página rola sozinha na troca de etapa. Antes do primeiro,
   vale a abertura da página.
+- **Várias abas, ou o tablet e o notebook:** cada aba manda a sua tela e a sua
+  última interação, e quem junta é o Conecta (`apps/presenca/regras.py`, no
+  ConectaAP): uma linha por pessoa no sistema, a última interação só avança, e a
+  tela é a do sinal com a interação mais nova. A aba esquecida aberta mantém a
+  pessoa online, mas não tira a tela da que está em uso nem a faz parecer parada
+  (o e2e prova com duas abas, com o Conecta falso seguindo a mesma regra).
 - **O texto de cada tela** (`telaDaPresenca`): o módulo é a categoria da venda,
   a tela é a etapa do stepper, com o produto quando já há um. Só rótulos do
   catálogo e das etapas — nada do cliente. Cortado em 60 e 120 caracteres, como o

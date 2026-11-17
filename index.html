@@ -674,7 +674,10 @@ function criaEnviaEsta(atendimento, vendaNoAr) {
 //   `scroll` não conta: a própria página rola sozinha na troca de etapa. Antes
 //   do primeiro, vale a abertura da página;
 // - sem sessão (a tela de login), abrindo o lobby ou com a sessão vencida, nada.
-//   O /django-admin/ e as telas de senha (esqueci, definir) não têm este código.
+//   O /django-admin/ e as telas de senha (esqueci, definir) não têm este código;
+// - cada aba manda a sua tela e a sua última interação. Quem junta as abas é o
+//   Conecta: a interação só avança, e vale a tela da aba mexida por último (a
+//   esquecida aberta mantém a pessoa online sem tirar a tela da que está em uso).
 //
 // O sinal nunca aparece para a pessoa: não passa pelo `apiFetch` (o 401 dele não
 // derruba a sessão nem leva ao login; quem cuida da sessão são as chamadas da
