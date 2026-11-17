@@ -25,7 +25,9 @@ const CONECTA = process.env.E2E_CONECTA;
 // Por padrão numa pasta fora do git: cada rodada muda a hora no painel e
 // reescreveria os PNG versionados. Para renovar os de tests/e2e/prints/:
 // `E2E_PRINTS=tests/e2e/prints tests/e2e/rodar-presenca.sh`.
-const PRINTS = `${resolve(process.env.E2E_PRINTS || fileURLToPath(new URL('./prints-da-rodada/', import.meta.url)))}/`;
+// O caminho conta da raiz do repositório, de onde quer que se rode.
+const RAIZ = fileURLToPath(new URL('../../', import.meta.url));
+const PRINTS = `${resolve(RAIZ, process.env.E2E_PRINTS || 'tests/e2e/prints-da-rodada')}/`;
 const ROTA = '/api/presenca';
 const EMAIL = 'carla@e2e.sejaap.com.br';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -79,6 +81,16 @@ async function printDoPainel(context, arquivo) {
   await painel.goto(`${CONECTA}/_painel`);
   await painel.screenshot({ path: PRINTS + arquivo, fullPage: true });
   await painel.close();
+}
+
+/**
+ * Daqui em diante, o relógio da página só anda quando o teste manda. Sem isto
+ * ele também anda com o tempo de verdade, e o que corre nas esperas do teste
+ * soma no salto seguinte: o corte de 10 s do pedido (`PRESENCA_TEMPO_MAXIMO_MS`)
+ * acabaria vencendo no relógio de mentira com o pedido de verdade a caminho.
+ */
+async function pararORelogio(page) {
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
 }
 
 /** Diz à página que a aba voltou a ficar visível (headless não troca de aba). */
@@ -172,12 +184,13 @@ test('um sinal por minuto com a aba aberta, e um na volta à aba', async ({ page
   await page.clock.install();
   await entrar(page);
   await esperarSinal(request, { modulo: 'Lobby', tela: 'Categorias' });
+  await pararORelogio(page);
   await limparSinais(request);
   // Conta o que sai da página, na hora: o que chega ao Conecta falso ainda
   // poderia estar no caminho quando o teste olha.
   const saidos = vigiarSinais(page);
 
-  // A folga cobre o tempo de verdade que corre entre um passo e outro.
+  // O primeiro sinal saiu um pouco antes de o relógio parar: a folga de 5 s cobre isso.
   await page.clock.runFor(50 * 1000);
   expect(saidos).toHaveLength(0);
   await page.clock.runFor(15 * 1000);
@@ -185,8 +198,8 @@ test('um sinal por minuto com a aba aberta, e um na volta à aba', async ({ page
   expect(saidos).toHaveLength(1);
 
   // Minuto a minuto, esperando cada sinal chegar: num salto de 2 minutos, o
-  // corte de 10 s do pedido (`PRESENCA_TEMPO_MAXIMO_MS`) venceria no relógio de
-  // mentira com o pedido de verdade ainda a caminho, e o abortaria.
+  // corte de 10 s do pedido do primeiro venceria dentro do mesmo salto, com o
+  // pedido de verdade ainda a caminho, e o abortaria.
   for (const total of [2, 3]) {
     await page.clock.runFor(60 * 1000);
     await expect.poll(async () => (await sinais(request)).length, { timeout: 5000 }).toBe(total);
@@ -234,6 +247,7 @@ test('o erro do sinal nunca aparece, não repete e não tira ninguém do lobby; 
   await page.clock.install();
   await entrar(page);
   await esperarSinal(request, { modulo: 'Lobby', tela: 'Categorias' });
+  await pararORelogio(page);
   const saidos = vigiarSinais(page);
 
   // O backend com erro (500): um pedido por minuto, sem repetir em laço.
@@ -277,6 +291,7 @@ test('por último: com o Conecta fora, o backend responde 204 e a tela nem perce
   await page.clock.install();
   await entrar(page);
   await esperarSinal(request, { modulo: 'Lobby', tela: 'Categorias' });
+  await pararORelogio(page);
   await limparSinais(request);
   const respostas = [];
   page.on('response', (r) => { if (new URL(r.url()).pathname === ROTA) respostas.push(r.status()); });

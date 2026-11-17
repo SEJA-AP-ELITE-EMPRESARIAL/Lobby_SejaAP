@@ -37,7 +37,7 @@ const SINAL = entre(html, '/* ===== Sinal de presença (TSK-1520) ===== */', '/*
 
 const EXPOSTOS = [
   'sessaoLobby', 'iniciaSessao', 'encerraSessao',
-  'PRESENCA_ROTA', 'PRESENCA_INTERVALO_MS', 'PRESENCA_ESPERA_NA_TROCA_MS', 'PRESENCA_VOLTA_SEM_SINAL_MS',
+  'PRESENCA_ROTA', 'PRESENCA_INTERVALO_MS', 'PRESENCA_INTERVALO_ESCONDIDA_MS', 'PRESENCA_ESPERA_NA_TROCA_MS', 'PRESENCA_VOLTA_SEM_SINAL_MS',
   'PRESENCA_TEMPO_MAXIMO_MS', 'telaDaPresenca', 'enviaSinalDePresenca', 'criaSinalDePresenca', 'instalaSinalDePresenca',
 ];
 
@@ -266,22 +266,24 @@ test('um sinal por minuto com a aba aberta, o primeiro logo ao ligar', (t) => {
   assert.equal(l.PRESENCA_INTERVALO_MS, 60 * 1000);
 });
 
-test('a aba em segundo plano segue mandando (o relógio não para ao esconder)', (t) => {
+test('a aba em segundo plano segue mandando (o relógio não para ao esconder), a cada 55 s', (t) => {
   const { l, sinal, enviados, anda } = relogioComEspiao(t);
   sinal.em(ELITE);
   anda(500);
   l.document.visibilityState = 'hidden';
   l.document.dispatchEvent(new Event('visibilitychange'));
   anda(3 * 60 * 1000);
-  assert.equal(enviados.length, 4);
+  // O de 60500 foi marcado com a aba visível; dali em diante, escondida, 55 s.
+  assert.deepEqual(enviados.map((e) => e.em), [500, 60500, 115500, 170500]);
+  assert.equal(l.PRESENCA_INTERVALO_ESCONDIDA_MS, 55 * 1000);
 });
 
 // O Chrome, com a aba escondida há mais de 5 minutos, só confere os timers uma
 // vez por minuto, na virada do minuto. O sinal sai na conferência, e o callback
-// leva uns milissegundos até marcar o próximo: sem descontar o atraso, o próximo
+// leva uns milissegundos até marcar o próximo: marcado para 60 s, o próximo
 // venceria logo DEPOIS da conferência seguinte e sairia só na outra, a 2 min.
-test('aba estrangulada (o Chrome confere os timers 1 vez por minuto): segue um sinal por minuto', (t) => {
-  const anda = comRelogio(t);
+function abaEstrangulada(t) {
+  comRelogio(t);
   const l = lobby();
   const enviados = [];
   const sinal = l.criaSinalDePresenca({
@@ -290,20 +292,45 @@ test('aba estrangulada (o Chrome confere os timers 1 vez por minuto): segue um s
       mock.timers.setTime(Date.now() + 5);   // o callback leva 5 ms até marcar o próximo
     },
   });
-  sinal.em(ELITE);
-  anda(500);
-  assert.deepEqual(enviados, [500]);
+  // Só as conferências da virada de cada minuto.
+  const conferencias = (n) => {
+    for (let i = 0; i < n; i++) {
+      const viradaDoMinuto = Math.ceil((Date.now() + 1) / 60000) * 60000;
+      mock.timers.tick(viradaDoMinuto - Date.now());
+    }
+  };
+  const intervalos = (lista) => lista.slice(1).map((v, i) => v - lista[i]);
+  return { l, sinal, enviados, conferencias, intervalos };
+}
 
-  // Dali em diante, só as conferências da virada de cada minuto.
-  for (let i = 0; i < 10; i++) {
-    const viradaDoMinuto = Math.ceil((Date.now() + 1) / 60000) * 60000;
-    mock.timers.tick(viradaDoMinuto - Date.now());
-  }
-  const depoisDoPrimeiro = enviados.slice(1);
-  assert.ok(depoisDoPrimeiro.length >= 8, `um por conferência: ${depoisDoPrimeiro}`);
-  for (let i = 1; i < depoisDoPrimeiro.length; i++) {
-    assert.equal(depoisDoPrimeiro[i] - depoisDoPrimeiro[i - 1], 60 * 1000, `intervalo ${i}: ${depoisDoPrimeiro}`);
-  }
+test('aba estrangulada (o Chrome confere os timers 1 vez por minuto): segue um sinal por minuto', (t) => {
+  const { l, sinal, enviados, conferencias, intervalos } = abaEstrangulada(t);
+  sinal.em(ELITE);
+  mock.timers.tick(500);
+  assert.deepEqual(enviados, [500]);
+  l.document.visibilityState = 'hidden';
+
+  conferencias(10);
+  // O primeiro intervalo é a entrada no estrangulamento: o sinal de 500 ms foi
+  // marcado com a aba visível (60 s) e perde a conferência de 60 s por 5 ms.
+  // Dali em diante, um por conferência.
+  assert.ok(enviados.length >= 9, `um por conferência: ${enviados}`);
+  assert.deepEqual(intervalos(enviados.slice(1)), Array(enviados.length - 2).fill(60 * 1000), `${enviados}`);
+});
+
+test('aba estrangulada e o computador suspenso: ao acordar, volta a um por minuto (não fica em 2)', (t) => {
+  const { l, sinal, enviados, conferencias, intervalos } = abaEstrangulada(t);
+  sinal.em(ELITE);
+  mock.timers.tick(500);
+  l.document.visibilityState = 'hidden';
+  conferencias(4);
+
+  mock.timers.setTime(Date.now() + 30 * 60 * 1000);   // 30 min suspenso: nenhum timer roda
+  const antes = enviados.length;
+  conferencias(8);
+  const depois = enviados.slice(antes);
+  assert.equal(depois.length, 8, `um ao acordar e um por conferência: ${depois}`);
+  assert.deepEqual(intervalos(depois), Array(7).fill(60 * 1000), `${depois}`);
 });
 
 test('o computador suspenso por 10 minutos: um sinal ao acordar, e não dez', (t) => {

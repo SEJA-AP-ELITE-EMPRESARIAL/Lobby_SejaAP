@@ -115,9 +115,10 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   de tela, depois de 500 ms (a troca que leva a outra logo atrás manda um só, o
   da tela onde a pessoa ficou), e o minuto recomeça dali; um na volta à aba, se o
   último saiu há 30 s ou mais. Nada na tela de login, no "Abrindo o lobby…", nas
-  telas de senha nem no `/django-admin/`. O minuto conta de quando o sinal devia
-  sair: com a aba escondida há mais de 5 min o Chrome só confere os timers uma
-  vez por minuto, e sem esse desconto o sinal sairia a cada 2.
+  telas de senha nem no `/django-admin/`. Com a aba escondida o sinal é marcado
+  a cada 55 s: escondida há mais de 5 min, o Chrome só confere os timers uma vez
+  por minuto, e o marcado para 60 s perderia a conferência seguinte por
+  milissegundos e sairia a cada 2 min (a pessoa piscaria offline no painel).
 - **A última interação** é o último clique, tecla, gesto de rolagem (roda ou
   dedo) ou Voltar/Avançar do navegador, em `new Date(ts).toISOString()`. O evento
   `scroll` não conta: a página rola sozinha na troca de etapa. Antes do primeiro,
