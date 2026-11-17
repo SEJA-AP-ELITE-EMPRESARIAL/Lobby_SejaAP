@@ -651,6 +651,143 @@ function criaEnviaEsta(atendimento, vendaNoAr) {
 }
 /* ===== fim da sessão do Lobby ===== */
 
+/* ===== Sinal de presença (TSK-1520) ===== */
+// O Conecta tem o painel "Uso em tempo real" (só SuperAdmin): quem está online
+// agora em cada sistema, e em qual tela. Com a pessoa logada, esta aba diz ao
+// backend do Lobby (`POST /api/presenca`) em que tela está e quando a pessoa
+// mexeu nela por último; o backend repassa ao Conecta. Regras do Mathias,
+// 16/11/2026: online = sinal nos últimos 2 min; parado = sem interação há mais
+// de 3 min — por isso a última interação tem de ser verdadeira.
+//
+// - Um sinal por minuto enquanto a aba está aberta, também em segundo plano;
+// - na troca de tela, um na hora, depois de uma espera curta
+//   (`PRESENCA_ESPERA_NA_TROCA_MS`): a troca que leva a outra logo atrás (um
+//   redirecionamento) manda um sinal só, o da tela onde a pessoa ficou. O
+//   minuto recomeça dali;
+// - na volta à aba, um na hora (o navegador atrasa o relógio da aba escondida),
+//   se o último saiu há `PRESENCA_VOLTA_SEM_SINAL_MS` ou mais: quem alterna com
+//   outra janela a cada poucos segundos não vira um sinal por volta;
+// - a última interação é o último clique, tecla, gesto de rolagem (roda ou
+//   dedo) ou Voltar/Avançar do navegador, em qualquer lugar da página. O evento
+//   `scroll` não conta: a própria página rola sozinha na troca de etapa. Antes
+//   do primeiro, vale a abertura da página;
+// - sem sessão (a tela de login), abrindo o lobby ou com a sessão vencida, nada.
+//   O /django-admin/ e as telas de senha (esqueci, definir) não têm este código.
+//
+// O sinal nunca aparece para a pessoa: não passa pelo `apiFetch` (o 401 dele não
+// derruba a sessão nem leva ao login; quem cuida da sessão são as chamadas da
+// própria tela), não mostra aviso, não repete (o próximo minuto manda outro) e
+// nunca lança. Depois de um 401, o mesmo token não manda mais: a aba esquecida
+// aberta de noite não vira um 401 por minuto. Nada fica guardado no navegador.
+const PRESENCA_ROTA = '/api/presenca';
+const PRESENCA_INTERVALO_MS = 60 * 1000;
+const PRESENCA_ESPERA_NA_TROCA_MS = 500;
+const PRESENCA_VOLTA_SEM_SINAL_MS = 30 * 1000;
+// O backend responde na hora (o repasse ao Conecta tem teto de 2 s); mais que
+// isto é rede ruim, e o sinal do minuto seguinte resolve.
+const PRESENCA_TEMPO_MAXIMO_MS = 10 * 1000;
+// O que o Conecta grava: módulo até 60, tela até 120. O backend recusa mais.
+const PRESENCA_TAMANHO_DO_MODULO = 60;
+const PRESENCA_TAMANHO_DA_TELA = 120;
+const PRESENCA_INTERACOES = ['pointerdown', 'keydown', 'wheel', 'touchmove'];
+
+function textoDoSinal(texto, maximo) {
+  const t = String(texto || '').replace(/\s+/g, ' ').trim();
+  return t.length > maximo ? `${t.slice(0, maximo - 1).trimEnd()}…` : t;
+}
+
+// O texto da tela, como o painel mostra: "módulo · tela". O módulo é onde a
+// pessoa está vendendo (a categoria do catálogo: "Elite", "APN", "Produtos"), ou
+// "Lobby" na grade de categorias; a tela é a etapa do stepper, com o produto
+// quando já há um. Só rótulos do catálogo e das etapas: nada do cliente.
+function telaDaPresenca({ tela, categoria, etapa, produto, autorizando }) {
+  if (tela === 'lobby' || !categoria) return { modulo: 'Lobby', tela: 'Categorias' };
+  const onde = tela === 'success' ? 'Venda enviada'
+    : autorizando ? 'Autorização de negociação'
+      : (etapa || 'Venda');
+  return {
+    modulo: textoDoSinal(categoria, PRESENCA_TAMANHO_DO_MODULO),
+    tela: textoDoSinal(produto ? `${onde} · ${produto}` : onde, PRESENCA_TAMANHO_DA_TELA),
+  };
+}
+
+// O token que o backend recusou (401). Volta a mandar quando a sessão muda.
+let presencaTokenRecusado = null;
+
+// Manda um sinal. Nunca lança: `true` se o backend o aceitou (204), `false` em
+// todo o resto, inclusive sem sessão (nem chega a chamar).
+async function enviaSinalDePresenca({ modulo, tela, ultimaInteracao }) {
+  try {
+    const sessao = sessaoLobby.atual;
+    if (!sessaoVigente(sessao) || sessao.token === presencaTokenRecusado || !modulo) return false;
+    const corpo = { modulo, tela: tela || '' };
+    // Fora do intervalo do `Date` o `toISOString` lançaria: aí vai sem ela.
+    const quando = Number.isFinite(ultimaInteracao) ? new Date(ultimaInteracao) : null;
+    if (quando && !Number.isNaN(quando.getTime())) corpo.ultima_interacao = quando.toISOString();
+    const controle = typeof AbortController === 'function' ? new AbortController() : null;
+    const prazo = controle ? setTimeout(() => controle.abort(), PRESENCA_TEMPO_MAXIMO_MS) : null;
+    try {
+      const r = await fetch(PRESENCA_ROTA, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessao.token}` },
+        body: JSON.stringify(corpo),
+        cache: 'no-store',
+        ...(controle ? { signal: controle.signal } : {}),
+      });
+      if (r.status === 401) presencaTokenRecusado = sessao.token;
+      return r.status === 204;
+    } finally {
+      clearTimeout(prazo);
+    }
+  } catch {
+    return false;
+  }
+}
+
+// O relógio do sinal. `em(onde)` diz a tela de agora (`{ modulo, tela }`), ou
+// null para desligar (sem sessão, ou abrindo o lobby); `interagiu()` marca a
+// última interação; `voltouAAba()` é o `visibilitychange`.
+function criaSinalDePresenca({ envia = enviaSinalDePresenca, visivel = () => document.visibilityState === 'visible' } = {}) {
+  let onde = null;
+  let ultimaInteracao = Date.now();
+  let ultimoEnvio = -Infinity;
+  let proximo = null;
+  const manda = () => {
+    clearTimeout(proximo);
+    proximo = null;
+    if (!onde) return;
+    ultimoEnvio = Date.now();
+    envia({ ...onde, ultimaInteracao });
+    proximo = setTimeout(manda, PRESENCA_INTERVALO_MS);
+  };
+  return {
+    interagiu() { ultimaInteracao = Date.now(); },
+    em(nova) {
+      const igual = nova && onde ? nova.modulo === onde.modulo && nova.tela === onde.tela : !nova && !onde;
+      if (igual) return;
+      onde = nova ? { modulo: nova.modulo, tela: nova.tela } : null;
+      clearTimeout(proximo);
+      proximo = onde ? setTimeout(manda, PRESENCA_ESPERA_NA_TROCA_MS) : null;
+    },
+    voltouAAba() {
+      if (onde && visivel() && Date.now() - ultimoEnvio >= PRESENCA_VOLTA_SEM_SINAL_MS) manda();
+    },
+  };
+}
+
+// Liga o relógio aos eventos da página. Em captura, para nenhum
+// `stopPropagation` da tela (os modais o usam) esconder a interação.
+function instalaSinalDePresenca(sinal, pagina = document, janela = window) {
+  const opcoes = { capture: true, passive: true };
+  PRESENCA_INTERACOES.forEach((evento) => pagina.addEventListener(evento, sinal.interagiu, opcoes));
+  janela.addEventListener('popstate', sinal.interagiu);
+  pagina.addEventListener('visibilitychange', sinal.voltouAAba);
+  return sinal;
+}
+/* ===== fim do sinal de presença ===== */
+// O relógio desta aba, ligado aos eventos da página. Quem diz a tela é o App.
+const sinalDePresenca = instalaSinalDePresenca(criaSinalDePresenca());
+
 /**
  * Troca e-mail + senha por uma autorização de negociação.
  * Devolve { token, nome, email, papel }. Lança Error com a mensagem da vez.
@@ -3307,6 +3444,18 @@ function App({ motivoAoAbrir }) {
       }
     })();
   }, [temSessao, catalogoPronto]);
+
+  // ===== Sinal de presença (TSK-1520) =====
+  // A tela de agora para o painel "Uso em tempo real" do Conecta, só com o
+  // lobby aberto para alguém (`logado`): sem sessão (o login) ou abrindo, null,
+  // e o relógio para. Ver `criaSinalDePresenca`.
+  const presenca = logado
+    ? telaDaPresenca({
+      tela: s.screen, categoria: cat && cat.name, etapa: steps[s.step],
+      produto: product && product.name, autorizando: !!s.pedindoAutorizacao,
+    })
+    : null;
+  useEffect(() => { sinalDePresenca.em(presenca); }, [presenca && presenca.modulo, presenca && presenca.tela]);
 
   const onEntrar = (dados) => {
     const nova = iniciaSessao(dados);
