@@ -349,6 +349,10 @@ REST_FRAMEWORK = {
         # Valores das modalidades do DH - Avaliação (TSK-1056): o lobby os
         # reconsulta no ritmo dos departamentos.
         "dh_avaliacao_publico": os.environ.get("LOBBY_RATE_DH_AVALIACAO", "600/hour"),
+        # O sinal de presença da tela (TSK-1520), por pessoa: 1 por minuto por
+        # aba, mais 1 por troca de tela e 1 por volta à aba. O 429 é engolido
+        # pela tela; o próximo minuto manda de novo.
+        "presenca": os.environ.get("LOBBY_RATE_PRESENCA", "20/min"),
         # Integração com o Conecta (TSK-1059, ADR-002 §10.4). Toda chamada sai do
         # MESMO IP, o do servidor do Conecta: teto por IP limitaria o portal
         # inteiro de uma vez. Depois da asserção a chamada tem pessoa, e o teto é

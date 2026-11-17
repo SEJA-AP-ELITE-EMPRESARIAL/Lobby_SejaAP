@@ -57,3 +57,14 @@ class PorPessoaThrottle(UserRateThrottle):
         if isinstance(getattr(request, "auth", None), AssercaoConecta):
             return None
         return super().get_cache_key(request, view)
+
+
+class PresencaThrottle(PorPessoaThrottle):
+    """Teto do sinal de presença (`POST /api/presenca`, TSK-1520), por pessoa.
+
+    A tela manda 1 por minuto por aba, mais 1 por troca de tela e 1 por volta à
+    aba. Passar disso é aba demais ou laço: o 429 é engolido pela tela, e o
+    próximo minuto manda de novo.
+    """
+
+    scope = "presenca"
