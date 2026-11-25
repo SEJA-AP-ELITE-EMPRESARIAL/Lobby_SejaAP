@@ -179,6 +179,14 @@ test('o payload da PF', () => {
   assert.deepEqual(payload.pagamento, { forma: 'boleto', parcelas: 1, data: '2026-12-10' });
 });
 
+test('na PF o CPF não vai no que o servidor assina', () => {
+  const payload = lobby.payloadDoCasais(pf({ casEliteMarcado: true }), 'CAP-261125012345');
+  assert.deepEqual(lobby.valoresDoCasais(payload, 'produtos', 'casais-alta-performance').casais,
+    { tipo_pessoa: 'PF', documento: '', tabela: 'elite', elite_conferido_no_conecta: false });
+  // No payload do n8n ele continua: é o contratante.
+  assert.equal(payload.contratante.documento, '775.927.214-65');
+});
+
 test('o que o servidor assina sai do payload', () => {
   const payload = lobby.payloadDoCasais(venda({ casElite: conferencia('inativo') }), 'CAP-261125112345');
   assert.deepEqual(lobby.valoresDoCasais(payload, 'produtos', 'casais-alta-performance'), {

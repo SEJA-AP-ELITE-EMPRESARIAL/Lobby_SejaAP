@@ -22,6 +22,11 @@
  * 6. o /api/venda/validar: a venda de verdade passa; os R$ 35.000,00 numa PJ não
  *    ativa e um valor fora dos dois, não.
  *
+ * E dois caminhos de estado da tela, com a primeira conferência forjada no
+ * navegador: a tela "sem resposta" pergunta de novo no envio e para se o valor
+ * mudar; e o "ativo" que o Conecta não deu é recusado pelo comprovante (o
+ * servidor não confia no que a tela diz), e a tela volta ao valor que vale.
+ *
  * Nomes, CPFs e CNPJs são inventados (de dígito válido). Os prints vão para
  * tests/e2e/prints-da-rodada/ (fora do git), ou para `E2E_PRINTS`.
  */
@@ -347,6 +352,84 @@ test('PF: marcar e desmarcar "paga o valor do Elite Empresarial" alterna o valor
   expect(await validar(request, venda)).toMatchObject({ valido: true });
   // Na PF o Conecta não é perguntado.
   expect(await perguntasAoConecta(request)).toEqual([]);
+});
+
+/**
+ * A primeira resposta de `/api/casais/elite` é forjada aqui, no navegador; as
+ * seguintes vão ao backend de verdade. É como a tela fica com uma conferência
+ * que o servidor não tem.
+ */
+async function primeiraConferencia(page, corpo) {
+  let chamadas = 0;
+  await page.route('**/api/casais/elite', async (route) => {
+    chamadas += 1;
+    if (chamadas === 1) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(corpo) });
+    }
+    return route.continue();
+  });
+  return () => chamadas;
+}
+
+async function ateOResumo(page, cnpj) {
+  await abrirCasais(page);
+  await contratantePJ(page, cnpj);
+  await contato(page);
+  await continuar(page);
+  await casal(page);
+  await continuar(page);
+  await etapa(page, 'Pagamento');
+  await pagamento(page, { forma: 'Pix' });
+  await continuar(page);
+  await etapa(page, 'Confirme o pedido');
+}
+
+test('a tela sem resposta do Conecta pergunta de novo no envio, e para se o valor mudar', async ({ page }) => {
+  const n8n = await n8nFalso(page);
+  const chamadas = await primeiraConferencia(page, {
+    cliente_ativo: null, conferido: false, tabela: 'cheio', valor: 39997, motivo: 'indisponivel', tentar_em: 60,
+    mensagem: 'Não foi possível conferir o CNPJ no Conecta agora. Sem a conferência, a venda fica no preço cheio, R$ 39.997,00.',
+  });
+  await entrar(page);
+  await ateOResumo(page, ATIVO);
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 39.997,00');
+  await expect(page.getByText('Preço cheio (sem conferência do Conecta)')).toBeVisible();
+
+  // O Conecta voltou: no Finalizar a tela pergunta de novo, vê o Elite e para,
+  // em vez de mandar um valor que o consultor não viu.
+  await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
+  await expect(page.getByText(/O valor mudou para R\$\s35\.000,00/)).toBeVisible();
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 35.000,00');
+  expect(chamadas()).toBe(2);
+  expect(n8n.vendas).toEqual([]);
+
+  await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
+  await expect(page.locator('[data-protocolo]')).toBeVisible();
+  expect(n8n.vendas[0]).toMatchObject({ valor: 35000, tabela: 'elite', elite_conferido_no_conecta: true });
+});
+
+test('o servidor não confia na tela: o "ativo" que o Conecta não deu é recusado no comprovante', async ({ page }) => {
+  const n8n = await n8nFalso(page);
+  const chamadas = await primeiraConferencia(page, {
+    cliente_ativo: true, conferido: true, tabela: 'elite', valor: 35000, motivo: null, tentar_em: null,
+    mensagem: 'Cliente ativo do Elite Empresarial no Conecta: vale o valor do Elite, R$ 35.000,00.',
+  });
+  await entrar(page);
+  await ateOResumo(page, INATIVO);
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 35.000,00');
+
+  // O comprovante pergunta de novo no servidor: 422, e a tela volta ao valor que vale.
+  await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
+  await expect(page.getByText(/não tem este CNPJ como cliente ativo do Elite Empresarial: o valor desta venda é R\$\s39\.997,00/)).toBeVisible();
+  await expect(page.getByText(/O valor mudou para R\$\s39\.997,00/)).toBeVisible();
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 39.997,00');
+  await page.screenshot({ path: PRINTS + '20-casais-servidor-recusa-elite.png', fullPage: true });
+  expect(chamadas()).toBe(2);
+  expect(n8n.vendas).toEqual([]);
+
+  await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
+  await expect(page.locator('[data-protocolo]')).toBeVisible();
+  expect(n8n.vendas[0]).toMatchObject({ valor: 39997, tabela: 'cheio', elite_conferido_no_conecta: true });
 });
 
 // Por último: a falha deixa o backend 60 s sem perguntar ao Conecta (a pausa é

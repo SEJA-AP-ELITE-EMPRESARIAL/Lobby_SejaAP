@@ -1766,7 +1766,8 @@ function payloadDoCasais(d, protocolo) {
 }
 
 // O que o servidor assina: o valor e, com ele, o que decide o valor — quem
-// contrata (o CNPJ é o que o Conecta conferiu), a tabela e a conferência. Mesma
+// contrata (na PJ, o CNPJ que o Conecta conferiu; na PF o CPF não vai, porque
+// não decide o valor e o servidor não o guarda), a tabela e a conferência. Mesma
 // forma do DH - Avaliação: o total inteiro na entrada, sem cronograma.
 function valoresDoCasais(payload, categoriaId, produtoId) {
   return {
@@ -1781,7 +1782,7 @@ function valoresDoCasais(payload, categoriaId, produtoId) {
     protocolo: payload.id_venda,
     casais: {
       tipo_pessoa: payload.contratante.tipo_pessoa,
-      documento: payload.contratante.documento,
+      documento: payload.contratante.tipo_pessoa === 'PJ' ? payload.contratante.documento : '',
       tabela: payload.tabela,
       elite_conferido_no_conecta: payload.elite_conferido_no_conecta,
     },
@@ -3594,7 +3595,16 @@ function App({ motivoAoAbrir }) {
         if (tabelaDoCasais(dados) !== casTabela) { patch({ sendState: 'idle' }); return; }
       }
     }
-    const protocolo = dados.casProtocolo || numeroDoContratoCasais('', product, dados.casForma);
+    // O número que o Resumo mostrou. Se o dia virou com o Resumo aberto, ele
+    // muda (o AAMMDD é a data da venda): o envio para e mostra o novo.
+    const protocolo = numeroDoContratoCasais(dados.casProtocolo, product, dados.casForma);
+    if (dados.casProtocolo && protocolo !== dados.casProtocolo) {
+      patch({
+        sendState: 'idle', casProtocolo: protocolo,
+        casAviso: `O dia virou desde que o Resumo abriu, e o número do contrato passou a ser ${protocolo}. Confira e finalize de novo.`,
+      });
+      return;
+    }
     try {
       const payload = payloadDoCasais(dados, protocolo);
       const valores = valoresDoCasais(payload, cat ? cat.id : '', product ? product.id : '');
@@ -5664,7 +5674,7 @@ function App({ motivoAoAbrir }) {
   };
 
   const renderResumo = () => {
-    const parcelasLabel =s.parcelas.length === 0 ? 'Sem parcelas (à vista)' : s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
+    const parcelasLabel = s.parcelas.length === 0 ? 'Sem parcelas (à vista)' : s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
     return (
       <>
         <div style={{ marginBottom: 22 }}>
