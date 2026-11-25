@@ -273,6 +273,23 @@ descrito acima, com o mesmo nó "Validar venda" e o mesmo Switch, e mais isto:
    (lá quem decide é o consultor) postado com o topo dizendo que quem contrata
    é uma PJ. O hash bate, porque o Lobby nunca vê o topo; só esta comparação o
    pega. Na PF o CPF não é assinado (o Lobby não o guarda: não decide o valor).
+
+   Num nó IF logo depois da saída 0 (*Aprovada*), com o topo lido do webhook
+   (`$('Webhook - …').first().json.body`, trocando pelo nome do nó do fluxo):
+
+   ```text
+   v = $json                       (a resposta do /api/venda/validar)
+   b = $('Webhook - …').first().json.body
+   Number(b.valor) === Number(v.valor_total)          ← o topo é número (35000); o Lobby devolve texto ("35000.00")
+   b.tabela === v.casais.tabela
+   b.elite_conferido_no_conecta === v.casais.elite_conferido_no_conecta
+   b.contratante.tipo_pessoa === v.casais.tipo_pessoa
+   e, se v.casais.tipo_pessoa === "PJ":
+     b.contratante.documento.replace(/[^0-9A-Za-z]/g, '').toUpperCase() === v.casais.documento
+                                                      ← sem pontuação e em maiúsculas: o CNPJ alfanumérico da Receita mantém as letras
+   ```
+
+   Tudo verdadeiro: fature (com o `valor_total`). Qualquer um falso: *Bloquear*.
 2. **O Lobby já recusa** o que não pode passar: valor fora dos dois
    (`valores_invalidos`), o valor trocado num comprovante do cheio
    (`valores_adulterados`), o CNPJ trocado (`valores_adulterados`: o documento

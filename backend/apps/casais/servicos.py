@@ -195,7 +195,8 @@ def conferir_cnpj(cnpj, *, pessoa=None):
     """A `Conferencia` do CNPJ (já normalizado): a guardada, ou perguntada agora.
 
     `pessoa` é quem vende (o teto por pessoa); `None` na validação do n8n, que
-    não tem pessoa e só chega depois de um comprovante. Nunca levanta.
+    não tem pessoa e só pergunta por um comprovante que passaria em todo o resto
+    (`apps.vendas.servicos.validar`). Nunca levanta.
     """
     chave = _chave_da_resposta(cnpj)
     guardada = _ler(chave)

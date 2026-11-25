@@ -319,6 +319,40 @@ class ValidacaoTest(Base):
         self.assertEqual(self.validar("00000000-0000-0000-0000-000000000000.abc", dados)["motivo"],
                          "comprovante_desconhecido")
 
+    def test_so_o_comprovante_que_passaria_pergunta_ao_conecta(self):
+        """O webhook é público: um POST com comprovante falso não gasta o balde do Conecta."""
+        dados = venda_casais(documento=ATIVO, tabela="elite", conferido=True)
+        token = self.assertAssina(dados)
+        identificador = token.split(".")[0]
+        outro_cnpj = venda_casais(documento=FORA, tabela="elite", conferido=True)
+        for token_da_vez, valores, motivo in (
+            (None, dados, "comprovante_ausente"),
+            ("00000000-0000-0000-0000-000000000000.abc", dados, "comprovante_desconhecido"),
+            ("x.y", dados, "comprovante_desconhecido"),
+            (f"{identificador}.assinatura-errada", dados, "assinatura_invalida"),
+            (token, outro_cnpj, "valores_adulterados"),
+        ):
+            with self.subTest(motivo=motivo):
+                cache.clear()
+                self.conecta.reset_mock()
+                corpo = self.validar(token_da_vez, valores)
+                self.assertEqual((corpo["valido"], corpo["motivo"]), (False, motivo))
+                self.conecta.assert_not_called()
+
+        # Usado: o reenvio do n8n também não pergunta.
+        self.assertTrue(self.validar(token, dados)["valido"])
+        cache.clear()
+        self.conecta.reset_mock()
+        self.assertEqual(self.validar(token, outro_cnpj)["motivo"], "comprovante_ja_usado")
+        self.conecta.assert_not_called()
+
+    def test_valores_que_nao_sao_objeto_nao_dao_500(self):
+        token = self.assertAssina(venda_pf(tabela="cheio"))
+        for valores, motivo in (("abc", "comprovante_ausente"), (["x"], "valores_invalidos")):
+            with self.subTest(valores=valores):
+                corpo = self.validar(None if motivo == "comprovante_ausente" else token, valores)
+                self.assertEqual((corpo["valido"], corpo["motivo"]), (False, motivo))
+
     def test_elite_de_uma_pj_que_deixou_de_ser_ativa_e_recusado(self):
         """O servidor reconsulta o Conecta na validação."""
         dados = venda_casais(documento=ATIVO, tabela="elite", conferido=True)

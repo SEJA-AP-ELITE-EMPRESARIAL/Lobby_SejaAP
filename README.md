@@ -427,8 +427,9 @@ n8n ──POST /api/venda/validar──► Lobby: valor fora dos dois → recusa
   servir para outra empresa.
 - **O balde do Conecta é um só** (30 por minuto, 120 por hora, para o Lobby
   inteiro). Por isso: a resposta (sim ou não) fica guardada por CNPJ por 10
-  minutos (a chave é o hash do CNPJ); uma falha pausa as perguntas de todos (o
-  `Retry-After` do 429, ou 60 s), sem laço; e cada pessoa tem um teto de
+  minutos (a chave é um HMAC do CNPJ com a `SECRET_KEY`, e não o CNPJ); uma
+  falha pausa as perguntas de todos (o `Retry-After` do 429, ou 60 s), sem
+  laço; e cada pessoa tem um teto de
   perguntas que vão de fato até lá, somando a tela e o comprovante
   (`LOBBY_CASAIS_CONSULTAS_POR_HORA`, 20 por hora cheia). A rota tem ainda o teto
   por pessoa de sempre (`LOBBY_RATE_CASAIS_ELITE`, 60/h). Sem Redis, cada

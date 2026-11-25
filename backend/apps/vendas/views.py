@@ -141,13 +141,14 @@ def validar_comprovante(request):
             {"erro": "Não autorizado."}, status=status.HTTP_401_UNAUTHORIZED
         )
 
-    corpo = request.data or {}
-    resultado = validar(corpo.get("comprovante"), corpo.get("valores") or {})
+    corpo = request.data if isinstance(request.data, dict) else {}
+    valores = corpo.get("valores") or {}
+    resultado = validar(corpo.get("comprovante"), valores)
 
     if not resultado["valido"]:
         logger.warning(
             "venda recusada na validação: motivo=%s protocolo=%s",
             resultado.get("motivo"),
-            (corpo.get("valores") or {}).get("protocolo"),
+            valores.get("protocolo") if isinstance(valores, dict) else None,
         )
     return Response(resultado)

@@ -8,6 +8,7 @@ porque alguém com permissão autorizou a diferença.
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -495,8 +496,15 @@ def validar(token: str, dados: dict) -> dict:
     Casais de Alta Performance é reconsultado no Conecta (até alguns segundos):
     a pergunta não segura a linha do comprovante travada. A ordem dos motivos é a
     de sempre — o veredito sai todo de dentro da transação.
+
+    E a pergunta só sai para um comprovante que passaria em todo o resto
+    (`_comprovante_que_passaria`): o webhook do n8n é público, e um POST com um
+    comprovante forjado, usado ou de outro CNPJ não pode gastar o balde do
+    Conecta, que é um só para o Lobby inteiro.
     """
     try:
+        if not isinstance(dados, dict):
+            raise VendaRecusada("Valores inválidos.")
         valores = _valores_normalizados(dados)
         if valores["fluxo"] == ComprovanteVenda.Fluxo.CASAIS:
             # Um valor fora dos dois fixos nem chega à conferência do hash: o
@@ -508,7 +516,8 @@ def validar(token: str, dados: dict) -> dict:
 
     ativo_agora = None
     casais = valores.get("casais") if valores else None
-    if casais and casais["tipo_pessoa"] == "PJ" and casais["tabela"] == "elite":
+    if (casais and casais["tipo_pessoa"] == "PJ" and casais["tabela"] == "elite"
+            and _comprovante_que_passaria(token, valores)):
         # O valor do Elite numa PJ: o servidor confere de novo. O comprovante já
         # prova que o Conecta disse "ativo" na emissão (o servidor não o assina
         # sem isso); aqui vale a resposta de agora — a guardada, quase sempre, já
@@ -519,18 +528,50 @@ def validar(token: str, dados: dict) -> dict:
     return _validar_na_transacao(token, valores, invalidos, ativo_agora)
 
 
+def _abre_token(token):
+    """`(id, assinatura)` do token, ou `None` sem o formato `<id>.<assinatura>`."""
+    if not token or "." not in str(token):
+        return None
+    identificador, _, assinatura = str(token).partition(".")
+    return identificador, assinatura
+
+
+def _comprovante_que_passaria(token, valores) -> bool:
+    """O comprovante existe, confere, não foi usado nem venceu, e é destes valores.
+
+    Lido sem trava, só para decidir se vale perguntar ao Conecta: quem decide é
+    a transação, que relê tudo com a linha travada.
+    """
+    partes = _abre_token(token)
+    if partes is None:
+        return False
+    try:
+        comprovante = ComprovanteVenda.objects.get(pk=partes[0])
+    except (ComprovanteVenda.DoesNotExist, ValueError, TypeError, ValidationError):
+        return False
+    return (
+        comprovante.assinatura_confere(partes[1])
+        and not comprovante.consumido
+        and not comprovante.expirado
+        and hash_dos_valores(valores) == comprovante.hash_valores
+    )
+
+
 @transaction.atomic
 def _validar_na_transacao(token, valores, invalidos, ativo_agora) -> dict:
     def recusa(motivo, **extra):
         return {"valido": False, "motivo": motivo, **extra}
 
-    if not token or "." not in str(token):
+    partes = _abre_token(token)
+    if partes is None:
         return recusa("comprovante_ausente")
 
-    identificador, _, assinatura = str(token).partition(".")
+    identificador, assinatura = partes
     try:
         comprovante = ComprovanteVenda.objects.select_for_update().get(pk=identificador)
-    except (ComprovanteVenda.DoesNotExist, ValueError, TypeError):
+    except (ComprovanteVenda.DoesNotExist, ValueError, TypeError, ValidationError):
+        # `ValidationError`: o id que nem é UUID ("x.y"). Dava 500, e o n8n
+        # mandava para Conferir o que é comprovante forjado.
         return recusa("comprovante_desconhecido")
 
     if not comprovante.assinatura_confere(assinatura):
