@@ -99,6 +99,7 @@ def emitir_comprovante(request):
             request.data or {},
             usuario=autorizador_da_negociacao(request),
             ip=ip_do_cliente(request),
+            vendedor=request.user,
         )
     except VendaRecusada as erro:
         # 422 e não 400: o corpo está bem formado, o que não passa é a regra de
