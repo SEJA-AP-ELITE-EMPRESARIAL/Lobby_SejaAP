@@ -78,6 +78,10 @@ class ComprovanteVenda(models.Model):
         # são os itens (modalidade, quantidade, valor unitário) e o total que
         # eles somam — com o valor que a diretoria fixou, quando fixou.
         DH_AVALIACAO = "dh_avaliacao", "DH - Avaliação (itens do formulário)"
+        # O Casais de Alta Performance (TSK-1622). O que ele atesta é um de
+        # dois valores fixos, e com ele quem contrata e de onde veio o do Elite
+        # Empresarial: na PJ, do Conecta, conferido aqui no servidor.
+        CASAIS = "casais", "Casais de Alta Performance (valor fixo)"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     protocolo = models.CharField(
