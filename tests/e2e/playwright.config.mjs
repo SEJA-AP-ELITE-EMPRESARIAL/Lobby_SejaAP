@@ -1,7 +1,8 @@
 /**
- * Playwright: só o e2e do sinal de presença (TSK-1520), que precisa do backend,
- * do front e do Conecta falso de pé. Quem sobe tudo é o `rodar-presenca.sh`;
- * rodar `playwright test` sozinho não acha nada no ar. Não entra no CI.
+ * Playwright: o e2e do sinal de presença (TSK-1520) e o do Casais de Alta
+ * Performance (TSK-1622), que precisam do backend, do front e do Conecta falso de
+ * pé. Quem sobe tudo é o `rodar-e2e.sh` (o `rodar-presenca.sh` roda só o da
+ * presença); rodar `playwright test` sozinho não acha nada no ar. Não entra no CI.
  *
  * 1.64.1 fixa o Chromium 1248 (`npx playwright install chromium`).
  */

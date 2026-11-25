@@ -1,6 +1,7 @@
 """
-Conecta de mentira para o e2e do sinal de presença do Lobby (TSK-1520). Só a
-biblioteca padrão; escuta só em 127.0.0.1.
+Conecta de mentira para o e2e do Lobby: o sinal de presença (TSK-1520) e a
+pergunta do Casais de Alta Performance (TSK-1622). Só a biblioteca padrão;
+escuta só em 127.0.0.1.
 
 Responde ao que o cliente 1.6.0 pede no caminho do e2e:
 
@@ -11,10 +12,15 @@ Responde ao que o cliente 1.6.0 pede no caminho do e2e:
 - `POST /api/v1/presenca`: grava o sinal NA MEMÓRIA deste processo e responde
   204 — ou 503, depois de `POST /_falhar` (o Conecta fora, para o teste ver que
   a tela nem percebe).
+- `POST /api/v1/clientes/ativo` (a rota da TSK-1621): `{"cliente_ativo": true}`
+  para os CNPJs de `ATIVOS`, 503 `indisponivel` para os de `FORA_DO_AR` e
+  `false` para o resto; 400 sem o `cnpj` em texto, 401 sem a chave `lobby`.
+  Anota cada pergunta (o caminho, o corpo, a chave e o `User-Agent`).
 
 E portas para o teste olhar o que chegou, que o Conecta de verdade não tem:
 
 - `GET /_sinais` (JSON), `POST /_sinais/limpar`, `POST /_falhar` e `POST /_voltar`;
+- `GET /_clientes` (JSON) e `POST /_clientes/limpar`: as perguntas do Casais;
 - `GET /_estado` (JSON): o estado de agora de cada pessoa, pela regra do Conecta
   de verdade entre abas (`_estado`, abaixo);
 - `GET /_painel`: uma página no jeito do "Uso em tempo real", com esse estado e
@@ -33,9 +39,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SENHA = "senha-do-e2e"
 SISTEMAS = {"lobby": "Lobby"}
+# Os CNPJs do e2e do Casais (inventados, de dígito válido): o ativo no Elite
+# Empresarial e o que faz o Conecta "cair". Qualquer outro não é cliente.
+ATIVOS = {"22122190000152"}
+FORA_DO_AR = {"63580153000175"}
 
 _trava = threading.Lock()
 _sinais = []
+_clientes = []
 _pessoas = {}  # identidade_id -> e-mail
 _conecta = {"falhando": False}
 
@@ -183,6 +194,12 @@ class Atendente(BaseHTTPRequestHandler):
             if falhou:
                 return self._responder(503, {"erro": "indisponivel"})
             return self._responder(204)
+        if self.path == "/api/v1/clientes/ativo":
+            return self._cliente_ativo()
+        if self.path == "/_clientes/limpar":
+            with _trava:
+                _clientes.clear()
+            return self._responder(204)
         if self.path == "/_sinais/limpar":
             with _trava:
                 _sinais.clear()
@@ -200,11 +217,36 @@ class Atendente(BaseHTTPRequestHandler):
         if self.path == "/_sinais":
             with _trava:
                 return self._responder(200, list(_sinais))
+        if self.path == "/_clientes":
+            with _trava:
+                return self._responder(200, list(_clientes))
         if self.path == "/_estado":
             return self._responder(200, _estado())
         if self.path == "/_painel":
             return self._responder(200, _painel(), tipo="text/html")
         return self._responder(404, {"erro": "nao_encontrado"})
+
+    def _cliente_ativo(self):
+        """A rota da TSK-1621, como o Conecta de verdade responde."""
+        chave = self.headers.get("Authorization", "")
+        corpo = self._corpo()
+        with _trava:
+            _clientes.append({
+                "recebido_em": datetime.now(timezone.utc).isoformat(),
+                "caminho": self.path,
+                "chave_do_lobby": chave.startswith("AppKey lobby:"),
+                "user_agent": self.headers.get("User-Agent", ""),
+                "corpo": corpo,
+            })
+        if not chave.startswith("AppKey lobby:"):
+            return self._responder(401, {"erro": "app_nao_autorizado", "detalhe": "x"})
+        cnpj = corpo.get("cnpj") if isinstance(corpo, dict) else None
+        if not isinstance(cnpj, str) or not cnpj:
+            return self._responder(400, {"erro": "dados_invalidos", "detalhe": "cnpj"})
+        cnpj = "".join(c for c in cnpj if c.isalnum()).upper()
+        if cnpj in FORA_DO_AR:
+            return self._responder(503, {"erro": "indisponivel", "detalhe": "x"})
+        return self._responder(200, {"cliente_ativo": cnpj in ATIVOS})
 
     def log_message(self, formato, *args):
         sys.stderr.write("conecta-falso: " + formato % args + "\n")
