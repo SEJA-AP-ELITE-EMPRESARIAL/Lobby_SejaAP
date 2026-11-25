@@ -364,7 +364,7 @@ REST_FRAMEWORK = {
         # A rota do Casais de Alta Performance que confere o CNPJ no Conecta
         # (TSK-1622), por pessoa. A tela pergunta uma vez por CNPJ por venda. O
         # que protege o balde do Conecta é o `LOBBY_CASAIS_CONSULTAS_POR_HORA`,
-        # abaixo: este teto conta também a resposta guardada.
+        # acima: este teto conta também a resposta guardada.
         "casais_elite": os.environ.get("LOBBY_RATE_CASAIS_ELITE", "60/hour"),
         # Integração com o Conecta (TSK-1059, ADR-002 §10.4). Toda chamada sai do
         # MESMO IP, o do servidor do Conecta: teto por IP limitaria o portal

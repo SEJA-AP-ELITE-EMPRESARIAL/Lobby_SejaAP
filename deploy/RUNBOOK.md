@@ -351,8 +351,9 @@ ver o README, *Casais de Alta Performance*.
    o texto, gere o bloco com `exportar_cats_do_front` num deploy só de front.
 
 **Caminho de volta:** a imagem anterior (o passo 1 do roteiro) e, se for o caso,
-`migrate catalogo 0017` (apaga o produto; para se ele tiver venda) e
-`migrate vendas 0003`. Só o front de volta, com a migration aplicada, deixa o
+`migrate catalogo 0017` (apaga o produto; para se ele tiver venda — e apaga
+também o que alguém tenha criado à mão com o mesmo identificador e o fluxo
+`casais`, caso em que a ida não fez nada) e `migrate vendas 0003`. Só o front de volta, com a migration aplicada, deixa o
 produto na lista sem abrir: volte os dois.
 
 ### Redis do Lobby (TSK-1068)

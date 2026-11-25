@@ -484,14 +484,43 @@ def emitir(dados: dict, *, usuario=None, ip=None, vendedor=None) -> ComprovanteV
     )
 
 
-@transaction.atomic
 def validar(token: str, dados: dict) -> dict:
     """Confere e CONSOME o comprovante. Chamado pelo n8n, nunca pelo navegador.
 
     Devolve um dicionário com o veredito e o contexto para auditoria. Nunca
     levanta por motivo de negócio: o n8n precisa de uma resposta que ele consiga
     ramificar, não de um 500.
+
+    Os valores são lidos antes da transação, e é lá fora que o Elite de uma PJ do
+    Casais de Alta Performance é reconsultado no Conecta (até alguns segundos):
+    a pergunta não segura a linha do comprovante travada. A ordem dos motivos é a
+    de sempre — o veredito sai todo de dentro da transação.
     """
+    try:
+        valores = _valores_normalizados(dados)
+        if valores["fluxo"] == ComprovanteVenda.Fluxo.CASAIS:
+            # Um valor fora dos dois fixos nem chega à conferência do hash: o
+            # motivo diz o que está errado, e não só que mudou.
+            _confere_casais_fixo(valores)
+        invalidos = None
+    except VendaRecusada as erro:
+        valores, invalidos = None, str(erro)
+
+    ativo_agora = None
+    casais = valores.get("casais") if valores else None
+    if casais and casais["tipo_pessoa"] == "PJ" and casais["tabela"] == "elite":
+        # O valor do Elite numa PJ: o servidor confere de novo. O comprovante já
+        # prova que o Conecta disse "ativo" na emissão (o servidor não o assina
+        # sem isso); aqui vale a resposta de agora — a guardada, quase sempre, já
+        # que a validação chega segundos depois. Se o Conecta disser que o CNPJ
+        # não é ativo, recusa. Sem resposta dele agora, vale a da emissão: o n8n
+        # não bloqueia uma venda conferida porque o Conecta piscou.
+        ativo_agora = conferir_cnpj(casais["documento"]).cliente_ativo
+    return _validar_na_transacao(token, valores, invalidos, ativo_agora)
+
+
+@transaction.atomic
+def _validar_na_transacao(token, valores, invalidos, ativo_agora) -> dict:
     def recusa(motivo, **extra):
         return {"valido": False, "motivo": motivo, **extra}
 
@@ -512,34 +541,32 @@ def validar(token: str, dados: dict) -> dict:
     if comprovante.expirado:
         return recusa("comprovante_expirado")
 
-    try:
-        valores = _valores_normalizados(dados)
-        if valores["fluxo"] == ComprovanteVenda.Fluxo.CASAIS:
-            # Um valor fora dos dois fixos nem chega à conferência do hash: o
-            # motivo diz o que está errado, e não só que mudou.
-            _confere_casais_fixo(valores)
-    except VendaRecusada as erro:
-        return recusa("valores_invalidos", detalhe=str(erro))
+    if invalidos is not None:
+        return recusa("valores_invalidos", detalhe=invalidos)
 
     if hash_dos_valores(valores) != comprovante.hash_valores:
         # O payload que chegou ao n8n não é o que foi assinado.
         return recusa("valores_adulterados")
 
-    casais = valores.get("casais") if valores["fluxo"] == ComprovanteVenda.Fluxo.CASAIS else None
-    if casais and casais["tipo_pessoa"] == "PJ" and casais["tabela"] == "elite":
-        # O valor do Elite numa PJ: o servidor confere de novo. O comprovante já
-        # prova que o Conecta disse "ativo" na emissão (o servidor não o assina
-        # sem isso); aqui vale a resposta de agora — a guardada, quase sempre, já
-        # que a validação chega segundos depois. Se o Conecta disser que o CNPJ
-        # não é ativo, recusa. Sem resposta dele agora, vale a da emissão: o n8n
-        # não bloqueia uma venda conferida porque o Conecta piscou.
-        if conferir_cnpj(casais["documento"]).cliente_ativo is False:
-            return recusa("elite_nao_confirmado")
+    if ativo_agora is False:
+        return recusa("elite_nao_confirmado")
 
     comprovante.consumido_em = timezone.now()
     comprovante.save(update_fields=["consumido_em"])
 
+    # No Casais, o que foi assinado sobre quem contrata e o valor volta ao n8n:
+    # o topo do payload é montado no navegador, e é contra ESTE bloco que o
+    # fluxo confere o contratante antes de faturar (deploy/N8N-VALIDACAO.md). Um
+    # comprovante legítimo da PF a R$ 35.000 não pode virar a venda de uma PJ.
+    casais = {}
+    if comprovante.fluxo == ComprovanteVenda.Fluxo.CASAIS:
+        casais = {
+            "valor_total": comprovante.valores["valor_total"],
+            "casais": comprovante.valores["casais"],
+        }
+
     return {
+        **casais,
         "valido": True,
         "protocolo": comprovante.protocolo,
         "fluxo": comprovante.fluxo,

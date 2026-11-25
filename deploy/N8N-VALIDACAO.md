@@ -251,16 +251,28 @@ O valor é um de dois fixos: **R$ 39.997,00** (`tabela: "cheio"`) ou
 descrito acima, com o mesmo nó "Validar venda" e o mesmo Switch, e mais isto:
 
 1. **O que o Lobby assina** está em `comprovante_valores`: o `valor_total` e o
-   bloco `casais` — `tipo_pessoa`, `documento`, `tabela` e
-   `elite_conferido_no_conecta`. O `/api/venda/validar` confere só ele. Então,
-   como no DH - Avaliação: fature a partir de `comprovante_valores`, **ou**
-   compare o topo com ele antes de faturar — `valor` com `valor_total`,
-   `tabela`, `elite_conferido_no_conecta` e `contratante.tipo_pessoa` com os do
-   bloco `casais`, e, na PJ, `contratante.documento` (só os dígitos) com o
-   `documento` de lá — e **bloqueie** quando divergirem (a saída 2,
-   *Bloquear*). Divergência não tem causa inocente: a tela monta os dois do
-   mesmo estado. Na PF o CPF não é assinado (o Lobby não o guarda: não decide o
-   valor), e o `documento` do bloco não conta.
+   bloco `casais` — `tipo_pessoa`, `documento` (o CNPJ na PJ; vazio na PF),
+   `tabela` e `elite_conferido_no_conecta`. O `/api/venda/validar` confere só
+   ele, e no Casais o `valido: true` **devolve o que foi assinado**:
+
+   ```json
+   { "valido": true, "fluxo": "casais", "protocolo": "CAP-261125112345",
+     "valor_total": "35000.00",
+     "casais": { "tipo_pessoa": "PJ", "documento": "22122190000152",
+                 "tabela": "elite", "elite_conferido_no_conecta": true },
+     "negociado": false, "autorizado_por": null, "papel": null, "emitido_em": "…" }
+   ```
+
+   **Obrigatório, antes de faturar** (não é alternativa): o valor sai daqui
+   (`valor_total`), e o contratante do topo tem de bater com o `casais`
+   devolvido — `contratante.tipo_pessoa` com `casais.tipo_pessoa` e, na PJ, os
+   dígitos de `contratante.documento` com `casais.documento`. Confira também
+   `valor`, `tabela` e `elite_conferido_no_conecta` do topo. Divergiu,
+   **bloqueie** (a saída 2, *Bloquear*): a tela monta os dois do mesmo estado,
+   e o caso que isto fecha é real — um comprovante legítimo da PF a R$ 35.000
+   (lá quem decide é o consultor) postado com o topo dizendo que quem contrata
+   é uma PJ. O hash bate, porque o Lobby nunca vê o topo; só esta comparação o
+   pega. Na PF o CPF não é assinado (o Lobby não o guarda: não decide o valor).
 2. **O Lobby já recusa** o que não pode passar: valor fora dos dois
    (`valores_invalidos`), o valor trocado num comprovante do cheio
    (`valores_adulterados`), o CNPJ trocado (`valores_adulterados`: o documento

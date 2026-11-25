@@ -343,6 +343,34 @@ class ValidacaoTest(Base):
         self.assertTrue(self.validar(token, dados)["valido"])
         self.conecta.assert_called_once()
 
+    def test_a_validacao_devolve_o_que_foi_assinado_sobre_quem_contrata(self):
+        """O topo do payload é do navegador: o n8n confere o contratante contra isto.
+
+        O caso: um comprovante legítimo da PF a R$ 35.000 (o consultor decide), e
+        o topo dizendo que quem contrata é uma PJ. O hash bate — o servidor nunca
+        vê o topo —, e é o `casais` devolvido aqui que mostra ao n8n que o
+        comprovante é de uma PF.
+        """
+        dados = venda_pf(tabela="elite")
+        corpo = self.validar(self.assertAssina(dados), dados)
+        self.assertTrue(corpo["valido"], corpo)
+        self.assertEqual(corpo["valor_total"], "35000.00")
+        self.assertEqual(corpo["casais"], {
+            "tipo_pessoa": "PF", "documento": "", "tabela": "elite", "elite_conferido_no_conecta": False,
+        })
+
+        pj = venda_casais(documento=ATIVO, tabela="elite", conferido=True, protocolo="CAP-261125100009")
+        corpo = self.validar(self.assertAssina(pj), pj)
+        self.assertEqual(corpo["casais"]["documento"], "22122190000152")
+
+    def test_os_outros_fluxos_nao_ganham_o_bloco(self):
+        dados = venda_de_tabela()
+        token = emite_comprovante(dados).json()["comprovante"]
+        corpo = self.validar(token, dados)
+        self.assertTrue(corpo["valido"], corpo)
+        self.assertNotIn("casais", corpo)
+        self.assertNotIn("valor_total", corpo)
+
     def test_cheio_nao_reconsulta_na_validacao(self):
         dados = venda_casais(documento=INATIVO, tabela="cheio", conferido=True)
         token = self.assertAssina(dados)

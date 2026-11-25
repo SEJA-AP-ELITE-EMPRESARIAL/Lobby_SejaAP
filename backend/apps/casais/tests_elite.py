@@ -102,11 +102,15 @@ class RespostaTest(Base):
                 self.assertIn(trecho, corpo["mensagem"])
                 self.assertIn("preço cheio, R$ 39.997,00", corpo["mensagem"])
 
-    def test_defeito_inesperado_tambem_fica_no_cheio(self):
+    def test_defeito_inesperado_tambem_fica_no_cheio_e_pausa(self):
+        """Um defeito que se repete depois do POST não vira uma pergunta por venda."""
         self.conecta.side_effect = RuntimeError("bug")
         with self.assertLogs("apps.casais.servicos", "ERROR"):
             corpo = self.pergunta(OUTRO).json()
         self.assertEqual((corpo["cliente_ativo"], corpo["tabela"]), (None, "cheio"))
+        self.assertEqual(corpo["tentar_em"], servicos.PAUSA_DEPOIS_DE_FALHA)
+        self.pergunta(ATIVO)
+        self.conecta.assert_called_once()
 
 
 class CnpjTest(Base):
@@ -154,10 +158,16 @@ class BaldeDoConectaTest(Base):
         self.conecta.assert_called_once()
 
     def test_o_cnpj_nao_fica_em_claro_no_cache(self):
+        """Nem um hash dele sem segredo, que se desfaz por força bruta."""
+        import hashlib
+
         self.pergunta(ATIVO)
         chave = servicos._chave_da_resposta("22122190000152")
         self.assertNotIn("22122190000152", chave)
+        self.assertNotIn(hashlib.sha256(b"22122190000152").hexdigest()[:32], chave)
         self.assertEqual(cache.get(chave), "ativo")
+        with override_settings(SECRET_KEY="outra-chave-de-teste-com-tamanho-suficiente-para-o-django"):
+            self.assertNotEqual(servicos._chave_da_resposta("22122190000152"), chave)
 
     def test_sem_resposta_nao_fica_guardada_e_pausa_todo_mundo(self):
         self.conecta.side_effect = SemResposta("indisponivel")

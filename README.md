@@ -421,8 +421,10 @@ n8n ──POST /api/venda/validar──► Lobby: valor fora dos dois → recusa
   guardado, porque não decide o valor —, `tabela` e `elite_conferido_no_conecta`),
   e o servidor só assina se a tela disser o mesmo que ele concluiu: Elite com o CNPJ ativo; cheio com o CNPJ não ativo; cheio,
   sem conferência, com o Conecta sem resposta. Discordou, 422 com a frase, e a
-  tela pergunta de novo e mostra o valor que vale. O documento no hash é o que
-  impede o comprovante do Elite de um cliente servir para outra empresa.
+  tela pergunta de novo e mostra o valor que vale. O CNPJ no hash, e o n8n
+  conferindo o contratante do topo contra o bloco que o `/api/venda/validar`
+  devolve, é o que impede o comprovante do Elite de um cliente (ou o de uma PF)
+  servir para outra empresa.
 - **O balde do Conecta é um só** (30 por minuto, 120 por hora, para o Lobby
   inteiro). Por isso: a resposta (sim ou não) fica guardada por CNPJ por 10
   minutos (a chave é o hash do CNPJ); uma falha pausa as perguntas de todos (o
@@ -598,8 +600,8 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
   - `valor`: número, `35000` ou `39997`. `tabela`: `"elite"` ou `"cheio"`, a que deu o valor.
   - `elite_conferido_no_conecta`: `true` quando o Conecta respondeu sobre o CNPJ (sim ou não). Lido junto da `tabela`: PJ `elite` + `true` = o Conecta confirmou o cliente ativo; PJ `cheio` + `true` = o Conecta disse que não é; PJ `cheio` + `false` = o Conecta não respondeu e a venda ficou no cheio; PF é sempre `false` (o consultor decidiu; `tabela` diz o quê).
   - `pagamento`: `forma` (`pix`, `cartao` ou `boleto`), `parcelas` (inteiro; > 1 só no cartão, até 12), `data` (`AAAA-MM-DD`, vencimento da 1ª parcela).
-  - Documento, CPFs, telefone e CEP vão **mascarados**, como nos outros fluxos. A mais, as três chaves do comprovante e o `enviado_por`.
-  - **Quem construir o fluxo no n8n:** valide pelo `/api/venda/validar` e fature a partir de `comprovante_valores` (é o que foi assinado), ou compare o topo com ele e **bloqueie** quando divergir — ver [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md).
+  - Documento, CPFs, telefone e CEP vão **mascarados**, como nos outros fluxos. A mais, as três chaves do comprovante e o `enviado_por`. No `comprovante_valores.casais`, o `documento` é o CNPJ na PJ e vazio na PF (o CPF não decide o valor, e o Lobby não o guarda).
+  - **Quem construir o fluxo no n8n:** valide pelo `/api/venda/validar`, que no Casais devolve o que foi assinado (`valor_total` e o bloco `casais`). O valor vem de lá, e o contratante do topo **tem de** bater com ele — `contratante.tipo_pessoa` com `casais.tipo_pessoa` e, na PJ, os dígitos de `contratante.documento` com `casais.documento` —, senão **bloqueie**: um comprovante legítimo da PF a R$ 35.000 não pode virar a venda de uma PJ. Ver [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md).
 - **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `adiantamento_calculado`, `adiantamento_negociado`, `data_pagamento`, `tipo_pagamento`), mais `totais` (com `percentual_adiantamento`), `autorizado_por` e o `comprovante`. O adiantamento é **50% do salário de referência**, calculado pelo formulário e travado — só a autorização de um gerente/diretoria (Conecta ID) libera a edição, e ela vale só para aquela venda.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
 - **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:

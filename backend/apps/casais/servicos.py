@@ -25,8 +25,9 @@ inteiro, e estourado ele fecha a pergunta para todos os consultores. Por isso:
 
 - a resposta (sim ou não) fica guardada por CNPJ, `GUARDAR_A_RESPOSTA`. A tela
   pergunta quando o CNPJ fica completo, e o comprovante, minutos depois, lê a
-  mesma resposta sem ir ao Conecta. A chave é o hash do CNPJ: o Redis não vira
-  uma lista de CNPJs;
+  mesma resposta sem ir ao Conecta. A chave é um HMAC do CNPJ com a
+  `SECRET_KEY` (um hash sem segredo se desfaz por força bruta: são uns 10^12
+  CNPJs numéricos): o Redis não vira uma lista de CNPJs;
 - depois de uma falha, nenhum processo pergunta por um tempo (o `Retry-After`
   do 429, ou `PAUSA_DEPOIS_DE_FALHA`): sem laço, e um Conecta pendurado não
   prende um worker por pergunta;
@@ -38,7 +39,6 @@ inteiro, e estourado ele fecha a pergunta para todos os consultores. Por isso:
 Tudo isso no cache `default` (o Redis do Lobby em produção, falha aberta). Sem
 Redis cada processo tem o seu, como os outros tetos.
 """
-import hashlib
 import logging
 import math
 import re
@@ -48,6 +48,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.cache import cache
+from django.utils.crypto import salted_hmac
 
 from . import conecta
 
@@ -140,7 +141,8 @@ class Conferencia:
 
 
 def _chave_da_resposta(cnpj):
-    return "casais:conecta:resposta:" + hashlib.sha256(cnpj.encode()).hexdigest()[:32]
+    marca = salted_hmac("lobby.casais.cnpj", cnpj, secret=settings.SECRET_KEY).hexdigest()[:32]
+    return "casais:conecta:resposta:" + marca
 
 
 def _ler(chave):
@@ -218,9 +220,10 @@ def conferir_cnpj(cnpj, *, pessoa=None):
         return Conferencia(None, falta.motivo, _pausa(falta))
     except Exception:
         # Defeito daqui, e não do Conecta: a venda segue no preço cheio, e o log
-        # (e o GlitchTip) diz onde.
+        # (e o GlitchTip) diz onde. Pausa como numa falha do Conecta: um defeito
+        # que se repete depois do POST faria cada pergunta ir até lá.
         logger.exception("casais: falha inesperada ao perguntar ao Conecta")
-        return Conferencia(None, "indisponivel", None)
+        return Conferencia(None, "indisponivel", _pausa(conecta.SemResposta("indisponivel")))
     _gravar(chave, "ativo" if ativo else "inativo", GUARDAR_A_RESPOSTA)
     return Conferencia(ativo)
 
