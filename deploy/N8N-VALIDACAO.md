@@ -130,6 +130,8 @@ responseBody: ={{ { received: false, motivo: $json.motivo } }}
 | `valores_adulterados` | **O payload não é o que foi assinado** | Bloquear e alertar |
 | `assinatura_invalida` | Comprovante forjado | Bloquear e alertar |
 | `comprovante_desconhecido` | Id que nunca foi emitido | Bloquear e alertar |
+| `valores_invalidos` | Os valores nem têm a forma de uma venda — no Casais de Alta Performance, um valor fora dos dois fixos (vem com `detalhe`) | Bloquear e alertar |
+| `elite_nao_confirmado` | Casais de Alta Performance: o valor do Elite Empresarial numa PJ que o Conecta, reconsultado agora, diz não ser cliente ativo | Bloquear e conferir o cliente no Conecta |
 
 ## Quando `valido` é `true`
 
@@ -230,3 +232,47 @@ assinado, e a trava do valor fixo não tem como valer.
 
 É o mesmo desenho do Elite com o `valor_total`. O que muda aqui é que o valor
 unitário é digitado pelo consultor, salvo o que a diretoria fixou.
+
+---
+
+## À parte: o fluxo do Casais de Alta Performance (TSK-1622)
+
+O Casais de Alta Performance manda a venda para um webhook próprio,
+`https://n8n.sejaap.com.br/webhook/onboarding-cliente-casais`
+(`CASAIS_SEND_WEBHOOK_URL` no `index.html`). O JSON, chave a chave, está no
+README (*Integrações*, "Venda Casais de Alta Performance"). Em 25/11/2026 o fluxo
+ainda não existia no n8n (preflight 500, GET "not registered"): ele precisa
+estar ativo, em POST e com CORS para `https://lobby.sejaap.com.br`, antes do
+deploy do Lobby (RUNBOOK, *Casais de Alta Performance*).
+
+O valor é um de dois fixos: **R$ 39.997,00** (`tabela: "cheio"`) ou
+**R$ 35.000,00** (`tabela: "elite"`, o do Elite Empresarial). Na PJ, quem decide
+é o Conecta (o CNPJ é cliente ativo?); na PF, o consultor. O fluxo valida como
+descrito acima, com o mesmo nó "Validar venda" e o mesmo Switch, e mais isto:
+
+1. **O que o Lobby assina** está em `comprovante_valores`: o `valor_total` e o
+   bloco `casais` — `tipo_pessoa`, `documento`, `tabela` e
+   `elite_conferido_no_conecta`. O `/api/venda/validar` confere só ele. Então,
+   como no DH - Avaliação: fature a partir de `comprovante_valores`, **ou**
+   compare o topo com ele antes de faturar — `valor` com `valor_total`,
+   `tabela`, `elite_conferido_no_conecta`, e `contratante.tipo_pessoa` e
+   `contratante.documento` (só os dígitos) com os do bloco `casais` — e
+   **bloqueie** quando divergirem (a saída 2, *Bloquear*). Divergência não tem
+   causa inocente: a tela monta os dois do mesmo estado.
+2. **O Lobby já recusa** o que não pode passar: valor fora dos dois
+   (`valores_invalidos`), o valor trocado num comprovante do cheio
+   (`valores_adulterados`), o CNPJ trocado (`valores_adulterados`: o documento
+   está no hash) e o Elite de uma PJ que o Conecta, reconsultado na validação,
+   diz não ser ativa (`elite_nao_confirmado`). Com o Conecta sem resposta na
+   hora da validação, vale a conferência da emissão (o Lobby não assina o Elite
+   numa PJ sem o Conecta dizer "ativo").
+3. **Venda sem comprovante** (o Lobby fora do ar no envio) segue pela saída 1,
+   *Conferir*, como nos outros fluxos — e aqui a conferência tem um ponto a
+   mais: com `contratante.tipo_pessoa: "PJ"` e `tabela: "elite"`, ninguém
+   conferiu o CNPJ no Conecta. Confira se ele é cliente ativo do Elite
+   Empresarial antes de faturar os R$ 35.000,00; se não for, o contrato é de
+   R$ 39.997,00.
+
+Na PF, `tabela: "elite"` com `elite_conferido_no_conecta: false` é o normal: quem
+marcou "paga o valor do Elite Empresarial" foi o consultor (decisão do dono), e
+o `enviado_por` diz quem.

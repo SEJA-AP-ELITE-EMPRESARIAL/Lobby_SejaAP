@@ -6,8 +6,8 @@ categorias, o consultor abre um fluxo de cadastro e contratação do cliente
 reais da página de pré-contrato.
 
 > Ativas hoje: **Elite** (6 planos), **APN** (fluxo próprio, valor negociado) e
-> **Produtos** (Recrutamento e Seleção, com o Formulário DH, e DH - Avaliação,
-> com formulário próprio — este ainda sem webhook de envio, ver abaixo).
+> **Produtos** (Recrutamento e Seleção, com o Formulário DH; DH - Avaliação e
+> Casais de Alta Performance, cada um com formulário próprio — ver abaixo).
 > Treinamentos aparece como **"Em implementação"** (travada) até ser liberada — e
 > liberar é desmarcar no `/django-admin/`, não deploy.
 
@@ -143,6 +143,7 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   | Produtos, escolhendo | `Produtos · Produto` |
   | Produtos, Recrutamento e Seleção, *Quadro comercial* | `Produtos · Quadro comercial · Recrutamento e Seleção` |
   | Produtos, DH - Avaliação, *Itens* | `Produtos · Itens · DH - Avaliação` |
+  | Produtos, Casais de Alta Performance, *Casal* | `Produtos · Casal · Casais de Alta Performance` |
   | Modal do gerente aberto | `Elite · Autorização de negociação · ELITE PRO` |
   | Tela de sucesso | `APN · Venda enviada` |
 
@@ -174,7 +175,9 @@ index.html ──POST /api/presenca (sessão)──► Lobby ──enviar_presen
   backend com SQLite descartável e o papel do nginx, cada um numa porta conferida
   livre antes, e roda o Playwright contra a tela real (na primeira vez: `npm ci`
   em `tests/e2e/` e `npx playwright install chromium`; `PYTHON=` aponta outro
-  interpretador). Os prints de cada rodada vão para `tests/e2e/prints-da-rodada/`
+  interpretador). Ele é o `tests/e2e/rodar-e2e.sh presenca.spec.mjs`: o
+  `rodar-e2e.sh` sozinho roda todos os specs (desde a TSK-1622 há também o do
+  Casais de Alta Performance). Os prints de cada rodada vão para `tests/e2e/prints-da-rodada/`
   (fora do git); os de referência, versionados, estão em `tests/e2e/prints/`
   (`E2E_PRINTS=tests/e2e/prints` os renova). Fora do CI: precisa da CDN do
   React, como a página em produção.
@@ -381,6 +384,60 @@ index.html ◄── GET /api/dh-avaliacao/valores (com a sessão) ────�
 - Backend fora do ar: os campos abrem com os valores iniciais, livres, e a venda
   segue — pelo motivo do `CATS` embutido.
 
+### Casais de Alta Performance: dois valores, e o Conecta decide na PJ
+
+Desde a TSK-1622 (25/11/2026) a categoria Produtos vende o **Casais de Alta
+Performance**: sigla **CAP**, `fluxo='casais'`, criado pela migration
+`catalogo/0018`, sem preço de tabela. Formulário próprio, no molde do DH -
+Avaliação — Produto → Contratante (PJ ou PF: nome, CNPJ ou CPF, e-mail, telefone
+e endereço completo) → Casal (nome e CPF dos dois participantes, que não podem
+ser o mesmo) → Pagamento (Pix e boleto à vista, cartão em até 12×, data) →
+Resumo. O "Continuar" com algo faltando não avança: a etapa lista o que falta.
+
+**O valor é um de dois fixos**, decisão do dono no mesmo dia, e é ele que vale
+no contrato: **R$ 39.997,00** (preço cheio) ou **R$ 35.000,00** (Elite
+Empresarial). Não estão no catálogo nem no Admin Lobby: moram em
+`apps/casais/servicos.py` e no `index.html` (`CASAIS_VALOR_*`). Quem escolhe:
+
+| Contratante | Quem decide | Sem resposta |
+|---|---|---|
+| **PJ** | o **Conecta**: o CNPJ é cliente ativo (status 1 ou 7)? Ativo → Elite; não → cheio. A tela mostra o valor travado, sem controle para trocar. | Conecta fora, lento, 429 ou 503: **cheio**, com o aviso e um "Conferir de novo". O Elite numa PJ nunca sai sem a conferência. |
+| **PF** | o **consultor**: a caixa "paga o valor do Elite Empresarial" | — (o Conecta não é perguntado) |
+
+```text
+index.html ──POST /api/casais/elite {cnpj} (sessão)──► Lobby ──POST /api/v1/clientes/ativo (AppKey lobby)──► Conecta
+  uma vez por CNPJ por venda                          resposta guardada 10 min por CNPJ         (TSK-1621)
+index.html ──POST /api/venda/comprovante──► Lobby: pergunta de novo (a guardada, ou o Conecta) e só assina
+                                                    o que ele mesmo concluiu
+n8n ──POST /api/venda/validar──► Lobby: valor fora dos dois → recusa; o Elite de uma PJ → reconsulta
+```
+
+- **O navegador nunca fala com o Conecta.** A pergunta é do servidor
+  (`apps/casais/conecta.py`), com o `IDENTIDADE_URL` e a `IDENTIDADE_APP_KEY` do
+  login e da presença, `User-Agent` próprio, o CNPJ no corpo e sem seguir
+  redirecionamento. O `identidade_client.py` não muda (é cópia byte a byte).
+- **O que a tela mostra não vale sozinho.** O comprovante assina, junto do valor,
+  o bloco `casais` (tipo de pessoa, documento sem máscara, `tabela` e
+  `elite_conferido_no_conecta`), e o servidor só assina se a tela disser o mesmo
+  que ele concluiu: Elite com o CNPJ ativo; cheio com o CNPJ não ativo; cheio,
+  sem conferência, com o Conecta sem resposta. Discordou, 422 com a frase, e a
+  tela pergunta de novo e mostra o valor que vale. O documento no hash é o que
+  impede o comprovante do Elite de um cliente servir para outra empresa.
+- **O balde do Conecta é um só** (30 por minuto, 120 por hora, para o Lobby
+  inteiro). Por isso: a resposta (sim ou não) fica guardada por CNPJ por 10
+  minutos (a chave é o hash do CNPJ); uma falha pausa as perguntas de todos (o
+  `Retry-After` do 429, ou 60 s), sem laço; e cada pessoa tem um teto de
+  perguntas que vão de fato até lá, somando a tela e o comprovante
+  (`LOBBY_CASAIS_CONSULTAS_POR_HORA`, 20 por hora cheia). A rota tem ainda o teto
+  por pessoa de sempre (`LOBBY_RATE_CASAIS_ELITE`, 60/h). Sem Redis, cada
+  processo tem o seu, como os outros tetos.
+- **O número do contrato** é o protocolo da venda (`CAP-AAMMDDPRRRRR`, de
+  `buildProtocol`). Nasce ao chegar ao Resumo, para aparecer lá, e é o mesmo do
+  POST ao n8n e da tela de sucesso.
+- **O webhook** é `onboarding-cliente-casais` (o payload está em *Integrações*,
+  abaixo). Em 25/11/2026 o fluxo do n8n ainda não estava ativo: ver o RUNBOOK,
+  *Casais de Alta Performance*, antes de publicar.
+
 ### Administração pelo Conecta (TSK-1059)
 
 A tela de administração do Lobby passa a morar no Conecta (Admin Lobby, TSK-1060).
@@ -485,7 +542,7 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
 
 - **CNPJ** — `POST https://n8n.sejaap.com.br/webhook/brasilapi-cnpj` → `{ cnpj, cnpj_formatado }`
 - **CEP** — `POST https://n8n.sejaap.com.br/webhook/busca-cep` → `{ cep, cep_formatado }`
-- **Todos os quatro envios** (Cadastro, APN, DH e DH - Avaliação) levam, desde a TSK-1513, o campo novo **`enviado_por: {nome, email}`** — quem estava logado, da sessão conferida pelo backend. Nenhum campo de antes saiu, inclusive `autorizado_por` e os três do comprovante. É montado no navegador como o resto do payload, e o n8n não o confere (limitação aceita). O token da sessão nunca vai aos webhooks.
+- **Todos os cinco envios** (Cadastro, APN, DH, DH - Avaliação e Casais de Alta Performance) levam, desde a TSK-1513, o campo novo **`enviado_por: {nome, email}`** — quem estava logado, da sessão conferida pelo backend. Nenhum campo de antes saiu, inclusive `autorizado_por` e os três do comprovante. É montado no navegador como o resto do payload, e o n8n não o confere (limitação aceita). O token da sessão nunca vai aos webhooks.
 - **Cadastro** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-elite` → payload com `protocolo`, `departamento`, `empresa`, `representante`, `produto`, `pagamento`, `destino`, `aceites`, `metadata` (e `enviado_por`). Erros de negócio voltam em `faultstring`.
 - **Venda APN** — `POST https://n8n.sejaap.com.br/webhook/lobby-apn` → payload próprio (sem cronograma nem destino), com o mesmo bloco `departamento` e, desde a TSK-877, a `categoria_financeira`.
   - `departamento` — `{ codigo, descricao, estrutura }` como está no Omie, ou `null` quando a lista não pôde ser carregada. O `codigo` é o que o Omie entende. **Os fluxos do n8n ainda não o leem:** até alguém mapear o campo do lado de lá, ele viaja e é ignorado.
@@ -499,6 +556,50 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
   - Documento, CPF e CEP vão **mascarados** (`11.222.333/0001-81`, `529.982.247-25`, `88010-000`), como o lobby já manda nos outros fluxos.
   - A mais, só as três chaves do comprovante, como no DH: `comprovante`, `comprovante_valores` (com os `itens` assinados) e `comprovante_erro` — e, desde a TSK-1513, o `enviado_por`.
   - **Quem construir o fluxo no n8n:** o `/api/venda/validar` confere os itens de `comprovante_valores`, não os do topo. Fature a partir de `comprovante_valores.itens`, ou compare os dois antes e **bloqueie** a venda quando divergirem (não é caso de conferência: é payload adulterado) — ver [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md).
+- **Venda Casais de Alta Performance** — `POST https://n8n.sejaap.com.br/webhook/onboarding-cliente-casais` (`CASAIS_SEND_WEBHOOK_URL`, TSK-1622). Vazia, o *Finalizar* fica desabilitado no Resumo com aviso, como nos outros fluxos. O payload é o contrato com o n8n — não renomeie nem tire chave (montado em `payloadDoCasais`, no `index.html`; o teste `tests/front/casais.test.mjs` o confere chave a chave):
+
+  ```json
+  {
+    "id_venda": "CAP-261125112345",
+    "numero_contrato": "CAP-261125112345",
+    "produto": "CASAIS_DE_ALTA_PERFORMANCE",
+    "contratante": {
+      "tipo_pessoa": "PJ",
+      "nome": "Quintal Azul Comércio de Plantas Ltda",
+      "documento": "22.122.190/0001-52",
+      "email": "financeiro@quintalazul.com.br",
+      "telefone": "(48) 99876-1234",
+      "endereco": { "logradouro": "Rua das Acácias", "numero": "210", "complemento": "Sala 3",
+                    "bairro": "Centro", "cidade": "Florianópolis", "uf": "SC", "cep": "88010-400" }
+    },
+    "participantes": [
+      { "nome": "Helena Duarte Vasconcelos", "cpf": "294.199.881-04" },
+      { "nome": "Otávio Brandão Lacerda", "cpf": "450.490.714-37" }
+    ],
+    "valor": 35000,
+    "tabela": "elite",
+    "elite_conferido_no_conecta": true,
+    "pagamento": { "forma": "cartao", "parcelas": 12, "data": "2026-12-10" },
+    "comprovante": "<uuid>.<hmac>",
+    "comprovante_valores": { "fluxo": "casais", "categoria_id": "produtos", "produto_id": "casais-alta-performance",
+                             "negociado": false, "valor_total": 35000, "valor_mensal": null, "entrada": 35000,
+                             "cronograma": [], "protocolo": "CAP-261125112345",
+                             "casais": { "tipo_pessoa": "PJ", "documento": "22.122.190/0001-52",
+                                         "tabela": "elite", "elite_conferido_no_conecta": true } },
+    "comprovante_erro": null,
+    "enviado_por": { "nome": "…", "email": "…" }
+  }
+  ```
+
+  - `id_venda` e `numero_contrato`: o mesmo valor, o protocolo `CAP-AAMMDDPRRRRR` (o dígito `P` é a forma: Pix 0, cartão 1, boleto 3). É o número do contrato que a tela mostra no Resumo e no sucesso.
+  - `produto`: sempre `"CASAIS_DE_ALTA_PERFORMANCE"` (código fixo, como o `"PROFILER"` do DH - Avaliação; o nome do catálogo pode ser reescrito pela diretoria).
+  - `contratante`: `tipo_pessoa` (`PJ`/`PF`), `nome` (razão social ou nome), `documento` (CNPJ ou CPF), `email`, `telefone` e `endereco` (`logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `cep`). Sem representante.
+  - `participantes`: sempre dois, `{nome, cpf}`, com CPFs válidos e diferentes.
+  - `valor`: número, `35000` ou `39997`. `tabela`: `"elite"` ou `"cheio"`, a que deu o valor.
+  - `elite_conferido_no_conecta`: `true` quando o Conecta respondeu sobre o CNPJ (sim ou não). Lido junto da `tabela`: PJ `elite` + `true` = o Conecta confirmou o cliente ativo; PJ `cheio` + `true` = o Conecta disse que não é; PJ `cheio` + `false` = o Conecta não respondeu e a venda ficou no cheio; PF é sempre `false` (o consultor decidiu; `tabela` diz o quê).
+  - `pagamento`: `forma` (`pix`, `cartao` ou `boleto`), `parcelas` (inteiro; > 1 só no cartão, até 12), `data` (`AAAA-MM-DD`, vencimento da 1ª parcela).
+  - Documento, CPFs, telefone e CEP vão **mascarados**, como nos outros fluxos. A mais, as três chaves do comprovante e o `enviado_por`.
+  - **Quem construir o fluxo no n8n:** valide pelo `/api/venda/validar` e fature a partir de `comprovante_valores` (é o que foi assinado), ou compare o topo com ele e **bloqueie** quando divergir — ver [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md).
 - **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `adiantamento_calculado`, `adiantamento_negociado`, `data_pagamento`, `tipo_pagamento`), mais `totais` (com `percentual_adiantamento`), `autorizado_por` e o `comprovante`. O adiantamento é **50% do salário de referência**, calculado pelo formulário e travado — só a autorização de um gerente/diretoria (Conecta ID) libera a edição, e ela vale só para aquela venda.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
 - **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:
@@ -572,10 +673,12 @@ fazia por lá ficava registrado com autor e período:
   para o wizard curto.
 - **Fluxo próprio de PRODUTO:** o `Produto.fluxo` é outra coisa, e mais nova
   (25/08/2026). Ele não tira a categoria da tabela de preços — tira só aquele
-  produto. Hoje existem dois, na categoria Produtos: o **Recrutamento e Seleção**
+  produto. Hoje existem três, na categoria Produtos: o **Recrutamento e Seleção**
   (`fluxo='dh'`), que abre o **Formulário DH** em vez do cronograma de parcelas,
-  e o **DH - Avaliação** (`fluxo='dh_avaliacao'`, desde 14/10/2026), com os itens
-  de Relatório e Devolutiva. Produto assim não tem preço, é somente leitura no
+  o **DH - Avaliação** (`fluxo='dh_avaliacao'`, desde 14/10/2026), com os itens
+  de Relatório e Devolutiva, e o **Casais de Alta Performance**
+  (`fluxo='casais'`, desde 25/11/2026), com os dois participantes e um de dois
+  valores fixos. Produto assim não tem preço, é somente leitura no
   `/admin`, e **só nasce no `/django-admin/` (ou numa migration) junto com o
   deploy do front**: cada fluxo é um formulário escrito no `index.html`, e a
   linha sem o formulário do outro lado é um produto que não abre.
