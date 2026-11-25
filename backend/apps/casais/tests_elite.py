@@ -298,6 +298,29 @@ class UmaPerguntaPorCnpjTest(Base):
         self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "indisponivel"))
         self.conecta.assert_not_called()
 
+    def test_quem_pega_a_trava_depois_de_a_outra_responder_nao_pergunta_de_novo(self):
+        """A outra perguntou e soltou a trava entre a 1ª leitura desta e a trava."""
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        pega = servicos._pega_a_trava
+
+        def a_outra_respondeu_no_meio(trava):
+            cache.set(chave, "ativo", 60)
+            return pega(trava)
+
+        with patch.object(servicos, "_pega_a_trava", side_effect=a_outra_respondeu_no_meio):
+            self.assertIs(servicos.conferir_cnpj(self.CNPJ).cliente_ativo, True)
+        self.conecta.assert_not_called()
+
+        cache.clear()
+
+        def a_outra_falhou_no_meio(trava):
+            cache.set(servicos._CHAVE_DA_PAUSA, {"ate": __import__("time").time() + 30, "motivo": "limite"}, 30)
+            return pega(trava)
+
+        with patch.object(servicos, "_pega_a_trava", side_effect=a_outra_falhou_no_meio):
+            self.assertEqual(servicos.conferir_cnpj(self.CNPJ).motivo, "limite")
+        self.conecta.assert_not_called()
+
     def test_a_trava_e_solta_depois_da_pergunta(self):
         servicos.conferir_cnpj(self.CNPJ)
         self.assertIsNone(cache.get(servicos._chave_da_resposta(self.CNPJ) + ":perguntando"))

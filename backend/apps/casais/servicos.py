@@ -259,6 +259,14 @@ def conferir_cnpj(cnpj, *, pessoa=None):
     if not _pega_a_trava(trava):
         return _espera_a_outra(chave, trava)
     try:
+        # Relidas com a trava na mão: outra requisição pode ter perguntado (e
+        # soltado a trava) entre a leitura lá de cima e esta.
+        guardada = _ler(chave)
+        if guardada in ("ativo", "inativo"):
+            return Conferencia(guardada == "ativo")
+        pausada = _pausada(time.time())
+        if pausada is not None:
+            return pausada
         if pessoa is not None and getattr(pessoa, "pk", None) is not None:
             espera = _passou_do_teto(pessoa, agora)
             if espera is not None:
