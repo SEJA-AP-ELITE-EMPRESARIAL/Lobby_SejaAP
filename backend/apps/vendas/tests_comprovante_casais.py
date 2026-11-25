@@ -108,9 +108,10 @@ class PessoaFisicaTest(Base):
         self.assertEqual(comprovante.fluxo, "casais")
         self.assertFalse(comprovante.negociado)
         self.assertEqual(comprovante.valores["valor_total"], "35000.00")
+        # Na PF o CPF não fica no comprovante: não decide o valor.
         self.assertEqual(comprovante.valores["casais"], {
             "tipo_pessoa": "PF",
-            "documento": "77592721465",
+            "documento": "",
             "tabela": "elite",
             "elite_conferido_no_conecta": False,
         })
@@ -121,10 +122,16 @@ class PessoaFisicaTest(Base):
             "não é conferido no Conecta",
         )
 
-    def test_cpf_invalido(self):
-        self.assertRecusa(venda_pf(documento="775.927.214-66"), "CPF do contratante inválido")
-        self.assertRecusa(venda_casais(tipo="PF", documento=ATIVO, tabela="cheio", conferido=False),
-                          "CPF do contratante inválido")
+    def test_o_cpf_nao_e_assinado(self):
+        """Outro CPF na validação não é adulteração: na PF o documento não entra."""
+        token = self.assertAssina(venda_pf(tabela="cheio"))
+        with override_settings(LOBBY_N8N_TOKEN=N8N):
+            corpo = APIClient().post(
+                "/api/venda/validar",
+                {"comprovante": token, "valores": venda_pf(tabela="cheio", documento="863.645.391-73")},
+                format="json", HTTP_AUTHORIZATION=f"Bearer {N8N}",
+            ).json()
+        self.assertTrue(corpo["valido"], corpo)
 
 
 class ValorFixoTest(Base):

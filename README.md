@@ -417,9 +417,9 @@ n8n ──POST /api/venda/validar──► Lobby: valor fora dos dois → recusa
   login e da presença, `User-Agent` próprio, o CNPJ no corpo e sem seguir
   redirecionamento. O `identidade_client.py` não muda (é cópia byte a byte).
 - **O que a tela mostra não vale sozinho.** O comprovante assina, junto do valor,
-  o bloco `casais` (tipo de pessoa, documento sem máscara, `tabela` e
-  `elite_conferido_no_conecta`), e o servidor só assina se a tela disser o mesmo
-  que ele concluiu: Elite com o CNPJ ativo; cheio com o CNPJ não ativo; cheio,
+  o bloco `casais` (tipo de pessoa, o CNPJ sem máscara na PJ — na PF o CPF não é
+  guardado, porque não decide o valor —, `tabela` e `elite_conferido_no_conecta`),
+  e o servidor só assina se a tela disser o mesmo que ele concluiu: Elite com o CNPJ ativo; cheio com o CNPJ não ativo; cheio,
   sem conferência, com o Conecta sem resposta. Discordou, 422 com a frase, e a
   tela pergunta de novo e mostra o valor que vale. O documento no hash é o que
   impede o comprovante do Elite de um cliente servir para outra empresa.

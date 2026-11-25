@@ -15,7 +15,6 @@ from apps.casais.servicos import (
     VALOR_DA_TABELA as VALOR_DO_CASAIS,
     conferir_cnpj,
     normaliza_cnpj,
-    normaliza_cpf,
     reais,
 )
 from apps.catalogo.models import Categoria, Produto, arredonda
@@ -109,23 +108,24 @@ def _casais_normalizado(bruto) -> dict:
     """O bloco `casais` do Casais de Alta Performance, na forma em que é assinado.
 
     Entra no hash porque é ele que decide o dinheiro: a `tabela` (o valor) e, na
-    PJ, o CNPJ que o Conecta conferiu. Sem o documento assinado, o comprovante de
-    um CNPJ que é cliente do Elite serviria para vender, pelo valor do Elite, a
-    outra empresa. O documento vai sem máscara: a tela pode mandar com ou sem.
+    PJ, o CNPJ que o Conecta conferiu. Sem o CNPJ assinado, o comprovante de um
+    cliente do Elite serviria para vender, pelo valor do Elite, a outra empresa.
+    Ele vai sem máscara: a tela pode mandar com ou sem.
+
+    Na PF o documento NÃO entra (vai vazio, qualquer que seja o que veio): lá
+    quem decide o valor é o consultor, e o CPF de uma pessoa não tem por que
+    ficar guardado no comprovante, que guarda só o que é dinheiro.
     """
     if not isinstance(bruto, dict):
         raise VendaRecusada("Dados do contratante do Casais de Alta Performance ausentes.")
     tipo = str(bruto.get("tipo_pessoa") or "").upper()
     if tipo not in ("PF", "PJ"):
         raise VendaRecusada("Tipo de pessoa do contratante inválido.")
+    documento = ""
     if tipo == "PJ":
         documento = normaliza_cnpj(bruto.get("documento"))
         if documento is None:
             raise VendaRecusada("CNPJ do contratante inválido.")
-    else:
-        documento = normaliza_cpf(bruto.get("documento"))
-        if documento is None:
-            raise VendaRecusada("CPF do contratante inválido.")
     tabela = str(bruto.get("tabela") or "")
     if tabela not in VALOR_DO_CASAIS:
         raise VendaRecusada("Tabela do Casais de Alta Performance inválida.")

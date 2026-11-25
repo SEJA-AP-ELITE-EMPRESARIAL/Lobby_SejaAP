@@ -255,10 +255,12 @@ descrito acima, com o mesmo nó "Validar venda" e o mesmo Switch, e mais isto:
    `elite_conferido_no_conecta`. O `/api/venda/validar` confere só ele. Então,
    como no DH - Avaliação: fature a partir de `comprovante_valores`, **ou**
    compare o topo com ele antes de faturar — `valor` com `valor_total`,
-   `tabela`, `elite_conferido_no_conecta`, e `contratante.tipo_pessoa` e
-   `contratante.documento` (só os dígitos) com os do bloco `casais` — e
-   **bloqueie** quando divergirem (a saída 2, *Bloquear*). Divergência não tem
-   causa inocente: a tela monta os dois do mesmo estado.
+   `tabela`, `elite_conferido_no_conecta` e `contratante.tipo_pessoa` com os do
+   bloco `casais`, e, na PJ, `contratante.documento` (só os dígitos) com o
+   `documento` de lá — e **bloqueie** quando divergirem (a saída 2,
+   *Bloquear*). Divergência não tem causa inocente: a tela monta os dois do
+   mesmo estado. Na PF o CPF não é assinado (o Lobby não o guarda: não decide o
+   valor), e o `documento` do bloco não conta.
 2. **O Lobby já recusa** o que não pode passar: valor fora dos dois
    (`valores_invalidos`), o valor trocado num comprovante do cheio
    (`valores_adulterados`), o CNPJ trocado (`valores_adulterados`: o documento

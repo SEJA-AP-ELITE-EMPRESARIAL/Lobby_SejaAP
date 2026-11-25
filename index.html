@@ -3145,17 +3145,24 @@ function App({ motivoAoAbrir }) {
   // meio), de outra sessão ou de outro atendimento é descartada. Se ela muda o
   // valor que a tela já mostrava (uma conferência de novo), fica o aviso.
   // Devolve a conferência nova, ou null.
+  //
+  // Sem resposta por causa da sessão (caiu, ou trocou no meio), a conferência
+  // volta ao começo, e não fica presa em "conferindo": quem entrar de novo no
+  // mesmo atendimento tem a pergunta refeita pelo `useEffect` abaixo.
   const conferirEliteCasais = async (cnpj) => {
     const marca = marcaDoMomento(atendimento);
     const antes = conferenciaDoCnpj(s.casElite, cnpj);
+    const solta = () => patch((d) => (d.casElite.cnpj === cnpj && d.casElite.estado === 'conferindo'
+      ? { casElite: conferenciaVaziaCasais() } : {}));
     patch({ casElite: { cnpj, estado: 'conferindo', mensagem: '', tentarEm: null } });
     let resposta;
     try {
       resposta = await perguntaEliteCasais(cnpj);
     } catch (e) {
-      return null;  // a sessão acabou: quem cuida da tela é o login
+      solta();  // a sessão acabou: quem cuida da tela é o login
+      return null;
     }
-    if (!aindaVale(marca, atendimento)) return null;
+    if (!aindaVale(marca, atendimento)) { solta(); return null; }
     const nova = { cnpj, ...resposta };
     const mostrava = antes.estado === 'ativo' ? 'elite'
       : (antes.estado === 'inativo' || antes.estado === 'sem_resposta') ? 'cheio' : null;
@@ -3169,10 +3176,11 @@ function App({ motivoAoAbrir }) {
   // Uma pergunta por CNPJ por venda: quando o CNPJ da PJ fica completo e válido,
   // ou troca — não a cada render. O "Conferir de novo" e a recusa do comprovante
   // perguntam de novo, à mão; o balde do Conecta é um só para o Lobby inteiro.
+  // Só com a pessoa logada: sem sessão a pergunta nem sai (e não vira laço).
   useEffect(() => {
-    if (!isCasais || casPf || !isCNPJ(s.cnpj) || s.casElite.cnpj === casCnpj) return;
+    if (!logado || !isCasais || casPf || !isCNPJ(s.cnpj) || s.casElite.cnpj === casCnpj) return;
     conferirEliteCasais(casCnpj);
-  }, [isCasais, casPf, casCnpj]);
+  }, [logado, isCasais, casPf, casCnpj, s.casElite.cnpj]);
   // O número do contrato nasce ao chegar ao Resumo, para aparecer lá, e muda se
   // a forma de pagamento (o dígito P do protocolo) mudar.
   useEffect(() => {
