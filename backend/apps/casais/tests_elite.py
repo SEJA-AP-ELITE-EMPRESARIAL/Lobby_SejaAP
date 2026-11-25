@@ -234,6 +234,79 @@ class BaldeDoConectaTest(Base):
         self.assertTrue(corpo["cliente_ativo"])
 
 
+class UmaPerguntaPorCnpjTest(Base):
+    """Um CNPJ é perguntado por uma requisição de cada vez; as outras esperam a resposta."""
+
+    CNPJ = "22122190000152"
+
+    def test_duas_ao_mesmo_tempo_fazem_uma_pergunta(self):
+        import threading
+        import time
+
+        def devagar(cnpj):
+            time.sleep(0.4)
+            return conecta_falso(cnpj)
+
+        self.conecta.side_effect = devagar
+        respostas = []
+        threads = [threading.Thread(target=lambda: respostas.append(servicos.conferir_cnpj(self.CNPJ)))
+                   for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual([r.cliente_ativo for r in respostas], [True, True, True])
+        self.conecta.assert_called_once()
+
+    def test_quem_chega_depois_le_a_resposta_da_outra(self):
+        import threading
+
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        cache.add(chave + ":perguntando", 1, 10)
+
+        def a_outra_responde():
+            cache.set(chave, "inativo", 60)
+            cache.delete(chave + ":perguntando")
+
+        threading.Timer(0.3, a_outra_responde).start()
+        self.assertIs(servicos.conferir_cnpj(self.CNPJ).cliente_ativo, False)
+        self.conecta.assert_not_called()
+
+    def test_a_outra_terminou_sem_resposta(self):
+        """A outra levou 429: esta sai com a pausa que ela deixou, sem perguntar."""
+        import threading
+        import time
+
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        cache.add(chave + ":perguntando", 1, 10)
+
+        def a_outra_falha():
+            cache.set(servicos._CHAVE_DA_PAUSA, {"ate": time.time() + 30, "motivo": "limite"}, 30)
+            cache.delete(chave + ":perguntando")
+
+        threading.Timer(0.3, a_outra_falha).start()
+        conferencia = servicos.conferir_cnpj(self.CNPJ)
+        self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "limite"))
+        self.assertGreater(conferencia.tentar_em, 25)
+        self.conecta.assert_not_called()
+
+    def test_a_outra_pendurada_nao_prende_esta_para_sempre(self):
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        cache.add(chave + ":perguntando", 1, 10)
+        with patch.object(servicos, "ESPERA_MAXIMA", 0.5), patch.object(servicos, "ESPERA_INTERVALO", 0.05):
+            conferencia = servicos.conferir_cnpj(self.CNPJ)
+        self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "indisponivel"))
+        self.conecta.assert_not_called()
+
+    def test_a_trava_e_solta_depois_da_pergunta(self):
+        servicos.conferir_cnpj(self.CNPJ)
+        self.assertIsNone(cache.get(servicos._chave_da_resposta(self.CNPJ) + ":perguntando"))
+        self.conecta.side_effect = SemResposta("indisponivel")
+        cache.clear()
+        servicos.conferir_cnpj(self.CNPJ)
+        self.assertIsNone(cache.get(servicos._chave_da_resposta(self.CNPJ) + ":perguntando"))
+
+
 class SessaoTest(Base):
     def test_sem_sessao_401_e_nao_pergunta(self):
         resposta = APIClient().post(ROTA, {"cnpj": ATIVO}, format="json")

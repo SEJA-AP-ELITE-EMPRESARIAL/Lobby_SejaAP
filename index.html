@@ -2652,7 +2652,11 @@ function App({ motivoAoAbrir }) {
   });
   const next = () => patch((d) => ({ step: Math.min(ultimoStep, d.step + 1) }));
   const back = () => { if (s.step === 0) patch({ screen: 'lobby' }); else patch((d) => ({ step: d.step - 1 })); };
-  const goStep = (i) => patch({ step: i });
+  // Com a venda a caminho (o comprovante, ou a reconsulta do Casais), a etapa
+  // não troca: o envio leva o estado do clique em Finalizar, e uma edição no
+  // meio não iria junto (o "Voltar" já fica desabilitado; isto vale para o
+  // stepper e os "Editar" do Resumo).
+  const goStep = (i) => patch((d) => (d.sendState === 'sending' ? {} : { step: i }));
 
   // ----- Campos -----
   const onField = (k, v) => {

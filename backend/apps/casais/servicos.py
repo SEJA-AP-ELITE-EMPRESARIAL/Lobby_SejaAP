@@ -31,6 +31,9 @@ inteiro, e estourado ele fecha a pergunta para todos os consultores. Por isso:
 - depois de uma falha, nenhum processo pergunta por um tempo (o `Retry-After`
   do 429, ou `PAUSA_DEPOIS_DE_FALHA`): sem laço, e um Conecta pendurado não
   prende um worker por pergunta;
+- um CNPJ é perguntado por UMA requisição de cada vez (uma trava curta no
+  cache): duas abas no mesmo CNPJ, ou o n8n validando a mesma venda duas vezes
+  ao mesmo tempo, esperam a resposta da primeira em vez de perguntar de novo;
 - cada pessoa tem um teto de perguntas que vão de fato ao Conecta
   (`LOBBY_CASAIS_CONSULTAS_POR_HORA`, por hora cheia), somando a tela e o
   comprovante. A resposta guardada não conta. Sem ele, um consultor digitando
@@ -69,6 +72,12 @@ PAUSA_MAXIMA = 60 * 60
 JANELA_DA_PESSOA = 60 * 60
 
 _CHAVE_DA_PAUSA = "casais:conecta:pausa"
+# A trava de "alguém já está perguntando por este CNPJ": vale um pouco mais que o
+# teto da pergunta, e quem chega depois espera por ela, de `ESPERA_INTERVALO` em
+# `ESPERA_INTERVALO` segundos, até `ESPERA_MAXIMA`.
+TRAVA_SEGUNDOS = conecta.TIMEOUT + 2
+ESPERA_MAXIMA = conecta.TIMEOUT + 1
+ESPERA_INTERVALO = 0.2
 
 
 # ----- documentos -----------------------------------------------------------
@@ -160,6 +169,44 @@ def _gravar(chave, valor, segundos):
         logger.warning("casais: cache indisponível ao gravar", exc_info=True)
 
 
+def _pega_a_trava(chave):
+    """True se esta requisição é a que pergunta. Sem cache, pergunta (falha aberta)."""
+    try:
+        return bool(cache.add(chave, 1, TRAVA_SEGUNDOS))
+    except Exception:
+        logger.warning("casais: cache indisponível na trava; a pergunta passa", exc_info=True)
+        return True
+
+
+def _solta_a_trava(chave):
+    try:
+        cache.delete(chave)
+    except Exception:
+        logger.warning("casais: cache indisponível ao soltar a trava", exc_info=True)
+
+
+def _pausada(agora):
+    """A `Conferencia` da pausa em vigor, ou `None` sem pausa."""
+    pausa = _ler(_CHAVE_DA_PAUSA)
+    if isinstance(pausa, dict) and float(pausa.get("ate") or 0) > agora:
+        return Conferencia(None, str(pausa.get("motivo") or "indisponivel"),
+                           math.ceil(float(pausa["ate"]) - agora))
+    return None
+
+
+def _espera_a_outra(chave, trava):
+    """Outra requisição pergunta por este CNPJ agora: a resposta dela, ou sem resposta."""
+    fim = time.monotonic() + ESPERA_MAXIMA
+    while time.monotonic() < fim:
+        time.sleep(ESPERA_INTERVALO)
+        guardada = _ler(chave)
+        if guardada in ("ativo", "inativo"):
+            return Conferencia(guardada == "ativo")
+        if _ler(trava) is None:
+            break
+    return _pausada(time.time()) or Conferencia(None, "indisponivel", None)
+
+
 def _pausa(falta):
     """Ninguém pergunta ao Conecta por um tempo depois desta falha. Devolve os segundos."""
     if falta.motivo in ("nao_configurado", "dados_invalidos"):
@@ -204,29 +251,34 @@ def conferir_cnpj(cnpj, *, pessoa=None):
         return Conferencia(guardada == "ativo")
 
     agora = time.time()
-    pausa = _ler(_CHAVE_DA_PAUSA)
-    if isinstance(pausa, dict) and float(pausa.get("ate") or 0) > agora:
-        return Conferencia(None, str(pausa.get("motivo") or "indisponivel"),
-                           math.ceil(float(pausa["ate"]) - agora))
+    pausada = _pausada(agora)
+    if pausada is not None:
+        return pausada
 
-    if pessoa is not None and getattr(pessoa, "pk", None) is not None:
-        espera = _passou_do_teto(pessoa, agora)
-        if espera is not None:
-            logger.warning("casais: %s passou do teto de perguntas ao Conecta", pessoa.pk)
-            return Conferencia(None, "limite_da_pessoa", espera)
-
+    trava = chave + ":perguntando"
+    if not _pega_a_trava(trava):
+        return _espera_a_outra(chave, trava)
     try:
-        ativo = conecta.cliente_ativo(cnpj)
-    except conecta.SemResposta as falta:
-        return Conferencia(None, falta.motivo, _pausa(falta))
-    except Exception:
-        # Defeito daqui, e não do Conecta: a venda segue no preço cheio, e o log
-        # (e o GlitchTip) diz onde. Pausa como numa falha do Conecta: um defeito
-        # que se repete depois do POST faria cada pergunta ir até lá.
-        logger.exception("casais: falha inesperada ao perguntar ao Conecta")
-        return Conferencia(None, "indisponivel", _pausa(conecta.SemResposta("indisponivel")))
-    _gravar(chave, "ativo" if ativo else "inativo", GUARDAR_A_RESPOSTA)
-    return Conferencia(ativo)
+        if pessoa is not None and getattr(pessoa, "pk", None) is not None:
+            espera = _passou_do_teto(pessoa, agora)
+            if espera is not None:
+                logger.warning("casais: %s passou do teto de perguntas ao Conecta", pessoa.pk)
+                return Conferencia(None, "limite_da_pessoa", espera)
+
+        try:
+            ativo = conecta.cliente_ativo(cnpj)
+        except conecta.SemResposta as falta:
+            return Conferencia(None, falta.motivo, _pausa(falta))
+        except Exception:
+            # Defeito daqui, e não do Conecta: a venda segue no preço cheio, e o
+            # log (e o GlitchTip) diz onde. Pausa como numa falha do Conecta: um
+            # defeito que se repete depois do POST faria cada pergunta ir até lá.
+            logger.exception("casais: falha inesperada ao perguntar ao Conecta")
+            return Conferencia(None, "indisponivel", _pausa(conecta.SemResposta("indisponivel")))
+        _gravar(chave, "ativo" if ativo else "inativo", GUARDAR_A_RESPOSTA)
+        return Conferencia(ativo)
+    finally:
+        _solta_a_trava(trava)
 
 
 def mensagem(conferencia):

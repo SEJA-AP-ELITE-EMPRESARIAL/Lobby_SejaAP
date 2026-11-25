@@ -249,3 +249,9 @@ test('a pergunta ao backend: o 200 do contrato, e o resto é "sem resposta"', as
   resposta.atual = async () => { const e = new Error('caiu'); e.sessaoDerrubada = true; throw e; };
   await assert.rejects(lobby.perguntaEliteCasais('x'), /caiu/);
 });
+
+test('com a venda a caminho, a etapa não troca (o stepper e os "Editar" do Resumo)', () => {
+  // O envio leva o estado do clique em Finalizar; uma edição durante a espera
+  // (a reconsulta ao Conecta, o comprovante) não iria junto.
+  assert.match(html, /const goStep = \(i\) => patch\(\(d\) => \(d\.sendState === 'sending' \? \{\} : \{ step: i \}\)\);/);
+});
