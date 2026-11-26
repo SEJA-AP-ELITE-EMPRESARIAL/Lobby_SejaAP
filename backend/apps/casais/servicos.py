@@ -314,10 +314,14 @@ def conferir_cnpj(cnpj, *, pessoa=None):
         if esperada is not None:
             return esperada
         # A outra soltou a trava sem resposta nem pausa: esta pergunta. Se uma
-        # terceira já pegou a trava de novo, sai sem resposta, sem abrir a caixa
-        # (a tela pergunta de novo ao Finalizar).
+        # terceira já pegou a trava de novo, vale o que ela já tiver deixado; sem
+        # nada, sai sem resposta, sem abrir a caixa (a tela pergunta de novo ao
+        # Finalizar).
         if not _pega_a_trava(trava):
-            return Conferencia(None, "ocupado", None)
+            guardada = _ler(chave)
+            if guardada in ("ativo", "inativo"):
+                return Conferencia(guardada == "ativo")
+            return _pausada(time.time()) or Conferencia(None, "ocupado", None)
     try:
         # Relidas com a trava na mão: outra requisição pode ter perguntado (e
         # soltado a trava) entre a leitura lá de cima e esta.
@@ -339,8 +343,8 @@ def conferir_cnpj(cnpj, *, pessoa=None):
             return Conferencia(None, falta.motivo, _pausa(falta))
         except Exception:
             # Defeito daqui, e não do Conecta: a venda segue no preço cheio (não
-            # é o Conecta fora, e a caixa do consultor não abre), e o log (e o
-            # GlitchTip) diz onde. Pausa como numa falha do Conecta: um defeito
+            # é o Conecta fora, e a caixa do consultor não abre), e o log diz
+            # onde (log não vira evento no GlitchTip: `config/glitchtip.py`). Pausa como numa falha do Conecta: um defeito
             # que se repete depois do POST faria cada pergunta ir até lá.
             logger.exception("casais: falha inesperada ao perguntar ao Conecta")
             return Conferencia(None, "defeito", _pausa(conecta.SemResposta("defeito")))

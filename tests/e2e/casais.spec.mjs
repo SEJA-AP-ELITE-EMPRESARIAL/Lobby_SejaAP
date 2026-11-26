@@ -427,7 +427,7 @@ test('a tela sem resposta do Conecta pergunta de novo no envio, e para se o valo
   const n8n = await n8nFalso(page);
   const chamadas = await primeiraConferencia(page, SEM_RESPOSTA);
   await entrar(page);
-  // A caixa aparece desmarcada: o cheio.
+  // Sem marcar a caixa: o cheio.
   await ateOResumo(page, ATIVO);
   await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 39.997,00');
   await expect(page.getByText('Preço cheio (sem conferência do Conecta)')).toBeVisible();
@@ -507,6 +507,34 @@ test('o servidor não confia na tela: o "ativo" que o Conecta não deu é recusa
   await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
   await expect(page.locator('[data-protocolo]')).toBeVisible();
   expect(n8n.vendas[0]).toMatchObject({ valor: 39997, tabela: 'cheio', elite_conferido_no_conecta: true });
+});
+
+test('a caixa que some volta desmarcada: a marca não sobrevive a uma conferência sem a caixa', async ({ page }) => {
+  // As três respostas de `/api/casais/elite` são forjadas no navegador: o Conecta
+  // fora (com a caixa), o teto do consultor (sem ela) e o Conecta fora de novo.
+  const respostas = [
+    SEM_RESPOSTA,
+    {
+      ...SEM_RESPOSTA, consultor_decide: false, motivo: 'limite_da_pessoa', tentar_em: 600,
+      mensagem: 'Você fez muitas consultas ao Conecta nesta hora. Sem a conferência, a venda fica no preço cheio, R$ 39.997,00.',
+    },
+    SEM_RESPOSTA,
+  ];
+  await page.route('**/api/casais/elite', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(respostas.shift() || SEM_RESPOSTA),
+  }));
+  await n8nFalso(page);
+  await entrar(page);
+  await abrirCasais(page);
+  await contratantePJ(page, INATIVO);
+  const conferir = page.locator('[data-conferencia="sem_resposta"]').getByRole('button', { name: 'Conferir de novo' });
+  await caixaDoElite(page).check();
+  await conferir.click();
+  await expect(page.locator('[data-conferencia="sem_resposta"]')).toContainText('muitas consultas');
+  await expect(caixaDoElite(page)).toHaveCount(0);
+  await conferir.click();
+  await expect(caixaDoElite(page)).toBeVisible();
+  await expect(caixaDoElite(page)).not.toBeChecked();
 });
 
 test('marcado à mão, o Conecta volta na validação dizendo "não": o servidor recusa', async ({ page, request }) => {

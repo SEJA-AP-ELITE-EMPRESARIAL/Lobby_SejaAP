@@ -368,8 +368,11 @@ class UmaPerguntaPorCnpjTest(Base):
         with patch.object(servicos, "_pega_a_trava", return_value=False), \
                 patch.object(servicos, "_espera_a_outra", return_value=None):
             conferencia = servicos.conferir_cnpj(self.CNPJ)
-        self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "ocupado"))
-        self.assertIs(conferencia.consultor_decide, False)
+            self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "ocupado"))
+            self.assertIs(conferencia.consultor_decide, False)
+            # A terceira já deixou a resposta: vale ela, e não o "ocupado".
+            cache.set(servicos._chave_da_resposta(self.CNPJ), "ativo", 60)
+            self.assertIs(servicos.conferir_cnpj(self.CNPJ).cliente_ativo, True)
         self.conecta.assert_not_called()
 
     def test_a_outra_pendurada_nao_prende_esta_para_sempre(self):

@@ -3220,10 +3220,14 @@ function App({ motivoAoAbrir }) {
       if (d.casElite.cnpj !== cnpj) return {};
       const depois = { ...d, casElite: nova, ...(semCaixa ? { casEliteAMao: '' } : {}) };
       const vale = tabelaDoCasais(depois);
+      // O aviso aparece no Resumo, onde não há a caixa: com ela aberta, diz onde
+      // ela está, em vez do "marque abaixo" da frase do backend.
+      const porque = semCaixa ? nova.mensagem
+        : 'O Conecta não pôde conferir o CNPJ agora: quem decide é você, na caixa "paga o valor do Elite Empresarial" da etapa Pagamento.';
       return {
         casElite: nova,
         ...(semCaixa ? { casEliteAMao: '' } : {}),
-        ...(mostrava && mostrava !== vale ? { casAviso: `O valor mudou para ${fmt(valorDoCasais(vale))}. ${nova.mensagem}` } : {}),
+        ...(mostrava && mostrava !== vale ? { casAviso: `O valor mudou para ${fmt(valorDoCasais(vale))}. ${porque}` } : {}),
       };
     });
     return nova;

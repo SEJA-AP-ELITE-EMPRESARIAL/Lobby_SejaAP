@@ -346,7 +346,7 @@ ver o README, *Casais de Alta Performance*.
    ```bash
    sudo docker compose exec backend python manage.py shell -c \
      "from apps.casais import conecta; print(conecta.cliente_ativo('<CNPJ de um cliente ativo>'))"
-   # True. SemResposta('nao_autorizado') = IP ou chave; SemResposta('indisponivel') com 404 no log = Conecta sem a TSK-1621
+   # True. SemResposta('nao_autorizado') = IP ou chave; SemResposta('rota_ausente') = Conecta sem a TSK-1621 (404)
    ```
 
 4. O `CATS` embutido traz o Casais como a migration o cria; se a diretoria mudar
@@ -373,13 +373,15 @@ README, *Casais de Alta Performance*, e `deploy/N8N-VALIDACAO.md`.
   comprovante emitido antes vale depois (o que é assinado não mudou), e uma aba
   aberta com o front de antes segue vendendo como antes (sem a caixa; a frase do
   aviso já fala da caixa, até a pessoa recarregar).
-- **O n8n:** nada a mudar para a venda passar; a chave nova só se acrescenta
-  (no payload e ao lado do bloco `casais` do `/api/venda/validar`, que segue
-  igual ao assinado). Recomendado: um aviso (não bloqueio) para
-  `tabela: "elite"` com `elite_decidido_por: "consultor_sem_conecta"`, para
-  alguém conferir o CNPJ depois (`deploy/N8N-VALIDACAO.md`, Casais, item 3). É
-  ele o controle dessa venda: com o Conecta fora, a reconsulta da validação
-  quase sempre cai na pausa e não chega até ele.
+- **Antes, fora daqui — o aviso no n8n:** para a venda passar, nada muda no
+  fluxo; a chave nova só se acrescenta (no payload e ao lado do bloco `casais`
+  do `/api/venda/validar`, que segue igual ao assinado). Mas o Elite marcado à
+  mão (`tabela: "elite"` com `elite_decidido_por: "consultor_sem_conecta"`)
+  precisa de um aviso (não bloqueio) para alguém conferir o CNPJ depois
+  (`deploy/N8N-VALIDACAO.md`, Casais, item 3): é ele o controle dessa venda,
+  porque com o Conecta fora a reconsulta da validação quase sempre cai na pausa
+  e não chega até ele. Sem o aviso, nenhuma dessas vendas é conferida: monte-o
+  antes de publicar, ou registre que o dono aceita a venda sem ele.
 - **Conferir depois do deploy**, sem vender nada. Não é só leitura: a pergunta
   vai ao Conecta e gasta o balde dele, a resposta fica guardada 10 minutos (como
   a da tela) e, se ele falhar, grava a pausa de todos (60 s). Rode uma vez:
