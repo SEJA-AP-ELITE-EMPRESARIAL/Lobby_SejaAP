@@ -401,8 +401,21 @@ Empresarial). Não estão no catálogo nem no Admin Lobby: moram em
 
 | Contratante | Quem decide | Sem resposta |
 |---|---|---|
-| **PJ** | o **Conecta**: o CNPJ é cliente ativo (status 1 ou 7)? Ativo → Elite; não → cheio. A tela mostra o valor travado, sem controle para trocar. | Conecta fora, lento, 429 ou 503: **cheio**, com o aviso e um "Conferir de novo". O Elite numa PJ nunca sai sem a conferência. |
+| **PJ** | o **Conecta**: o CNPJ é cliente ativo (status 1 ou 7)? Ativo → Elite; não → cheio. A tela mostra o valor travado, sem controle para trocar. | Conecta fora, lento, 429, 503 ou falha de rede: o **consultor**, na mesma caixa da PF, com o aviso de que o Conecta não pôde conferir e um "Conferir de novo" (TSK-1640, decisão do dono de 26/11/2026). O servidor pergunta de novo no comprovante e na validação do n8n: se o Conecta responder, vale o que ele disser. |
 | **PF** | o **consultor**: a caixa "paga o valor do Elite Empresarial" | — (o Conecta não é perguntado) |
+
+A caixa da PJ só aparece quando o **backend** diz que foi o Conecta que não
+respondeu (`consultor_decide` no `/api/casais/elite`): 5xx, rede ou lento
+(`indisponivel`), 429 (`limite`) ou manutenção. Não a abrem, e fica o cheio
+como antes: a integração errada (chave recusada, o 404 da rota ausente, uma
+resposta fora do contrato, redirecionamento), que liberaria o Elite para toda PJ
+até alguém ler o log; um defeito do próprio Lobby; o Lobby fora do ar (a tela
+não sabe se o Conecta respondeu); o teto da rota; e o teto de perguntas do
+próprio consultor (`LOBBY_CASAIS_CONSULTAS_POR_HORA`: o Conecta nem foi
+perguntado, e esgotar o teto não pode virar o jeito de vender o Elite sem ele).
+A marca é do CNPJ: trocar o CNPJ, a caixa sumir (o Conecta responder num
+"Conferir de novo" ou na pergunta que a tela refaz ao Finalizar, ou o backend
+deixar de abri-la) a desfaz, e o valor passa a ser o que vale, com o aviso.
 
 ```text
 index.html ──POST /api/casais/elite {cnpj} (sessão)──► Lobby ──POST /api/v1/clientes/ativo (AppKey lobby)──► Conecta
@@ -419,9 +432,17 @@ n8n ──POST /api/venda/validar──► Lobby: valor fora dos dois → recusa
 - **O que a tela mostra não vale sozinho.** O comprovante assina, junto do valor,
   o bloco `casais` (tipo de pessoa, o CNPJ sem máscara na PJ — na PF o CPF não é
   guardado, porque não decide o valor —, `tabela` e `elite_conferido_no_conecta`),
-  e o servidor só assina se a tela disser o mesmo que ele concluiu: Elite com o CNPJ ativo; cheio com o CNPJ não ativo; cheio,
-  sem conferência, com o Conecta sem resposta. Discordou, 422 com a frase, e a
-  tela pergunta de novo e mostra o valor que vale. O CNPJ no hash, e o n8n
+  e o servidor só assina se a tela disser o mesmo que ele concluiu: Elite com o CNPJ ativo; cheio com o CNPJ não ativo; com o
+  Conecta sem resposta também para o servidor, o que o consultor marcou, sem
+  conferência (o navegador dizer que o Conecta estava fora não basta: é a
+  pergunta do servidor que tem de ficar sem resposta). Discordou, 422 com a
+  frase, e a tela pergunta de novo e mostra o valor que vale. Na validação do
+  n8n, o Elite de uma PJ é reconsultado (o marcado à mão também): o Conecta
+  dizendo que não é ativa, `elite_nao_confirmado`. Atenção: dentro da pausa
+  depois de uma falha (60 s, ou o `Retry-After`, até 1 h) a reconsulta não vai
+  até o Conecta, e o marcado à mão passa sem ninguém ter conferido o CNPJ —
+  quase sempre é o caso, porque a validação chega segundos depois do envio. O
+  controle de verdade dessa venda é o aviso no n8n (`deploy/N8N-VALIDACAO.md`). O CNPJ no hash, e o n8n
   conferindo o contratante do topo contra o bloco que o `/api/venda/validar`
   devolve, é o que impede o comprovante do Elite de um cliente (ou o de uma PF)
   servir para outra empresa.
@@ -583,6 +604,7 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
     "valor": 35000,
     "tabela": "elite",
     "elite_conferido_no_conecta": true,
+    "elite_decidido_por": "conecta",
     "pagamento": { "forma": "cartao", "parcelas": 12, "data": "2026-12-10" },
     "comprovante": "<uuid>.<hmac>",
     "comprovante_valores": { "fluxo": "casais", "categoria_id": "produtos", "produto_id": "casais-alta-performance",
@@ -600,10 +622,11 @@ pré-contrato (constantes no topo do `<script>` em `index.html`):
   - `contratante`: `tipo_pessoa` (`PJ`/`PF`), `nome` (razão social ou nome), `documento` (CNPJ ou CPF), `email`, `telefone` e `endereco` (`logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `cep`). Sem representante.
   - `participantes`: sempre dois, `{nome, cpf}`, com CPFs válidos e diferentes.
   - `valor`: número, `35000` ou `39997`. `tabela`: `"elite"` ou `"cheio"`, a que deu o valor.
-  - `elite_conferido_no_conecta`: `true` quando o Conecta respondeu sobre o CNPJ (sim ou não). Lido junto da `tabela`: PJ `elite` + `true` = o Conecta confirmou o cliente ativo; PJ `cheio` + `true` = o Conecta disse que não é; PJ `cheio` + `false` = o Conecta não respondeu e a venda ficou no cheio; PF é sempre `false` (o consultor decidiu; `tabela` diz o quê).
+  - `elite_conferido_no_conecta`: `true` quando o Conecta respondeu sobre o CNPJ (sim ou não). Lido junto da `tabela`: PJ `elite` + `true` = o Conecta confirmou o cliente ativo; PJ `cheio` + `true` = o Conecta disse que não é; PJ `elite` + `false` = o Conecta não respondeu e o consultor marcou a caixa (desde a TSK-1640); PJ `cheio` + `false` = o Conecta não respondeu e a caixa ficou desmarcada (ou nem apareceu: o teto do consultor, a integração errada, o Lobby fora do ar); PF é sempre `false` (o consultor decidiu; `tabela` diz o quê).
+  - `elite_decidido_por` (TSK-1640, a única chave nova; nenhuma saiu): quem decidiu entre o cheio e o Elite — `"conecta"` (PJ, ele respondeu), `"consultor"` (PF) ou `"consultor_sem_conecta"` (PJ sem a resposta do Conecta). Sai do `tipo_pessoa` e do `elite_conferido_no_conecta`, e por isso não entra no `comprovante_valores` (o que é assinado não mudou: comprovante de antes do deploy vale depois dele); o `/api/venda/validar` o devolve ao lado do bloco `casais`, que segue igual ao assinado. Por ser derivado, `consultor_sem_conecta` com `tabela: "cheio"` também cobre o cheio que ninguém escolheu (a caixa nem apareceu: o teto do consultor, a integração errada, o Lobby fora do ar); com `tabela: "elite"`, foi sempre o consultor que marcou.
   - `pagamento`: `forma` (`pix`, `cartao` ou `boleto`), `parcelas` (inteiro; > 1 só no cartão, até 12), `data` (`AAAA-MM-DD`, vencimento da 1ª parcela).
   - Documento, CPFs, telefone e CEP vão **mascarados**, como nos outros fluxos. A mais, as três chaves do comprovante e o `enviado_por`. No `comprovante_valores.casais`, o `documento` é o CNPJ na PJ e vazio na PF (o CPF não decide o valor, e o Lobby não o guarda).
-  - **Quem construir o fluxo no n8n:** valide pelo `/api/venda/validar`, que no Casais devolve o que foi assinado (`valor_total` e o bloco `casais`). O valor vem de lá, e o contratante do topo **tem de** bater com ele — `contratante.tipo_pessoa` com `casais.tipo_pessoa` e, na PJ, os dígitos de `contratante.documento` com `casais.documento` —, senão **bloqueie**: um comprovante legítimo da PF a R$ 35.000 não pode virar a venda de uma PJ. Ver [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md).
+  - **Quem construir o fluxo no n8n:** valide pelo `/api/venda/validar`, que no Casais devolve o que foi assinado (`valor_total` e o bloco `casais`) e, ao lado, o `elite_decidido_por`. O valor vem de lá, e o contratante do topo **tem de** bater com ele — `contratante.tipo_pessoa` com `casais.tipo_pessoa` e, na PJ, os dígitos de `contratante.documento` com `casais.documento` —, senão **bloqueie**: um comprovante legítimo da PF a R$ 35.000 não pode virar a venda de uma PJ. Ver [`deploy/N8N-VALIDACAO.md`](deploy/N8N-VALIDACAO.md).
 - **Formulário DH** — `POST https://n8n.sejaap.com.br/webhook/lobby-dh` → payload do Recrutamento e Seleção: `contratante` (empresa, representante, endereço, e-mail) e `quadro_comercial`, uma entrada por vaga (`cargo`, `quantidade`, `salario_referencia`, `adiantamento`, `adiantamento_calculado`, `adiantamento_negociado`, `data_pagamento`, `tipo_pagamento`), mais `totais` (com `percentual_adiantamento`), `autorizado_por` e o `comprovante`. O adiantamento é **50% do salário de referência**, calculado pelo formulário e travado — só a autorização de um gerente/diretoria (Conecta ID) libera a edição, e ela vale só para aquela venda.
   - `protocolo` — código da venda gerado no cliente e exibido como **Protocolo** na tela de sucesso. Formato `SSS-YYMMDDPRRRRR`: `SSS` = sigla de 3 letras do produto (`PRO`/`GES`/`EVO`…), `YYMMDD` = data da venda, `P` = dígito da forma de pagamento da entrada (Pix=0, cartão crédito=1, cartão débito=2, boleto=3, permuta=4, link=5, recorrência=6), `RRRRR` = 5 dígitos aleatórios. Ex.: `PRO-260701005821`.
 - **Pix (entrada)** — `POST https://n8n.sejaap.com.br/webhook/907bbfb8-…`. Contrato esperado:

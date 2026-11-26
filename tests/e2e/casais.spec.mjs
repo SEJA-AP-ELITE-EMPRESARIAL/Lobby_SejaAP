@@ -27,6 +27,18 @@
  * mudar; e o "ativo" que o Conecta não deu é recusado pelo comprovante (o
  * servidor não confia no que a tela diz), e a tela volta ao valor que vale.
  *
+ * Desde a TSK-1640, a PJ com o Conecta sem resposta (o falso respondendo 503):
+ * 1. aparece a caixa "paga o valor do Elite Empresarial", com o aviso, e marcar
+ *    e desmarcar alterna R$ 35.000,00 e R$ 39.997,00;
+ * 2. com o Conecta respondendo (sim ou não) o valor fica travado, sem a caixa
+ *    (os dois primeiros testes);
+ * 3. a venda marcada à mão, com o Conecta ainda fora, passa no
+ *    /api/venda/validar, com `tabela: "elite"` e
+ *    `elite_decidido_por: "consultor_sem_conecta"`;
+ * 4. a mesma venda, com o Conecta voltando e dizendo "não" na reconsulta do
+ *    servidor, é recusada (`elite_nao_confirmado`); e, se ele volta antes do
+ *    envio, a tela para no valor que ele deu.
+ *
  * Nomes, CPFs e CNPJs são inventados (de dígito válido). Os prints vão para
  * tests/e2e/prints-da-rodada/ (fora do git), ou para `E2E_PRINTS`.
  */
@@ -46,6 +58,10 @@ const N8N = 'token-do-n8n-do-e2e';
 const ATIVO = '22.122.190/0001-52';
 const INATIVO = '37.598.418/0001-52';
 const FORA_DO_AR = '63.580.153/0001-75';
+// O Conecta cai e volta para este, quando o teste manda (`/_clientes/responder`).
+const VOLTA = '41.830.956/0001-06';
+// Um CNPJ que nenhum outro teste pergunta (nada guardado para ele no backend).
+const OUTRO_SEM_RESPOSTA = '71.526.438/0001-56';
 const EMPRESA = {
   razao_social: 'Quintal Azul Comércio de Plantas Ltda',
   logradouro: 'Rua das Acácias', numero: '210', complemento: 'Sala 3',
@@ -155,6 +171,15 @@ async function perguntasAoConecta(request) {
   return (await request.get(`${CONECTA}/_clientes`)).json();
 }
 
+/** Troca a resposta do Conecta falso para um CNPJ (o Conecta que cai e volta). */
+async function conectaResponde(request, cnpj, resposta) {
+  const r = await request.post(`${CONECTA}/_clientes/responder`, { data: { cnpj: cnpj.replace(/\D/g, ''), ...resposta } });
+  expect(r.status()).toBe(204);
+}
+
+// A caixa da PJ: o "paga o valor do Elite Empresarial", com o Conecta sem resposta.
+const caixaDoElite = (page) => page.locator('#cas-elite');
+
 test.beforeEach(async ({ request }) => {
   await request.post(`${CONECTA}/_clientes/limpar`);
 });
@@ -177,6 +202,7 @@ test('PJ ativa no Conecta: R$ 35.000,00 travado, o que falta em cada etapa, o en
   // 2. O CNPJ completo: a tela pergunta ao backend, que pergunta ao Conecta.
   await contratantePJ(page, ATIVO);
   await expect(page.locator('[data-conferencia="ativo"]')).toContainText('Cliente ativo do Elite Empresarial');
+  await expect(caixaDoElite(page)).toHaveCount(0);
   await expect.poll(async () => (await perguntasAoConecta(request)).length).toBe(1);
   const [pergunta] = await perguntasAoConecta(request);
   expect(pergunta).toMatchObject({ caminho: '/api/v1/clientes/ativo', chave_do_lobby: true, corpo: { cnpj: '22122190000152' } });
@@ -253,6 +279,7 @@ test('PJ ativa no Conecta: R$ 35.000,00 travado, o que falta em cada etapa, o en
     valor: 35000,
     tabela: 'elite',
     elite_conferido_no_conecta: true,
+    elite_decidido_por: 'conecta',
     pagamento: { forma: 'cartao', parcelas: 12, data: VENCIMENTO },
     comprovante_erro: null,
     enviado_por: { email: EMAIL },
@@ -269,7 +296,10 @@ test('PJ ativa no Conecta: R$ 35.000,00 travado, o que falta em cada etapa, o en
   // 6. O n8n confere: um valor fora dos dois é recusado; a venda de verdade passa.
   const fora = await validar(request, venda, { ...venda.comprovante_valores, valor_total: 30000, entrada: 30000 });
   expect(fora).toMatchObject({ valido: false, motivo: 'valores_invalidos' });
-  expect(await validar(request, venda)).toMatchObject({ valido: true, fluxo: 'casais', protocolo: contrato });
+  expect(await validar(request, venda)).toMatchObject({
+    valido: true, fluxo: 'casais', protocolo: contrato, elite_decidido_por: 'conecta',
+    casais: { tabela: 'elite', elite_conferido_no_conecta: true },
+  });
 });
 
 test('PJ não ativa: R$ 39.997,00, e o comprovante dela não vira os R$ 35.000,00', async ({ page, request }) => {
@@ -278,6 +308,7 @@ test('PJ não ativa: R$ 39.997,00, e o comprovante dela não vira os R$ 35.000,0
   await abrirCasais(page);
   await contratantePJ(page, INATIVO);
   await expect(page.locator('[data-conferencia="inativo"]')).toContainText('não tem este CNPJ como cliente ativo');
+  await expect(caixaDoElite(page)).toHaveCount(0);
   await contato(page);
   await continuar(page);
   await casal(page);
@@ -294,7 +325,7 @@ test('PJ não ativa: R$ 39.997,00, e o comprovante dela não vira os R$ 35.000,0
 
   const [venda] = n8n.vendas;
   expect(venda).toMatchObject({
-    valor: 39997, tabela: 'cheio', elite_conferido_no_conecta: true,
+    valor: 39997, tabela: 'cheio', elite_conferido_no_conecta: true, elite_decidido_por: 'conecta',
     pagamento: { forma: 'boleto', parcelas: 1, data: VENCIMENTO },
   });
   // 6. Os R$ 35.000,00 numa PJ que o Conecta diz não ser ativa: recusado.
@@ -346,10 +377,10 @@ test('PF: marcar e desmarcar "paga o valor do Elite Empresarial" alterna o valor
   const [venda] = n8n.vendas;
   expect(venda).toMatchObject({
     contratante: { tipo_pessoa: 'PF', nome: PF.nome, documento: PF.cpf, endereco: { numero: '88' } },
-    valor: 35000, tabela: 'elite', elite_conferido_no_conecta: false,
+    valor: 35000, tabela: 'elite', elite_conferido_no_conecta: false, elite_decidido_por: 'consultor',
     pagamento: { forma: 'pix', parcelas: 1, data: VENCIMENTO },
   });
-  expect(await validar(request, venda)).toMatchObject({ valido: true });
+  expect(await validar(request, venda)).toMatchObject({ valido: true, elite_decidido_por: 'consultor' });
   // Na PF o Conecta não é perguntado.
   expect(await perguntasAoConecta(request)).toEqual([]);
 });
@@ -384,13 +415,19 @@ async function ateOResumo(page, cnpj) {
   await etapa(page, 'Confirme o pedido');
 }
 
+// A resposta do backend quando o Conecta não respondeu (TSK-1640: a caixa aparece).
+const SEM_RESPOSTA = {
+  cliente_ativo: null, conferido: false, tabela: 'cheio', valor: 39997, consultor_decide: true,
+  motivo: 'indisponivel', tentar_em: 60,
+  mensagem: 'Não foi possível conferir o CNPJ no Conecta agora. Sem a conferência, quem decide é você: marque abaixo '
+    + 'se a empresa paga o valor do Elite Empresarial (R$ 35.000,00); desmarcado, vale o preço cheio, R$ 39.997,00.',
+};
+
 test('a tela sem resposta do Conecta pergunta de novo no envio, e para se o valor mudar', async ({ page }) => {
   const n8n = await n8nFalso(page);
-  const chamadas = await primeiraConferencia(page, {
-    cliente_ativo: null, conferido: false, tabela: 'cheio', valor: 39997, motivo: 'indisponivel', tentar_em: 60,
-    mensagem: 'Não foi possível conferir o CNPJ no Conecta agora. Sem a conferência, a venda fica no preço cheio, R$ 39.997,00.',
-  });
+  const chamadas = await primeiraConferencia(page, SEM_RESPOSTA);
   await entrar(page);
+  // Sem marcar a caixa: o cheio.
   await ateOResumo(page, ATIVO);
   await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 39.997,00');
   await expect(page.getByText('Preço cheio (sem conferência do Conecta)')).toBeVisible();
@@ -405,7 +442,47 @@ test('a tela sem resposta do Conecta pergunta de novo no envio, e para se o valo
 
   await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
   await expect(page.locator('[data-protocolo]')).toBeVisible();
-  expect(n8n.vendas[0]).toMatchObject({ valor: 35000, tabela: 'elite', elite_conferido_no_conecta: true });
+  expect(n8n.vendas[0]).toMatchObject({
+    valor: 35000, tabela: 'elite', elite_conferido_no_conecta: true, elite_decidido_por: 'conecta',
+  });
+});
+
+test('marcado à mão, o Conecta volta antes do envio dizendo "não": a tela para no preço cheio, travado', async ({ page }) => {
+  const n8n = await n8nFalso(page);
+  const chamadas = await primeiraConferencia(page, SEM_RESPOSTA);
+  await entrar(page);
+  await abrirCasais(page);
+  await contratantePJ(page, INATIVO);
+  await contato(page);
+  await continuar(page);
+  await casal(page);
+  await continuar(page);
+  await etapa(page, 'Pagamento');
+  await caixaDoElite(page).check();
+  await expect(page.locator('[data-valor-casais]')).toHaveText('R$ 35.000,00');
+  await pagamento(page, { forma: 'Pix' });
+  await continuar(page);
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 35.000,00');
+  await expect(page.getByText('Elite Empresarial (marcado pelo consultor, sem o Conecta)')).toBeVisible();
+
+  // No Finalizar a tela pergunta de novo: o Conecta respondeu que não é ativa.
+  await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
+  await expect(page.getByText(/O valor mudou para R\$\s39\.997,00/)).toBeVisible();
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 39.997,00');
+  expect(chamadas()).toBe(2);
+  expect(n8n.vendas).toEqual([]);
+  // De volta ao Pagamento: travado, sem a caixa.
+  await page.getByRole('button', { name: 'Editar' }).nth(2).click();
+  await etapa(page, 'Pagamento');
+  await expect(caixaDoElite(page)).toHaveCount(0);
+  await expect(page.locator('[data-conferencia="inativo"]')).toBeVisible();
+  await continuar(page);
+
+  await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
+  await expect(page.locator('[data-protocolo]')).toBeVisible();
+  expect(n8n.vendas[0]).toMatchObject({
+    valor: 39997, tabela: 'cheio', elite_conferido_no_conecta: true, elite_decidido_por: 'conecta',
+  });
 });
 
 test('o servidor não confia na tela: o "ativo" que o Conecta não deu é recusado no comprovante', async ({ page }) => {
@@ -432,30 +509,180 @@ test('o servidor não confia na tela: o "ativo" que o Conecta não deu é recusa
   expect(n8n.vendas[0]).toMatchObject({ valor: 39997, tabela: 'cheio', elite_conferido_no_conecta: true });
 });
 
+test('a caixa que some volta desmarcada: a marca não sobrevive a uma conferência sem a caixa', async ({ page }) => {
+  // As três respostas de `/api/casais/elite` são forjadas no navegador: o Conecta
+  // fora (com a caixa), o teto do consultor (sem ela) e o Conecta fora de novo.
+  const respostas = [
+    SEM_RESPOSTA,
+    {
+      ...SEM_RESPOSTA, consultor_decide: false, motivo: 'limite_da_pessoa', tentar_em: 600,
+      mensagem: 'Você fez muitas consultas ao Conecta nesta hora. Sem a conferência, a venda fica no preço cheio, R$ 39.997,00.',
+    },
+    SEM_RESPOSTA,
+  ];
+  await page.route('**/api/casais/elite', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(respostas.shift() || SEM_RESPOSTA),
+  }));
+  await n8nFalso(page);
+  await entrar(page);
+  await abrirCasais(page);
+  await contratantePJ(page, INATIVO);
+  const conferir = page.locator('[data-conferencia="sem_resposta"]').getByRole('button', { name: 'Conferir de novo' });
+  await caixaDoElite(page).check();
+  await conferir.click();
+  await expect(page.locator('[data-conferencia="sem_resposta"]')).toContainText('muitas consultas');
+  await expect(caixaDoElite(page)).toHaveCount(0);
+  await conferir.click();
+  await expect(caixaDoElite(page)).toBeVisible();
+  await expect(caixaDoElite(page)).not.toBeChecked();
+
+  // O aviso de quando a caixa sumiu ("O valor mudou para R$ 39.997,00") não fica
+  // no Resumo depois que o consultor marca de novo.
+  await caixaDoElite(page).check();
+  await contato(page);
+  await continuar(page);
+  await casal(page);
+  await continuar(page);
+  await etapa(page, 'Pagamento');
+  await expect(page.locator('[data-valor-casais]')).toHaveText('R$ 35.000,00');
+  await pagamento(page, { forma: 'Pix' });
+  await continuar(page);
+  await etapa(page, 'Confirme o pedido');
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 35.000,00');
+  await expect(page.getByText(/O valor mudou/)).toHaveCount(0);
+});
+
+test('trocar o CNPJ tira o aviso de valor mudado do CNPJ anterior', async ({ page }) => {
+  // Forjadas: o Conecta fora (com a caixa), o teto do consultor (sem ela, e o
+  // aviso "O valor mudou"), e o Conecta fora para o CNPJ novo.
+  const respostas = [
+    SEM_RESPOSTA,
+    { ...SEM_RESPOSTA, consultor_decide: false, motivo: 'limite_da_pessoa', tentar_em: 600,
+      mensagem: 'Você fez muitas consultas ao Conecta nesta hora. Sem a conferência, a venda fica no preço cheio, R$ 39.997,00.' },
+  ];
+  await page.route('**/api/casais/elite', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(respostas.shift() || SEM_RESPOSTA),
+  }));
+  await n8nFalso(page);
+  await entrar(page);
+  await abrirCasais(page);
+  await contratantePJ(page, INATIVO);
+  await caixaDoElite(page).check();
+  await page.locator('[data-conferencia="sem_resposta"]').getByRole('button', { name: 'Conferir de novo' }).click();
+  await expect(page.locator('[data-conferencia="sem_resposta"]')).toContainText('muitas consultas');
+  // O aviso "O valor mudou para R$ 39.997,00" ficou; o CNPJ muda.
+  await page.locator('#cas-cnpj').fill(OUTRO_SEM_RESPOSTA);
+  await expect(caixaDoElite(page)).toBeVisible();
+  await contato(page);
+  await continuar(page);
+  await casal(page);
+  await continuar(page);
+  await etapa(page, 'Pagamento');
+  await pagamento(page, { forma: 'Pix' });
+  await continuar(page);
+  await etapa(page, 'Confirme o pedido');
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 39.997,00');
+  await expect(page.getByText(/O valor mudou/)).toHaveCount(0);
+});
+
+test('marcado à mão, o Conecta volta na validação dizendo "não": o servidor recusa', async ({ page, request }) => {
+  // 503 de manutenção com Retry-After de 1 s: a pausa do backend é curta, e o
+  // Conecta pode "voltar" dentro do teste.
+  await conectaResponde(request, VOLTA, { status: 503, erro: 'manutencao', retry_after: '1' });
+  const n8n = await n8nFalso(page);
+  await entrar(page);
+  await abrirCasais(page);
+  await contratantePJ(page, VOLTA);
+  await expect(page.locator('[data-conferencia="sem_resposta"]')).toContainText('O Conecta está em manutenção');
+  await contato(page);
+  await continuar(page);
+  await casal(page);
+  await continuar(page);
+  await etapa(page, 'Pagamento');
+  await caixaDoElite(page).check();
+  await expect(page.locator('[data-valor-casais]')).toHaveText('R$ 35.000,00');
+  await pagamento(page, { forma: 'Pix' });
+  await continuar(page);
+  await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
+  await expect(page.locator('[data-protocolo]')).toBeVisible();
+  const [venda] = n8n.vendas;
+  expect(venda).toMatchObject({
+    valor: 35000, tabela: 'elite', elite_conferido_no_conecta: false, elite_decidido_por: 'consultor_sem_conecta',
+    comprovante_erro: null,
+  });
+
+  // O Conecta volta e diz que a empresa não é cliente ativo. Passada a pausa de
+  // 1 s, a validação do n8n pergunta de novo: recusa, sem consumir o comprovante.
+  await conectaResponde(request, VOLTA, { cliente_ativo: false });
+  await page.waitForTimeout(2500);
+  expect(await validar(request, venda)).toMatchObject({ valido: false, motivo: 'elite_nao_confirmado' });
+  const perguntas = (await perguntasAoConecta(request)).filter((p) => p.corpo.cnpj === '41830956000106');
+  expect(perguntas.length).toBeGreaterThanOrEqual(2);
+});
+
 // Por último: a falha deixa o backend 60 s sem perguntar ao Conecta (a pausa é
 // de todos), e o teste seguinte receberia "sem resposta".
-test('Conecta fora: fica no preço cheio, com o aviso, e o Elite não sai', async ({ page }) => {
+test('Conecta fora (503): a caixa aparece com o aviso, e a venda marcada à mão passa na validação', async ({ page, request }) => {
   const n8n = await n8nFalso(page);
   await entrar(page);
   await abrirCasais(page);
   await contratantePJ(page, FORA_DO_AR);
   const aviso = page.locator('[data-conferencia="sem_resposta"]');
   await expect(aviso).toContainText('Não foi possível conferir o CNPJ no Conecta agora');
-  await expect(aviso).toContainText('preço cheio, R$ 39.997,00');
+  await expect(aviso).toContainText('quem decide é você');
   await expect(aviso.getByRole('button', { name: 'Conferir de novo' })).toBeVisible();
+  await expect(caixaDoElite(page)).toBeVisible();
+  await expect(caixaDoElite(page)).not.toBeChecked();
+
+  // A marca é do CNPJ: trocar de CNPJ a desfaz, e voltar a ele não a traz marcada.
+  await caixaDoElite(page).check();
+  await page.locator('#cas-cnpj').fill(OUTRO_SEM_RESPOSTA);
+  await expect(caixaDoElite(page)).toBeVisible();
+  await expect(caixaDoElite(page)).not.toBeChecked();
+  await page.locator('#cas-cnpj').fill(FORA_DO_AR);
+  await expect(page.locator('[data-conferencia="sem_resposta"]')).toBeVisible();
+  await expect(caixaDoElite(page)).toBeVisible();
+  await expect(caixaDoElite(page)).not.toBeChecked();
   await contato(page);
   await continuar(page);
   await casal(page);
   await continuar(page);
+
+  // 1. Marcar e desmarcar alterna os dois valores.
   await etapa(page, 'Pagamento');
-  await expect(page.locator('[data-valor-casais]')).toHaveText('R$ 39.997,00');
+  const valor = page.locator('[data-valor-casais]');
+  await expect(valor).toHaveText('R$ 39.997,00');
+  await caixaDoElite(page).check();
+  await expect(valor).toHaveText('R$ 35.000,00');
+  await caixaDoElite(page).uncheck();
+  await expect(valor).toHaveText('R$ 39.997,00');
   await page.screenshot({ path: PRINTS + '19-casais-conecta-fora.png', fullPage: true });
+  await caixaDoElite(page).check();
+  await expect(valor).toHaveText('R$ 35.000,00');
   await pagamento(page, { forma: 'Pix' });
+  await page.screenshot({ path: PRINTS + '21-casais-conecta-fora-elite-marcado.png', fullPage: true });
   await continuar(page);
-  await expect(page.getByText('Preço cheio (sem conferência do Conecta)')).toBeVisible();
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 35.000,00');
+  await expect(page.getByText('Elite Empresarial (marcado pelo consultor, sem o Conecta)')).toBeVisible();
+  await page.screenshot({ path: PRINTS + '22-casais-resumo-elite-sem-conecta.png', fullPage: true });
+
+  // 3. O envio, com o Conecta ainda fora: o servidor pergunta de novo, fica sem
+  // resposta, e assina o que o consultor marcou.
   await page.getByRole('button', { name: /Finalizar cadastro/ }).click();
   await expect(page.locator('[data-protocolo]')).toBeVisible();
   const [venda] = n8n.vendas;
-  expect(venda).toMatchObject({ valor: 39997, tabela: 'cheio', elite_conferido_no_conecta: false });
+  expect(venda).toMatchObject({
+    valor: 35000, tabela: 'elite', elite_conferido_no_conecta: false, elite_decidido_por: 'consultor_sem_conecta',
+    comprovante_erro: null,
+  });
   expect(venda.comprovante).toBeTruthy();
+  expect(venda.comprovante_valores.casais).toEqual({
+    tipo_pessoa: 'PJ', documento: FORA_DO_AR, tabela: 'elite', elite_conferido_no_conecta: false,
+  });
+  // O bloco `casais` devolvido é o assinado, chave a chave; quem decidiu vai ao lado.
+  const validada = await validar(request, venda);
+  expect(validada).toMatchObject({ valido: true, valor_total: '35000.00', elite_decidido_por: 'consultor_sem_conecta' });
+  expect(validada.casais).toEqual({
+    tipo_pessoa: 'PJ', documento: FORA_DO_AR.replace(/\D/g, ''), tabela: 'elite', elite_conferido_no_conecta: false,
+  });
 });

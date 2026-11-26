@@ -6,8 +6,9 @@
 // o componente "Logo": validadores, `buildProtocol` e o bloco do Casais) e
 // confere o que a tela decide sozinha antes de o servidor conferir:
 //
-// - o valor: na PF, o "paga o valor do Elite Empresarial"; na PJ, só o Conecta
-//   dizendo "ativo" para ESTE CNPJ dá o Elite — o resto é o cheio;
+// - o valor: na PF, o "paga o valor do Elite Empresarial"; na PJ, o Conecta
+//   dizendo "ativo" para ESTE CNPJ, ou, sem resposta dele (e o backend deixando),
+//   a mesma caixa marcada à mão para este CNPJ (TSK-1640) — o resto é o cheio;
 // - o que falta em cada etapa (e-mail, telefone, os dois participantes, o mesmo
 //   CPF nos dois);
 // - o payload do n8n, chave a chave (é o contrato), e o que o servidor assina;
@@ -32,7 +33,8 @@ const lobby = new Function(
   html.slice(inicio, fim).replace(/^let COBRANCA/m, 'var COBRANCA').replace(/^let CATS/m, 'var CATS')
   + '\nreturn { tabelaDoCasais, valorDoCasais, conferidoNoConecta, parcelasDoCasais, faltasDoContratanteCasais,'
   + ' faltasDoCasal, faltasDoPagamentoCasais, payloadDoCasais, valoresDoCasais, numeroDoContratoCasais,'
-  + ' perguntaEliteCasais, conferenciaVaziaCasais, CASAIS_VALOR_CHEIO, CASAIS_VALOR_ELITE };',
+  + ' perguntaEliteCasais, conferenciaVaziaCasais, consultorDecideNaPj, eliteMarcadoNaPj, eliteDecididoPor,'
+  + ' CASAIS_VALOR_CHEIO, CASAIS_VALOR_ELITE };',
 )(
   async (...args) => resposta.atual(...args),
   (e) => !!(e && (e.sessaoDerrubada || e.sessaoTrocada)),
@@ -41,7 +43,12 @@ const lobby = new Function(
 
 const CNPJ = '22.122.190/0001-52';
 const OUTRO_CNPJ = '37.598.418/0001-52';
-const conferencia = (estado, cnpj = CNPJ) => ({ cnpj: cnpj.replace(/\D/g, ''), estado, mensagem: '', tentarEm: null });
+const conferencia = (estado, cnpj = CNPJ, consultorDecide = false) => ({
+  cnpj: cnpj.replace(/\D/g, ''), estado, mensagem: '', tentarEm: null, consultorDecide,
+});
+// O Conecta não respondeu, e o backend deixou o consultor decidir (TSK-1640).
+const semResposta = (cnpj = CNPJ) => conferencia('sem_resposta', cnpj, true);
+const DIGITOS = CNPJ.replace(/\D/g, '');
 
 // Uma venda preenchida, PJ: como o estado `s` do App.
 function venda(mudancas = {}) {
@@ -51,7 +58,7 @@ function venda(mudancas = {}) {
     cep: '88010-400', endereco: 'Rua das Acácias', numero: '210', complemento: 'Sala 3',
     bairro: 'Centro', cidade: 'Florianópolis', estado: 'SC',
     casParticipantes: [{ nome: 'Helena Duarte Vasconcelos', cpf: '294.199.881-04' }, { nome: 'Otávio Brandão Lacerda', cpf: '450.490.714-37' }],
-    casEliteMarcado: false, casElite: conferencia('ativo'),
+    casEliteMarcado: false, casElite: conferencia('ativo'), casEliteAMao: '',
     casForma: 'cartao', casParcelas: 12, casData: '2026-12-10', casProtocolo: '',
     ...mudancas,
   };
@@ -85,6 +92,45 @@ test('PJ: só o Conecta dizendo "ativo" para este CNPJ dá o Elite', () => {
   assert.equal(lobby.tabelaDoCasais(venda({ casElite: conferencia('ativo', OUTRO_CNPJ) })), 'cheio');
   // Nem marcar a caixa da PF muda a PJ.
   assert.equal(lobby.tabelaDoCasais(venda({ casElite: conferencia('inativo'), casEliteMarcado: true })), 'cheio');
+});
+
+test('PJ com o Conecta sem resposta: a caixa marcada à mão dá o Elite, desmarcada o cheio', () => {
+  // A caixa aparece só com o backend dizendo que o Conecta não respondeu.
+  assert.equal(lobby.consultorDecideNaPj(venda({ casElite: semResposta() })), true);
+  assert.equal(lobby.tabelaDoCasais(venda({ casElite: semResposta(), casEliteAMao: DIGITOS })), 'elite');
+  assert.equal(lobby.tabelaDoCasais(venda({ casElite: semResposta(), casEliteAMao: '' })), 'cheio');
+  // A marca é do CNPJ: a de outro CNPJ não vale (o consultor trocou o CNPJ).
+  assert.equal(lobby.tabelaDoCasais(venda({ casElite: semResposta(), casEliteAMao: OUTRO_CNPJ.replace(/\D/g, '') })), 'cheio');
+  assert.equal(lobby.eliteMarcadoNaPj(venda({ casEliteAMao: DIGITOS })), true);
+  assert.equal(lobby.eliteMarcadoNaPj(venda({ cnpj: OUTRO_CNPJ, casEliteAMao: DIGITOS })), false);
+  // A caixa da PF não vale na PJ.
+  assert.equal(lobby.tabelaDoCasais(venda({ casElite: semResposta(), casEliteMarcado: true })), 'cheio');
+});
+
+test('PJ: com o Conecta respondendo, ou sem o backend deixar, a caixa não aparece nem conta', () => {
+  for (const estado of ['ativo', 'inativo', 'conferindo', 'idle']) {
+    const d = venda({ casElite: conferencia(estado, CNPJ, true), casEliteAMao: DIGITOS });
+    assert.equal(lobby.consultorDecideNaPj(d), false, estado);
+  }
+  // O Conecta disse que não é ativa: a marca que tenha sobrado não tira do cheio.
+  assert.equal(lobby.tabelaDoCasais(venda({ casElite: conferencia('inativo'), casEliteAMao: DIGITOS })), 'cheio');
+  // Sem resposta, mas o backend não deixou (o teto do consultor, o Lobby fora do ar): cheio.
+  const semCaixa = venda({ casElite: conferencia('sem_resposta'), casEliteAMao: DIGITOS });
+  assert.equal(lobby.consultorDecideNaPj(semCaixa), false);
+  assert.equal(lobby.tabelaDoCasais(semCaixa), 'cheio');
+  // A conferência de outro CNPJ não abre a caixa deste.
+  assert.equal(lobby.consultorDecideNaPj(venda({ casElite: semResposta(OUTRO_CNPJ) })), false);
+  // Na PF a caixa é outra.
+  assert.equal(lobby.consultorDecideNaPj(pf({ casElite: semResposta() })), false);
+});
+
+test('quem decidiu: o Conecta, o consultor (PF) ou o consultor sem o Conecta', () => {
+  assert.equal(lobby.eliteDecididoPor(venda({ casElite: conferencia('ativo') })), 'conecta');
+  assert.equal(lobby.eliteDecididoPor(venda({ casElite: conferencia('inativo') })), 'conecta');
+  assert.equal(lobby.eliteDecididoPor(venda({ casElite: semResposta(), casEliteAMao: DIGITOS })), 'consultor_sem_conecta');
+  assert.equal(lobby.eliteDecididoPor(venda({ casElite: semResposta() })), 'consultor_sem_conecta');
+  assert.equal(lobby.eliteDecididoPor(pf({ casEliteMarcado: true })), 'consultor');
+  assert.equal(lobby.eliteDecididoPor(pf({ casEliteMarcado: false })), 'consultor');
 });
 
 test('PJ: conferido no Conecta é ele ter respondido, sim ou não', () => {
@@ -166,8 +212,27 @@ test('o payload do n8n é o JSON combinado, chave a chave', () => {
     valor: 35000,
     tabela: 'elite',
     elite_conferido_no_conecta: true,
+    elite_decidido_por: 'conecta',
     pagamento: { forma: 'cartao', parcelas: 12, data: '2026-12-10' },
   });
+  // As chaves de antes da TSK-1640 estão todas lá, na mesma ordem; só uma a mais.
+  assert.deepEqual(Object.keys(payload), [
+    'id_venda', 'numero_contrato', 'produto', 'contratante', 'participantes', 'valor', 'tabela',
+    'elite_conferido_no_conecta', 'elite_decidido_por', 'pagamento',
+  ]);
+});
+
+test('o payload da PJ marcada à mão com o Conecta sem resposta', () => {
+  const payload = lobby.payloadDoCasais(venda({ casElite: semResposta(), casEliteAMao: DIGITOS }), 'CAP-261126112345');
+  assert.deepEqual([payload.valor, payload.tabela, payload.elite_conferido_no_conecta, payload.elite_decidido_por],
+    [35000, 'elite', false, 'consultor_sem_conecta']);
+  // O que o servidor assina não leva o `elite_decidido_por`: o hash é o de antes.
+  assert.deepEqual(lobby.valoresDoCasais(payload, 'produtos', 'casais-alta-performance').casais,
+    { tipo_pessoa: 'PJ', documento: '22.122.190/0001-52', tabela: 'elite', elite_conferido_no_conecta: false });
+
+  const desmarcada = lobby.payloadDoCasais(venda({ casElite: semResposta() }), 'CAP-261126112345');
+  assert.deepEqual([desmarcada.valor, desmarcada.tabela, desmarcada.elite_conferido_no_conecta, desmarcada.elite_decidido_por],
+    [39997, 'cheio', false, 'consultor_sem_conecta']);
 });
 
 test('o payload da PF', () => {
@@ -176,6 +241,7 @@ test('o payload da PF', () => {
   assert.deepEqual(payload.contratante.nome, 'Marina Quintela Rocha');
   assert.deepEqual(payload.contratante.documento, '775.927.214-65');
   assert.deepEqual([payload.valor, payload.tabela, payload.elite_conferido_no_conecta], [39997, 'cheio', false]);
+  assert.equal(payload.elite_decidido_por, 'consultor');
   assert.deepEqual(payload.pagamento, { forma: 'boleto', parcelas: 1, data: '2026-12-10' });
 });
 
@@ -222,8 +288,9 @@ test('a pergunta ao backend: o 200 do contrato, e o resto é "sem resposta"', as
     return { status, ok: status >= 200 && status < 300, headers: { get: (k) => cabecalhos[k] || null }, json: async () => corpo };
   };
 
-  resposta.atual = json(200, { cliente_ativo: true, mensagem: 'ativo!', tentar_em: null });
-  assert.deepEqual(await lobby.perguntaEliteCasais('22122190000152'), { estado: 'ativo', mensagem: 'ativo!', tentarEm: null });
+  resposta.atual = json(200, { cliente_ativo: true, mensagem: 'ativo!', tentar_em: null, consultor_decide: false });
+  assert.deepEqual(await lobby.perguntaEliteCasais('22122190000152'),
+    { estado: 'ativo', mensagem: 'ativo!', tentarEm: null, consultorDecide: false });
   assert.equal(pedido.url, '/api/casais/elite');
   assert.equal(pedido.opcoes.method, 'POST');
   assert.deepEqual(JSON.parse(pedido.opcoes.body), { cnpj: '22122190000152' });
@@ -231,19 +298,34 @@ test('a pergunta ao backend: o 200 do contrato, e o resto é "sem resposta"', as
   resposta.atual = json(200, { cliente_ativo: false, mensagem: 'não' });
   assert.equal((await lobby.perguntaEliteCasais('x')).estado, 'inativo');
 
-  resposta.atual = json(200, { cliente_ativo: null, mensagem: 'fora', tentar_em: 60 });
-  assert.deepEqual(await lobby.perguntaEliteCasais('x'), { estado: 'sem_resposta', mensagem: 'fora', tentarEm: 60 });
+  resposta.atual = json(200, { cliente_ativo: null, mensagem: 'fora', tentar_em: 60, consultor_decide: true });
+  assert.deepEqual(await lobby.perguntaEliteCasais('x'),
+    { estado: 'sem_resposta', mensagem: 'fora', tentarEm: 60, consultorDecide: true });
 
+  // O teto do consultor: sem resposta, mas o backend não abre a caixa.
+  resposta.atual = json(200, { cliente_ativo: null, mensagem: 'teto', tentar_em: 600, consultor_decide: false });
+  assert.equal((await lobby.perguntaEliteCasais('x')).consultorDecide, false);
+  // Um backend de antes da TSK-1640 (sem a chave) também não.
+  resposta.atual = json(200, { cliente_ativo: null, mensagem: 'fora', tentar_em: 60 });
+  assert.equal((await lobby.perguntaEliteCasais('x')).consultorDecide, false);
+  // Nem um `consultor_decide` com o Conecta respondendo.
+  resposta.atual = json(200, { cliente_ativo: false, mensagem: 'não', consultor_decide: true });
+  assert.equal((await lobby.perguntaEliteCasais('x')).consultorDecide, false);
+
+  // O Lobby fora do ar, ou o teto da rota: a caixa não aparece (quem diz que o
+  // Conecta não respondeu é o backend).
   resposta.atual = json(429, { erro: 'muito' }, { 'Retry-After': '120' });
   const limite = await lobby.perguntaEliteCasais('x');
-  assert.deepEqual([limite.estado, limite.tentarEm], ['sem_resposta', 120]);
+  assert.deepEqual([limite.estado, limite.tentarEm, limite.consultorDecide], ['sem_resposta', 120, false]);
   assert.match(limite.mensagem, /preço cheio, R\$\s39\.997,00/);
 
   resposta.atual = json(502, null);
-  assert.equal((await lobby.perguntaEliteCasais('x')).estado, 'sem_resposta');
+  const lobbyComErro = await lobby.perguntaEliteCasais('x');
+  assert.deepEqual([lobbyComErro.estado, lobbyComErro.consultorDecide], ['sem_resposta', false]);
 
   resposta.atual = async () => { throw new TypeError('Failed to fetch'); };
-  assert.equal((await lobby.perguntaEliteCasais('x')).estado, 'sem_resposta');
+  const semLobby = await lobby.perguntaEliteCasais('x');
+  assert.deepEqual([semLobby.estado, semLobby.consultorDecide], ['sem_resposta', false]);
 
   // A sessão caiu: sobe, e quem cuida é o login.
   resposta.atual = async () => { const e = new Error('caiu'); e.sessaoDerrubada = true; throw e; };

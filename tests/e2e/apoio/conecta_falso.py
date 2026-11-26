@@ -15,12 +15,18 @@ Responde ao que o cliente 1.6.0 pede no caminho do e2e:
 - `POST /api/v1/clientes/ativo` (a rota da TSK-1621): `{"cliente_ativo": true}`
   para os CNPJs de `ATIVOS`, 503 `indisponivel` para os de `FORA_DO_AR` e
   `false` para o resto; 400 sem o `cnpj` em texto, 401 sem a chave `lobby`.
+  O teste pode trocar a resposta de um CNPJ (`POST /_clientes/responder`).
   Anota cada pergunta (o caminho, o corpo, a chave e o `User-Agent`).
 
 E portas para o teste olhar o que chegou, que o Conecta de verdade não tem:
 
 - `GET /_sinais` (JSON), `POST /_sinais/limpar`, `POST /_falhar` e `POST /_voltar`;
-- `GET /_clientes` (JSON) e `POST /_clientes/limpar`: as perguntas do Casais;
+- `GET /_clientes` (JSON) e `POST /_clientes/limpar`: as perguntas do Casais
+  (o limpar desfaz também as respostas trocadas);
+- `POST /_clientes/responder` com `{"cnpj": "<dígitos>", "cliente_ativo": bool}`
+  ou `{"cnpj": ..., "status": 503, "erro": "manutencao", "retry_after": "1"}`: o
+  Conecta que cai e volta para um CNPJ (TSK-1640). O `Retry-After` curto deixa a
+  pausa do backend em 1 s, e não nos 60 s de uma falha sem ele;
 - `GET /_estado` (JSON): o estado de agora de cada pessoa, pela regra do Conecta
   de verdade entre abas (`_estado`, abaixo);
 - `GET /_painel`: uma página no jeito do "Uso em tempo real", com esse estado e
@@ -47,6 +53,7 @@ FORA_DO_AR = {"63580153000175"}
 _trava = threading.Lock()
 _sinais = []
 _clientes = []
+_respostas = {}  # CNPJ -> a resposta trocada pelo teste (`/_clientes/responder`)
 _pessoas = {}  # identidade_id -> e-mail
 _conecta = {"falhando": False}
 
@@ -199,6 +206,12 @@ class Atendente(BaseHTTPRequestHandler):
         if self.path == "/_clientes/limpar":
             with _trava:
                 _clientes.clear()
+                _respostas.clear()
+            return self._responder(204)
+        if self.path == "/_clientes/responder":
+            corpo = self._corpo()
+            with _trava:
+                _respostas[str(corpo.get("cnpj", ""))] = corpo
             return self._responder(204)
         if self.path == "/_sinais/limpar":
             with _trava:
@@ -244,9 +257,25 @@ class Atendente(BaseHTTPRequestHandler):
         if not isinstance(cnpj, str) or not cnpj:
             return self._responder(400, {"erro": "dados_invalidos", "detalhe": "cnpj"})
         cnpj = "".join(c for c in cnpj if c.isalnum()).upper()
+        with _trava:
+            trocada = _respostas.get(cnpj)
+        if trocada is not None:
+            return self._resposta_trocada(trocada)
         if cnpj in FORA_DO_AR:
             return self._responder(503, {"erro": "indisponivel", "detalhe": "x"})
         return self._responder(200, {"cliente_ativo": cnpj in ATIVOS})
+
+    def _resposta_trocada(self, trocada):
+        if "cliente_ativo" in trocada:
+            return self._responder(200, {"cliente_ativo": bool(trocada["cliente_ativo"])})
+        dados = json.dumps({"erro": trocada.get("erro") or "indisponivel", "detalhe": "x"}).encode()
+        self.send_response(int(trocada.get("status") or 503))
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        if trocada.get("retry_after"):
+            self.send_header("Retry-After", str(trocada["retry_after"]))
+        self.send_header("Content-Length", str(len(dados)))
+        self.end_headers()
+        self.wfile.write(dados)
 
     def log_message(self, formato, *args):
         sys.stderr.write("conecta-falso: " + formato % args + "\n")

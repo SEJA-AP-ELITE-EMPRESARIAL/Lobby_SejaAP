@@ -155,6 +155,17 @@ class SemRespostaTest(Base):
                 self.responde(status, {"erro": codigo})
                 self.assertSemResposta("nao_autorizado")
 
+    def test_404_e_a_rota_ausente_e_nao_o_conecta_fora(self):
+        """TSK-1640: fora do ar abre a caixa do consultor; a rota que não existe, não."""
+        self.responde(404, {"erro": "nao_encontrado"})
+        self.assertSemResposta("rota_ausente")
+
+    def test_outro_4xx_e_resposta_inesperada(self):
+        for status in (405, 410, 422):
+            with self.subTest(status=status):
+                self.responde(status, {"erro": "x"})
+                self.assertSemResposta("resposta_inesperada")
+
     def test_400(self):
         self.responde(400, {"erro": "dados_invalidos", "detalhe": "cnpj"})
         self.assertSemResposta("dados_invalidos")

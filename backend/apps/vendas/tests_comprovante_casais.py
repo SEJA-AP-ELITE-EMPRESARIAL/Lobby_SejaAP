@@ -4,11 +4,13 @@ O comprovante do Casais de Alta Performance (TSK-1622), pelo lado de quem burlar
 O valor é um de dois fixos: R$ 39.997,00 (cheio) ou R$ 35.000,00 (Elite
 Empresarial). Na PJ quem diz qual vale é o Conecta, e o booleano que a tela manda
 não vale nada sozinho: o servidor pergunta de novo e só assina o valor do Elite
-numa PJ que o Conecta disse ser ativa. Na PF o consultor decide.
+numa PJ que o Conecta disse ser ativa — ou, desde a TSK-1640, marcado à mão pelo
+consultor quando o Conecta fica sem resposta também para o servidor. Na PF o
+consultor decide.
 
 E a validação do n8n (`/api/venda/validar`) recusa valor fora dos dois, o valor
 do Elite trocado num comprovante do cheio, o CNPJ trocado, e o Elite de uma PJ
-que o Conecta passou a dizer que não é ativa.
+(conferido ou marcado à mão) que o Conecta, reconsultado, diz que não é ativa.
 """
 from unittest.mock import patch
 
@@ -201,16 +203,79 @@ class PessoaJuridicaTest(Base):
             "não tem este CNPJ como cliente ativo do Elite Empresarial: o valor desta venda é R$ 39.997,00",
         )
 
-    def test_elite_sem_resposta_do_conecta_e_recusado(self):
-        """Conecta fora, lento, 429 ou 503: o valor do Elite não sai sem conferência."""
+    def test_sem_resposta_do_conecta_o_consultor_marca_a_mao(self):
+        """TSK-1640: Conecta fora, lento, 429 ou 503 — as duas tabelas, sem conferência."""
         for motivo in ("indisponivel", "limite", "manutencao"):
+            for tabela in ("elite", "cheio"):
+                with self.subTest(motivo=motivo, tabela=tabela):
+                    cache.clear()
+                    ComprovanteVenda.objects.all().delete()
+                    self.conecta.side_effect = SemResposta(motivo)
+                    self.assertAssina(venda_casais(documento=ATIVO, tabela=tabela, conferido=False))
+                    self.assertEqual(ComprovanteVenda.objects.get().valores["casais"], {
+                        "tipo_pessoa": "PJ",
+                        "documento": "22122190000152",
+                        "tabela": tabela,
+                        "elite_conferido_no_conecta": False,
+                    })
+
+    def test_o_elite_a_mao_vale_so_se_o_servidor_tambem_ficar_sem_resposta(self):
+        """O navegador dizer que o Conecta estava fora não basta: o servidor pergunta.
+
+        É o "Como confirmo" 4 da TSK-1640 na emissão: marcado à mão, mas o Conecta
+        responde que não é ativa — recusa, com o valor que vale.
+        """
+        self.assertRecusa(
+            venda_casais(documento=INATIVO, tabela="elite", conferido=False),
+            "não tem este CNPJ como cliente ativo do Elite Empresarial: o valor desta venda é R$ 39.997,00",
+        )
+        self.conecta.assert_called_once_with("37598418000152")
+
+    def test_marcado_a_mao_num_cliente_que_o_conecta_confirma(self):
+        """Mesmo valor, mas a origem tem de ser a verdadeira: o Conecta respondeu."""
+        self.assertRecusa(
+            venda_casais(documento=ATIVO, tabela="elite", conferido=False),
+            "O valor segue R$ 35.000,00, mas conferido por ele, e não marcado à mão",
+        )
+
+    def test_sem_resposta_a_tela_nao_diz_que_o_conecta_conferiu(self):
+        self.conecta.side_effect = SemResposta("indisponivel")
+        for tabela in ("elite", "cheio"):
+            with self.subTest(tabela=tabela):
+                cache.clear()
+                self.assertRecusa(
+                    venda_casais(documento=ATIVO, tabela=tabela, conferido=True),
+                    'o que você marcar em "paga o valor do Elite Empresarial"',
+                )
+
+    def test_a_integracao_errada_nao_abre_a_caixa(self):
+        """Chave recusada, rota ausente, resposta fora do contrato: não é o Conecta fora."""
+        for motivo in ("nao_autorizado", "rota_ausente", "resposta_inesperada", "redirecionado",
+                       "nao_configurado", "dados_invalidos"):
             with self.subTest(motivo=motivo):
                 cache.clear()
                 self.conecta.side_effect = SemResposta(motivo)
-                self.assertRecusa(
-                    venda_casais(documento=ATIVO, tabela="elite", conferido=True),
-                    "só sai com a conferência",
-                )
+                self.assertRecusa(venda_casais(documento=ATIVO, tabela="elite", conferido=False, ),
+                                  "fica no preço cheio, R$ 39.997,00")
+                cache.clear()
+                self.assertAssina(venda_casais(documento=ATIVO, tabela="cheio", conferido=False))
+                ComprovanteVenda.objects.all().delete()
+
+    @override_settings(LOBBY_CASAIS_CONSULTAS_POR_HORA=1)
+    def test_o_teto_da_pessoa_nao_abre_a_caixa(self):
+        """Esgotar o próprio teto não vira o jeito de vender o Elite sem o Conecta."""
+        self.assertAssina(venda_casais(documento=INATIVO, tabela="cheio", conferido=True))
+        resposta = emite_comprovante(
+            venda_casais(documento=ATIVO, tabela="elite", conferido=False, protocolo="CAP-261125112346")
+        )
+        self.assertEqual(resposta.status_code, 422)
+        self.assertIn("muitas consultas ao Conecta", resposta.json()["erro"])
+        self.assertIn("fica no preço cheio, R$ 39.997,00", resposta.json()["erro"])
+        # O cheio, sem conferência, passa como antes.
+        self.assertAssina(
+            venda_casais(documento=ATIVO, tabela="cheio", conferido=False, protocolo="CAP-261125112347")
+        )
+        self.assertEqual(self.conecta.call_count, 1)
 
     def test_cheio_num_cliente_ativo_e_recusado(self):
         """É o valor do Elite que vale no contrato de quem é cliente (decisão do dono)."""
@@ -392,10 +457,75 @@ class ValidacaoTest(Base):
         self.assertEqual(corpo["casais"], {
             "tipo_pessoa": "PF", "documento": "", "tabela": "elite", "elite_conferido_no_conecta": False,
         })
+        self.assertEqual(corpo["elite_decidido_por"], "consultor")
 
         pj = venda_casais(documento=ATIVO, tabela="elite", conferido=True, protocolo="CAP-261125100009")
         corpo = self.validar(self.assertAssina(pj), pj)
         self.assertEqual(corpo["casais"]["documento"], "22122190000152")
+        self.assertEqual(corpo["elite_decidido_por"], "conecta")
+
+    def test_marcado_a_mao_com_o_conecta_ainda_fora_passa(self):
+        """O "Como confirmo" 3 da TSK-1640: a validação reconsulta, e segue sem resposta."""
+        dados = venda_casais(documento=FORA, tabela="elite", conferido=False)
+        token = self.assertAssina(dados)
+        # Sem a pausa da emissão: a validação pergunta de novo, de fato.
+        cache.clear()
+        self.conecta.reset_mock()
+        corpo = self.validar(token, dados)
+        self.assertTrue(corpo["valido"], corpo)
+        self.conecta.assert_called_once_with("63580153000175")
+        self.assertEqual(corpo["valor_total"], "35000.00")
+        # O bloco `casais` é o assinado, chave a chave; quem decidiu vai ao lado.
+        self.assertEqual(corpo["casais"], {
+            "tipo_pessoa": "PJ", "documento": "63580153000175", "tabela": "elite",
+            "elite_conferido_no_conecta": False,
+        })
+        self.assertEqual(corpo["elite_decidido_por"], "consultor_sem_conecta")
+
+    def test_marcado_a_mao_e_o_conecta_volta_dizendo_que_nao_e_recusado(self):
+        """O "Como confirmo" 4 da TSK-1640: a reconsulta do servidor diz que não é ativa."""
+        dados = venda_casais(documento=FORA, tabela="elite", conferido=False)
+        token = self.assertAssina(dados)
+        cache.clear()
+        self.conecta.side_effect = lambda cnpj: False
+        corpo = self.validar(token, dados)
+        self.assertEqual((corpo["valido"], corpo["motivo"]), (False, "elite_nao_confirmado"))
+        self.assertIsNone(ComprovanteVenda.objects.get().consumido_em)
+
+    def test_marcado_a_mao_e_o_conecta_volta_dizendo_que_sim(self):
+        dados = venda_casais(documento=FORA, tabela="elite", conferido=False)
+        token = self.assertAssina(dados)
+        cache.clear()
+        self.conecta.side_effect = lambda cnpj: True
+        corpo = self.validar(token, dados)
+        self.assertTrue(corpo["valido"], corpo)
+        # Quem decidiu foi o consultor: é o que foi assinado.
+        self.assertEqual(corpo["elite_decidido_por"], "consultor_sem_conecta")
+
+    def test_o_cheio_marcado_a_mao_nao_reconsulta(self):
+        dados = venda_casais(documento=FORA, tabela="cheio", conferido=False)
+        token = self.assertAssina(dados)
+        cache.clear()
+        self.conecta.reset_mock()
+        corpo = self.validar(token, dados)
+        self.assertTrue(corpo["valido"], corpo)
+        self.assertEqual(corpo["elite_decidido_por"], "consultor_sem_conecta")
+        self.conecta.assert_not_called()
+
+    def test_o_elite_decidido_por_nao_entra_no_que_e_assinado(self):
+        """Sai do assinado; se vier nos valores, é ignorado, e o hash é o de antes da TSK-1640.
+
+        Assim um comprovante emitido antes do deploy continua valendo depois dele.
+        """
+        dados = venda_casais(documento=ATIVO, tabela="elite", conferido=True)
+        token = self.assertAssina(dados)
+        self.assertEqual(set(ComprovanteVenda.objects.get().valores["casais"]),
+                         {"tipo_pessoa", "documento", "tabela", "elite_conferido_no_conecta"})
+        com_a_chave = {**dados, "casais": {**dados["casais"], "elite_decidido_por": "consultor_sem_conecta"}}
+        corpo = self.validar(token, com_a_chave)
+        self.assertTrue(corpo["valido"], corpo)
+        self.assertEqual(corpo["elite_decidido_por"], "conecta")
+        self.assertNotIn("elite_decidido_por", corpo["casais"])
 
     def test_os_outros_fluxos_nao_ganham_o_bloco(self):
         dados = venda_de_tabela()
@@ -404,6 +534,7 @@ class ValidacaoTest(Base):
         self.assertTrue(corpo["valido"], corpo)
         self.assertNotIn("casais", corpo)
         self.assertNotIn("valor_total", corpo)
+        self.assertNotIn("elite_decidido_por", corpo)
 
     def test_cheio_nao_reconsulta_na_validacao(self):
         dados = venda_casais(documento=INATIVO, tabela="cheio", conferido=True)

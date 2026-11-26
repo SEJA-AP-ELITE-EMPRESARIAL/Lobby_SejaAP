@@ -2,8 +2,9 @@
 `POST /api/casais/elite` e a conferência por trás dela (TSK-1622).
 
 - a resposta do Conecta vira o valor que a tela mostra: ativo → Elite
-  (R$ 35.000,00); não ativo → cheio (R$ 39.997,00); sem resposta → cheio, com o
-  motivo — nunca o Elite sem a conferência;
+  (R$ 35.000,00); não ativo → cheio (R$ 39.997,00), os dois travados; sem
+  resposta → o cheio até o consultor marcar a caixa (`consultor_decide`, desde a
+  TSK-1640), com o motivo — menos no teto da própria pessoa, que fica no cheio;
 - o balde do Conecta é um só para o Lobby inteiro: a resposta fica guardada por
   CNPJ, uma falha pausa as perguntas de todos, e cada pessoa tem um teto das
   que vão de fato até lá;
@@ -67,6 +68,7 @@ class RespostaTest(Base):
             "conferido": True,
             "tabela": "elite",
             "valor": 35000,
+            "consultor_decide": False,
             "motivo": None,
             "tentar_em": None,
             "mensagem": "Cliente ativo do Elite Empresarial no Conecta: vale o valor do "
@@ -83,8 +85,11 @@ class RespostaTest(Base):
             (False, True, "cheio", 39997),
         )
         self.assertIn("R$ 39.997,00", corpo["mensagem"])
+        # O Conecta respondeu: o valor é o dele, sem caixa para o consultor.
+        self.assertIs(corpo["consultor_decide"], False)
 
-    def test_conecta_sem_resposta_fica_no_cheio_e_diz_por_que(self):
+    def test_conecta_sem_resposta_o_consultor_decide(self):
+        """TSK-1640: fora do ar, lento, 429, 503 ou falha de rede, a tela mostra a caixa."""
         for motivo, trecho in (
             ("indisponivel", "Não foi possível conferir"),
             ("manutencao", "em manutenção"),
@@ -94,23 +99,59 @@ class RespostaTest(Base):
                 cache.clear()
                 self.conecta.side_effect = SemResposta(motivo)
                 corpo = self.pergunta(OUTRO).json()
+                # O valor de partida é o cheio: o Elite só com a caixa marcada.
                 self.assertEqual(
                     (corpo["cliente_ativo"], corpo["conferido"], corpo["tabela"], corpo["valor"]),
                     (None, False, "cheio", 39997),
                 )
+                self.assertIs(corpo["consultor_decide"], True)
                 self.assertEqual(corpo["motivo"], motivo)
                 self.assertIn(trecho, corpo["mensagem"])
+                self.assertIn("quem decide é você: marque abaixo", corpo["mensagem"])
+                self.assertIn("R$ 35.000,00", corpo["mensagem"])
                 self.assertIn("preço cheio, R$ 39.997,00", corpo["mensagem"])
 
+    def test_a_integracao_errada_nao_abre_a_caixa(self):
+        """Chave recusada, rota ausente, resposta fora do contrato: não é o Conecta fora.
+
+        Liberar a caixa por eles abriria o Elite para toda PJ até alguém ler o log.
+        """
+        for motivo in ("nao_autorizado", "rota_ausente", "resposta_inesperada", "redirecionado",
+                       "nao_configurado", "dados_invalidos"):
+            with self.subTest(motivo=motivo):
+                cache.clear()
+                self.conecta.side_effect = SemResposta(motivo)
+                corpo = self.pergunta(OUTRO).json()
+                self.assertEqual((corpo["cliente_ativo"], corpo["tabela"], corpo["motivo"]), (None, "cheio", motivo))
+                self.assertIs(corpo["consultor_decide"], False)
+                self.assertIn("fica no preço cheio, R$ 39.997,00", corpo["mensagem"])
+                # E quem chega durante a pausa que ela deixou também não decide.
+                if corpo["tentar_em"]:
+                    self.conecta.side_effect = conecta_falso
+                    self.assertIs(self.pergunta(ATIVO).json()["consultor_decide"], False)
+
     def test_defeito_inesperado_tambem_fica_no_cheio_e_pausa(self):
-        """Um defeito que se repete depois do POST não vira uma pergunta por venda."""
+        """Um defeito que se repete depois do POST não vira uma pergunta por venda.
+
+        E é defeito daqui, não o Conecta fora: a caixa do consultor não abre.
+        """
         self.conecta.side_effect = RuntimeError("bug")
         with self.assertLogs("apps.casais.servicos", "ERROR"):
             corpo = self.pergunta(OUTRO).json()
         self.assertEqual((corpo["cliente_ativo"], corpo["tabela"]), (None, "cheio"))
+        self.assertIs(corpo["consultor_decide"], False)
         self.assertEqual(corpo["tentar_em"], servicos.PAUSA_DEPOIS_DE_FALHA)
-        self.pergunta(ATIVO)
+        self.assertIs(self.pergunta(ATIVO).json()["consultor_decide"], False)
         self.conecta.assert_called_once()
+
+
+class EliteDecididoPorTest(Base):
+    """O campo do payload que diz quem decidiu entre o cheio e o Elite (TSK-1640)."""
+
+    def test_os_tres(self):
+        self.assertEqual(servicos.elite_decidido_por("PJ", True), "conecta")
+        self.assertEqual(servicos.elite_decidido_por("PJ", False), "consultor_sem_conecta")
+        self.assertEqual(servicos.elite_decidido_por("PF", False), "consultor")
 
 
 class CnpjTest(Base):
@@ -180,6 +221,7 @@ class BaldeDoConectaTest(Base):
         gerente = cliente_com_sessao(cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE))
         segunda = self.pergunta(ATIVO, cliente=gerente).json()
         self.assertEqual((segunda["cliente_ativo"], segunda["motivo"]), (None, "indisponivel"))
+        self.assertIs(segunda["consultor_decide"], True)
         self.assertLessEqual(segunda["tentar_em"], servicos.PAUSA_DEPOIS_DE_FALHA)
         self.assertEqual(self.conecta.call_count, 1)
 
@@ -215,6 +257,9 @@ class BaldeDoConectaTest(Base):
         corpo = self.pergunta(OUTRO).json()
         self.assertEqual((corpo["cliente_ativo"], corpo["motivo"]), (None, "limite_da_pessoa"))
         self.assertIn("muitas consultas", corpo["mensagem"])
+        # O teto da própria pessoa não abre a caixa: o Conecta nem foi perguntado.
+        self.assertIs(corpo["consultor_decide"], False)
+        self.assertIn("fica no preço cheio, R$ 39.997,00", corpo["mensagem"])
         self.assertGreater(corpo["tentar_em"], 0)
         self.assertLessEqual(corpo["tentar_em"], 3601)
         self.assertEqual(self.conecta.call_count, 2)
@@ -290,12 +335,54 @@ class UmaPerguntaPorCnpjTest(Base):
         self.assertGreater(conferencia.tentar_em, 25)
         self.conecta.assert_not_called()
 
+    def test_a_outra_soltou_sem_resposta_nem_pausa_esta_pergunta(self):
+        """O teto da outra pessoa (ou um 400 deste CNPJ) não diz nada do Conecta."""
+        import threading
+
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        cache.add(chave + ":perguntando", 1, 10)
+        threading.Timer(0.3, lambda: cache.delete(chave + ":perguntando")).start()
+        self.assertIs(servicos.conferir_cnpj(self.CNPJ).cliente_ativo, True)
+        self.conecta.assert_called_once_with(self.CNPJ)
+
+    @override_settings(LOBBY_CASAIS_CONSULTAS_POR_HORA=1)
+    def test_no_teto_duas_ao_mesmo_tempo_nao_abrem_a_caixa(self):
+        """A pessoa no teto: a outra requisição dela solta a trava, e esta para no teto também.
+
+        Sem isto, a segunda saía "indisponivel" e a caixa do consultor abria sem o
+        Conecta ter sido perguntado.
+        """
+        import threading
+
+        pessoa = consultor()
+        servicos.conferir_cnpj("37598418000152", pessoa=pessoa)  # gasta o teto
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        cache.add(chave + ":perguntando", 1, 10)
+        threading.Timer(0.3, lambda: cache.delete(chave + ":perguntando")).start()
+        conferencia = servicos.conferir_cnpj(self.CNPJ, pessoa=pessoa)
+        self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "limite_da_pessoa"))
+        self.assertIs(conferencia.consultor_decide, False)
+        self.assertEqual(self.conecta.call_count, 1)
+
+    def test_a_vez_tomada_de_novo_nao_abre_a_caixa(self):
+        with patch.object(servicos, "_pega_a_trava", return_value=False), \
+                patch.object(servicos, "_espera_a_outra", return_value=None):
+            conferencia = servicos.conferir_cnpj(self.CNPJ)
+            self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "ocupado"))
+            self.assertIs(conferencia.consultor_decide, False)
+            # A terceira já deixou a resposta: vale ela, e não o "ocupado".
+            cache.set(servicos._chave_da_resposta(self.CNPJ), "ativo", 60)
+            self.assertIs(servicos.conferir_cnpj(self.CNPJ).cliente_ativo, True)
+        self.conecta.assert_not_called()
+
     def test_a_outra_pendurada_nao_prende_esta_para_sempre(self):
         chave = servicos._chave_da_resposta(self.CNPJ)
         cache.add(chave + ":perguntando", 1, 10)
         with patch.object(servicos, "ESPERA_MAXIMA", 0.5), patch.object(servicos, "ESPERA_INTERVALO", 0.05):
             conferencia = servicos.conferir_cnpj(self.CNPJ)
         self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "indisponivel"))
+        # Pendurada é o Conecta lento: o consultor decide.
+        self.assertIs(conferencia.consultor_decide, True)
         self.conecta.assert_not_called()
 
     def test_quem_pega_a_trava_depois_de_a_outra_responder_nao_pergunta_de_novo(self):
