@@ -535,6 +535,21 @@ test('a caixa que some volta desmarcada: a marca não sobrevive a uma conferênc
   await conferir.click();
   await expect(caixaDoElite(page)).toBeVisible();
   await expect(caixaDoElite(page)).not.toBeChecked();
+
+  // O aviso de quando a caixa sumiu ("O valor mudou para R$ 39.997,00") não fica
+  // no Resumo depois que o consultor marca de novo.
+  await caixaDoElite(page).check();
+  await contato(page);
+  await continuar(page);
+  await casal(page);
+  await continuar(page);
+  await etapa(page, 'Pagamento');
+  await expect(page.locator('[data-valor-casais]')).toHaveText('R$ 35.000,00');
+  await pagamento(page, { forma: 'Pix' });
+  await continuar(page);
+  await etapa(page, 'Confirme o pedido');
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 35.000,00');
+  await expect(page.getByText(/O valor mudou/)).toHaveCount(0);
 });
 
 test('marcado à mão, o Conecta volta na validação dizendo "não": o servidor recusa', async ({ page, request }) => {

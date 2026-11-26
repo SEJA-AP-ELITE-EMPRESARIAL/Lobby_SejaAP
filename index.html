@@ -3224,10 +3224,13 @@ function App({ motivoAoAbrir }) {
       // ela está, em vez do "marque abaixo" da frase do backend.
       const porque = semCaixa ? nova.mensagem
         : 'O Conecta não pôde conferir o CNPJ agora: quem decide é você, na caixa "paga o valor do Elite Empresarial" da etapa Pagamento.';
+      // Sem mudança de valor, um aviso que tenha ficado é de um estado anterior
+      // (a caixa que sumiu e voltou, por exemplo): sai.
       return {
         casElite: nova,
         ...(semCaixa ? { casEliteAMao: '' } : {}),
         ...(mostrava && mostrava !== vale ? { casAviso: `O valor mudou para ${fmt(valorDoCasais(vale))}. ${porque}` } : {}),
+        ...(mostrava && mostrava === vale ? { casAviso: '' } : {}),
       };
     });
     return nova;
@@ -5416,7 +5419,9 @@ function App({ motivoAoAbrir }) {
           </div>
           {casConsultorDecide && (
             <div data-elite-a-mao style={{ marginTop: 10 }}>
-              {renderCaixaDoEliteCasais(eliteMarcadoNaPj(s), (marcado) => patch({ casEliteAMao: marcado ? casCnpj : '' }),
+              {/* Marcar ou desmarcar é o consultor decidindo o valor: o aviso de
+                  uma mudança anterior deixa de valer. */}
+              {renderCaixaDoEliteCasais(eliteMarcadoNaPj(s), (marcado) => patch({ casEliteAMao: marcado ? casCnpj : '', casAviso: '' }),
                 'Sem a conferência do Conecta, quem decide é você. No envio o Lobby pergunta a ele de novo: se ele responder, vale o que ele disser.')}
             </div>
           )}
