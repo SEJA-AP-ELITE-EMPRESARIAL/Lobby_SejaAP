@@ -56,10 +56,11 @@ TAMANHO_MAXIMO = 64 * 1024
 class SemResposta(Exception):
     """O Conecta não disse nem sim nem não.
 
-    `motivo`: `nao_configurado`, `indisponivel`, `manutencao`, `limite` (o 429),
-    `nao_autorizado` (401/403), `dados_invalidos` (400), `redirecionado` ou
-    `resposta_inesperada`. `tentar_em`: os segundos do `Retry-After`, quando ele
-    veio.
+    `motivo`: `nao_configurado`, `indisponivel` (5xx, rede, lento), `manutencao`,
+    `limite` (o 429), `nao_autorizado` (401/403), `dados_invalidos` (400),
+    `rota_ausente` (404: o Conecta sem a TSK-1621, ou o `IDENTIDADE_URL`
+    errado), `redirecionado` ou `resposta_inesperada` (outro 4xx, ou um 200 fora
+    do contrato). `tentar_em`: os segundos do `Retry-After`, quando ele veio.
     """
 
     def __init__(self, motivo, tentar_em=None):
@@ -138,6 +139,18 @@ def _traduz(erro_http):
     if status == 400:
         logger.error("clientes/ativo: o Conecta recusou o corpo (400, erro=%s)", codigo or "?")
         return SemResposta("dados_invalidos")
+    # Desde a TSK-1640, "fora do ar" (`indisponivel`) deixa o consultor decidir o
+    # valor. Um 4xx não é o Conecta fora: é a integração errada, que tem de ficar
+    # no cheio e no log até alguém corrigir, e não liberar a caixa para toda PJ.
+    if status == 404:
+        logger.error(
+            "clientes/ativo: o Conecta respondeu 404 — a rota da TSK-1621 está no ar? "
+            "Confira também o IDENTIDADE_URL",
+        )
+        return SemResposta("rota_ausente")
+    if 400 <= status < 500:
+        logger.error("clientes/ativo: o Conecta respondeu %s, fora do contrato (erro=%s)", status, codigo or "?")
+        return SemResposta("resposta_inesperada")
     logger.warning("clientes/ativo: Conecta sem resposta (HTTP %s, erro=%s)", status, codigo or "?")
     return SemResposta("indisponivel")
 

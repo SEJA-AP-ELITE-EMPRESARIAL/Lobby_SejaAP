@@ -19,8 +19,11 @@ QUEM ESCOLHE ENTRE OS DOIS
   que substituiu o "sem resposta = cheio" da TSK-1622). O servidor não acredita
   no navegador dizendo que o Conecta estava fora: o comprovante pergunta de novo
   e só aceita a caixa se ele também ficar sem resposta, e a validação do n8n
-  pergunta outra vez (`apps.vendas.servicos`). A exceção é o teto da própria
-  pessoa (`Conferencia.consultor_decide`).
+  pergunta outra vez (`apps.vendas.servicos`; dentro da pausa, sem ir até ele).
+  Sem resposta por outro motivo — a integração errada (chave recusada, rota
+  ausente, resposta fora do contrato), o teto da própria pessoa, um defeito
+  daqui — não abre a caixa: fica o cheio, como antes
+  (`Conferencia.consultor_decide`, `MOTIVOS_DO_CONECTA_FORA`).
 - PF: o consultor, marcando "paga o valor do Elite Empresarial".
 
 `elite_decidido_por` diz qual dos três foi: "conecta", "consultor" (PF) ou
@@ -87,6 +90,15 @@ _CHAVE_DA_PAUSA = "casais:conecta:pausa"
 TRAVA_SEGUNDOS = conecta.TIMEOUT + 2
 ESPERA_MAXIMA = conecta.TIMEOUT + 1
 ESPERA_INTERVALO = 0.2
+
+# Sem resposta por um destes, é o Conecta que está fora (ou lento, ou pedindo
+# pausa), e o consultor decide o valor da PJ à mão (TSK-1640): o 5xx, a rede e o
+# lento (`indisponivel`), o 429 (`limite`) e a manutenção. Os outros motivos são
+# do Lobby ou da integração — a chave recusada, a rota ausente, a resposta fora
+# do contrato, o teto da própria pessoa, um defeito daqui, a vez tomada — e não
+# dizem nada do Conecta: liberar a caixa por eles abriria o Elite para toda PJ
+# até alguém ler o log. Aí fica o cheio, como antes.
+MOTIVOS_DO_CONECTA_FORA = frozenset({"indisponivel", "limite", "manutencao"})
 
 
 # ----- documentos -----------------------------------------------------------
@@ -162,12 +174,12 @@ class Conferencia:
     def consultor_decide(self):
         """Sem a resposta do Conecta, o consultor marca à mão se a PJ paga o Elite.
 
-        Menos quando quem barrou a pergunta foi o teto da própria pessoa
-        (`limite_da_pessoa`): o Conecta nem foi perguntado, e esgotar o próprio
-        teto não pode virar o jeito de abrir a caixa. Aí fica o cheio, como antes
-        da TSK-1640, até a hora virar.
+        Só com o Conecta fora (`MOTIVOS_DO_CONECTA_FORA`). O teto da própria
+        pessoa (`limite_da_pessoa`), por exemplo, não abre a caixa: o Conecta nem
+        foi perguntado, e esgotar o próprio teto não pode virar o jeito de vender
+        o Elite sem ele. Aí fica o cheio, como antes da TSK-1640.
         """
-        return self.cliente_ativo is None and self.motivo != "limite_da_pessoa"
+        return self.cliente_ativo is None and self.motivo in MOTIVOS_DO_CONECTA_FORA
 
 
 def elite_decidido_por(tipo_pessoa, conferido_no_conecta):
@@ -228,7 +240,15 @@ def _pausada(agora):
 
 
 def _espera_a_outra(chave, trava):
-    """Outra requisição pergunta por este CNPJ agora: a resposta dela, ou sem resposta."""
+    """Outra requisição pergunta por este CNPJ agora: a resposta dela, ou sem resposta.
+
+    `None` quando ela soltou a trava sem resposta e sem pausa: o teto da pessoa
+    dela, ou uma falha que não pausa (o 400 deste CNPJ). Isso não diz nada do
+    Conecta, e quem chama pergunta por conta própria, com o próprio teto — sem
+    isto, a pessoa já no teto abriria a caixa do consultor com duas requisições
+    ao mesmo tempo (TSK-1640). Ela ainda pendurada no fim da espera é o Conecta
+    lento: sem resposta, `indisponivel`.
+    """
     fim = time.monotonic() + ESPERA_MAXIMA
     while time.monotonic() < fim:
         time.sleep(ESPERA_INTERVALO)
@@ -236,7 +256,7 @@ def _espera_a_outra(chave, trava):
         if guardada in ("ativo", "inativo"):
             return Conferencia(guardada == "ativo")
         if _ler(trava) is None:
-            break
+            return _pausada(time.time())
     return _pausada(time.time()) or Conferencia(None, "indisponivel", None)
 
 
@@ -290,7 +310,14 @@ def conferir_cnpj(cnpj, *, pessoa=None):
 
     trava = chave + ":perguntando"
     if not _pega_a_trava(trava):
-        return _espera_a_outra(chave, trava)
+        esperada = _espera_a_outra(chave, trava)
+        if esperada is not None:
+            return esperada
+        # A outra soltou a trava sem resposta nem pausa: esta pergunta. Se uma
+        # terceira já pegou a trava de novo, sai sem resposta, sem abrir a caixa
+        # (a tela pergunta de novo ao Finalizar).
+        if not _pega_a_trava(trava):
+            return Conferencia(None, "ocupado", None)
     try:
         # Relidas com a trava na mão: outra requisição pode ter perguntado (e
         # soltado a trava) entre a leitura lá de cima e esta.
@@ -311,11 +338,12 @@ def conferir_cnpj(cnpj, *, pessoa=None):
         except conecta.SemResposta as falta:
             return Conferencia(None, falta.motivo, _pausa(falta))
         except Exception:
-            # Defeito daqui, e não do Conecta: a venda segue sem a conferência
-            # (o consultor decide), e o log (e o GlitchTip) diz onde. Pausa como numa falha do Conecta: um
-            # defeito que se repete depois do POST faria cada pergunta ir até lá.
+            # Defeito daqui, e não do Conecta: a venda segue no preço cheio (não
+            # é o Conecta fora, e a caixa do consultor não abre), e o log (e o
+            # GlitchTip) diz onde. Pausa como numa falha do Conecta: um defeito
+            # que se repete depois do POST faria cada pergunta ir até lá.
             logger.exception("casais: falha inesperada ao perguntar ao Conecta")
-            return Conferencia(None, "indisponivel", _pausa(conecta.SemResposta("indisponivel")))
+            return Conferencia(None, "defeito", _pausa(conecta.SemResposta("defeito")))
         _gravar(chave, "ativo" if ativo else "inativo", GUARDAR_A_RESPOSTA)
         return Conferencia(ativo)
     finally:

@@ -60,6 +60,8 @@ const INATIVO = '37.598.418/0001-52';
 const FORA_DO_AR = '63.580.153/0001-75';
 // O Conecta cai e volta para este, quando o teste manda (`/_clientes/responder`).
 const VOLTA = '41.830.956/0001-06';
+// Um CNPJ que nenhum outro teste pergunta (nada guardado para ele no backend).
+const OUTRO_SEM_RESPOSTA = '71.526.438/0001-56';
 const EMPRESA = {
   razao_social: 'Quintal Azul Comércio de Plantas Ltda',
   logradouro: 'Rua das Acácias', numero: '210', complemento: 'Sala 3',
@@ -295,8 +297,8 @@ test('PJ ativa no Conecta: R$ 35.000,00 travado, o que falta em cada etapa, o en
   const fora = await validar(request, venda, { ...venda.comprovante_valores, valor_total: 30000, entrada: 30000 });
   expect(fora).toMatchObject({ valido: false, motivo: 'valores_invalidos' });
   expect(await validar(request, venda)).toMatchObject({
-    valido: true, fluxo: 'casais', protocolo: contrato,
-    casais: { tabela: 'elite', elite_conferido_no_conecta: true, elite_decidido_por: 'conecta' },
+    valido: true, fluxo: 'casais', protocolo: contrato, elite_decidido_por: 'conecta',
+    casais: { tabela: 'elite', elite_conferido_no_conecta: true },
   });
 });
 
@@ -378,7 +380,7 @@ test('PF: marcar e desmarcar "paga o valor do Elite Empresarial" alterna o valor
     valor: 35000, tabela: 'elite', elite_conferido_no_conecta: false, elite_decidido_por: 'consultor',
     pagamento: { forma: 'pix', parcelas: 1, data: VENCIMENTO },
   });
-  expect(await validar(request, venda)).toMatchObject({ valido: true, casais: { elite_decidido_por: 'consultor' } });
+  expect(await validar(request, venda)).toMatchObject({ valido: true, elite_decidido_por: 'consultor' });
   // Na PF o Conecta não é perguntado.
   expect(await perguntasAoConecta(request)).toEqual([]);
 });
@@ -555,6 +557,16 @@ test('Conecta fora (503): a caixa aparece com o aviso, e a venda marcada à mão
   await expect(aviso.getByRole('button', { name: 'Conferir de novo' })).toBeVisible();
   await expect(caixaDoElite(page)).toBeVisible();
   await expect(caixaDoElite(page)).not.toBeChecked();
+
+  // A marca é do CNPJ: trocar de CNPJ a desfaz, e voltar a ele não a traz marcada.
+  await caixaDoElite(page).check();
+  await page.locator('#cas-cnpj').fill(OUTRO_SEM_RESPOSTA);
+  await expect(caixaDoElite(page)).toBeVisible();
+  await expect(caixaDoElite(page)).not.toBeChecked();
+  await page.locator('#cas-cnpj').fill(FORA_DO_AR);
+  await expect(page.locator('[data-conferencia="sem_resposta"]')).toBeVisible();
+  await expect(caixaDoElite(page)).toBeVisible();
+  await expect(caixaDoElite(page)).not.toBeChecked();
   await contato(page);
   await continuar(page);
   await casal(page);
@@ -591,8 +603,10 @@ test('Conecta fora (503): a caixa aparece com o aviso, e a venda marcada à mão
   expect(venda.comprovante_valores.casais).toEqual({
     tipo_pessoa: 'PJ', documento: FORA_DO_AR, tabela: 'elite', elite_conferido_no_conecta: false,
   });
-  expect(await validar(request, venda)).toMatchObject({
-    valido: true, valor_total: '35000.00',
-    casais: { tipo_pessoa: 'PJ', tabela: 'elite', elite_conferido_no_conecta: false, elite_decidido_por: 'consultor_sem_conecta' },
+  // O bloco `casais` devolvido é o assinado, chave a chave; quem decidiu vai ao lado.
+  const validada = await validar(request, venda);
+  expect(validada).toMatchObject({ valido: true, valor_total: '35000.00', elite_decidido_por: 'consultor_sem_conecta' });
+  expect(validada.casais).toEqual({
+    tipo_pessoa: 'PJ', documento: FORA_DO_AR.replace(/\D/g, ''), tabela: 'elite', elite_conferido_no_conecta: false,
   });
 });

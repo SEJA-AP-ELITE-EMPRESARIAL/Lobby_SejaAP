@@ -248,8 +248,9 @@ deploy do Lobby (RUNBOOK, *Casais de Alta Performance*).
 O valor é um de dois fixos: **R$ 39.997,00** (`tabela: "cheio"`) ou
 **R$ 35.000,00** (`tabela: "elite"`, o do Elite Empresarial). Na PJ, quem decide
 é o Conecta (o CNPJ é cliente ativo?) e, quando ele não responde (fora do ar,
-lento, 429, 503), o consultor, numa caixa que a tela mostra só nesse caso
-(TSK-1640, desde 26/11/2026); na PF, o consultor. O payload diz qual foi em
+lento, 429, 503, rede), o consultor, numa caixa que a tela mostra só nesse caso
+(TSK-1640, desde 26/11/2026; a integração errada, como a chave recusada ou o 404
+da rota, não abre a caixa); na PF, o consultor. O payload diz qual foi em
 `elite_decidido_por`: `"conecta"`, `"consultor"` (PF) ou
 `"consultor_sem_conecta"`. O fluxo valida como descrito acima, com o mesmo nó
 "Validar venda" e o mesmo Switch, e mais isto:
@@ -257,16 +258,17 @@ lento, 429, 503), o consultor, numa caixa que a tela mostra só nesse caso
 1. **O que o Lobby assina** está em `comprovante_valores`: o `valor_total` e o
    bloco `casais` — `tipo_pessoa`, `documento` (o CNPJ na PJ; vazio na PF),
    `tabela` e `elite_conferido_no_conecta`. O `/api/venda/validar` confere só
-   ele, e no Casais o `valido: true` **devolve o que foi assinado**, com o
-   `elite_decidido_por` a mais (TSK-1640; não é assinado: sai do `tipo_pessoa` e
-   do `elite_conferido_no_conecta`):
+   ele, e no Casais o `valido: true` **devolve o que foi assinado** (o bloco
+   `casais`, igual ao do `comprovante_valores`) e, ao lado dele, o
+   `elite_decidido_por` (TSK-1640; não é assinado: sai do `tipo_pessoa` e do
+   `elite_conferido_no_conecta`):
 
    ```json
    { "valido": true, "fluxo": "casais", "protocolo": "CAP-261125112345",
      "valor_total": "35000.00",
      "casais": { "tipo_pessoa": "PJ", "documento": "22122190000152",
-                 "tabela": "elite", "elite_conferido_no_conecta": true,
-                 "elite_decidido_por": "conecta" },
+                 "tabela": "elite", "elite_conferido_no_conecta": true },
+     "elite_decidido_por": "conecta",
      "negociado": false, "autorizado_por": null, "papel": null, "emitido_em": "…" }
    ```
 
@@ -297,9 +299,11 @@ lento, 429, 503), o consultor, numa caixa que a tela mostra só nesse caso
    ```
 
    Tudo verdadeiro: fature (com o `valor_total`). Qualquer um falso: *Bloquear*.
-   O `elite_decidido_por` não precisa de comparação a mais: ele sai do
-   `tipo_pessoa` e do `elite_conferido_no_conecta`, que já estão aí (quem quiser,
-   compare `b.elite_decidido_por === v.casais.elite_decidido_por` no mesmo IF).
+   **Não** compare o `elite_decidido_por` do topo com o devolvido: ele sai do
+   `tipo_pessoa` e do `elite_conferido_no_conecta`, que já estão aí, e uma aba
+   aberta com o front de antes da TSK-1640 (ou uma volta de versão) manda a
+   venda sem a chave — a comparação bloquearia uma venda legítima. Para decidir
+   o aviso do item 3, leia o devolvido (`v.elite_decidido_por`).
 2. **O Lobby já recusa** o que não pode passar: valor fora dos dois
    (`valores_invalidos`), o valor trocado num comprovante do cheio
    (`valores_adulterados`), o CNPJ trocado (`valores_adulterados`: o documento
@@ -307,15 +311,23 @@ lento, 429, 503), o consultor, numa caixa que a tela mostra só nesse caso
    diz não ser ativa (`elite_nao_confirmado`) — o conferido na emissão e o
    marcado à mão. Com o Conecta sem resposta na hora da validação, vale a
    emissão: o Lobby só assina o Elite numa PJ com o Conecta dizendo "ativo" ou,
-   marcado à mão, com ele sem resposta também para o servidor.
+   marcado à mão, com ele sem resposta também para o servidor. Dentro da pausa
+   depois de uma falha (60 s, ou o `Retry-After` do Conecta, até 1 h), o Lobby
+   nem pergunta: a validação chega segundos depois do envio e, com o Conecta
+   fora, quase sempre cai nela.
 3. **O Elite marcado à mão numa PJ** (`tabela: "elite"`,
    `elite_conferido_no_conecta: false`, `elite_decidido_por:
    "consultor_sem_conecta"`) passa com `valido: true` quando o Conecta segue
    fora: é a decisão do dono (o consultor não perde a venda porque o Conecta
    caiu), e o `enviado_por` diz quem marcou. Ninguém conferiu o CNPJ — nem o
-   Lobby, sem resposta na emissão e na validação. Não bloqueie; vale uma
+   Lobby, sem resposta na emissão e na validação (o item 2 só pega o "não" do
+   Conecta passada a pausa). Não bloqueie; o controle desta venda é uma
    notificação para alguém conferir depois no Conecta se o CNPJ é cliente ativo
-   do Elite Empresarial (se não for, o contrato era de R$ 39.997,00).
+   do Elite Empresarial (se não for, o contrato era de R$ 39.997,00): com
+   `v.casais.tipo_pessoa === "PJ"`, `v.casais.tabela === "elite"` e
+   `v.elite_decidido_por === "consultor_sem_conecta"`. Com `tabela: "cheio"`, o
+   `consultor_sem_conecta` também cobre o cheio que ninguém escolheu (a caixa
+   nem apareceu); aí não há o que conferir.
 4. **Venda sem comprovante** (o Lobby fora do ar no envio) segue pela saída 1,
    *Conferir*, como nos outros fluxos — e aqui a conferência tem um ponto a
    mais: com `contratante.tipo_pessoa: "PJ"` e `tabela: "elite"`, ninguém

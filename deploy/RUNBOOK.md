@@ -304,10 +304,9 @@ ver o README, *Casais de Alta Performance*.
 **Antes, fora daqui** (sem isso não publique):
 
 - o ConectaAP com a TSK-1621 no ar. Sem a rota, a pergunta dá 404, e toda PJ
-  fica no preço cheio com o aviso (nada quebra, mas o Elite nunca sai). Desde a
-  TSK-1640 o 404 é "sem resposta" como os outros: toda PJ cai na caixa do
-  consultor, sem conferência nenhuma — mais um motivo para não publicar sem a
-  rota;
+  fica no preço cheio com o aviso (nada quebra, mas o Elite nunca sai). Isso
+  segue assim desde a TSK-1640: o 404 (`rota_ausente`), como a chave recusada,
+  não abre a caixa do consultor, que é só para o Conecta fora;
 - o IP do servidor do Lobby na lista da aplicação `lobby` do Conecta (é o mesmo
   do login e da presença: se o login funciona, já está);
 - o fluxo do n8n ativo em `onboarding-cliente-casais`, em POST e com CORS para
@@ -374,18 +373,23 @@ README, *Casais de Alta Performance*, e `deploy/N8N-VALIDACAO.md`.
   comprovante emitido antes vale depois (o que é assinado não mudou), e uma aba
   aberta com o front de antes segue vendendo como antes (sem a caixa; a frase do
   aviso já fala da caixa, até a pessoa recarregar).
-- **O n8n:** nada a mudar para a venda passar; a chave nova só se acrescenta.
-  Recomendado: um aviso (não bloqueio) para `tabela: "elite"` com
-  `elite_decidido_por: "consultor_sem_conecta"`, para alguém conferir o CNPJ
-  depois (`deploy/N8N-VALIDACAO.md`, Casais, item 3).
-- **Conferir depois do deploy**, sem venda (só lê; a resposta fica guardada 10
-  minutos, como a da tela):
+- **O n8n:** nada a mudar para a venda passar; a chave nova só se acrescenta
+  (no payload e ao lado do bloco `casais` do `/api/venda/validar`, que segue
+  igual ao assinado). Recomendado: um aviso (não bloqueio) para
+  `tabela: "elite"` com `elite_decidido_por: "consultor_sem_conecta"`, para
+  alguém conferir o CNPJ depois (`deploy/N8N-VALIDACAO.md`, Casais, item 3). É
+  ele o controle dessa venda: com o Conecta fora, a reconsulta da validação
+  quase sempre cai na pausa e não chega até ele.
+- **Conferir depois do deploy**, sem vender nada. Não é só leitura: a pergunta
+  vai ao Conecta e gasta o balde dele, a resposta fica guardada 10 minutos (como
+  a da tela) e, se ele falhar, grava a pausa de todos (60 s). Rode uma vez:
 
   ```bash
   sudo docker compose exec backend python manage.py shell -c \
     "from apps.casais import servicos; c=servicos.conferir_cnpj('<CNPJ de um cliente ativo, só dígitos>'); print(c.cliente_ativo, c.consultor_decide)"
   # True False   ← com o Conecta respondendo, a caixa não aparece
-  # None True    ← o Conecta sem resposta: a tela mostraria a caixa (veja o log)
+  # None True    ← o Conecta fora: a tela mostraria a caixa (veja o log)
+  # None False   ← sem resposta por outro motivo (chave, rota, contrato): o cheio; o log diz qual
   ```
 - **Caminho de volta:** as imagens de antes, ou o commit anterior com
   `sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build`.

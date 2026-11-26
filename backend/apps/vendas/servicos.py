@@ -16,6 +16,7 @@ from apps.casais.servicos import (
     VALOR_DA_TABELA as VALOR_DO_CASAIS,
     conferir_cnpj,
     elite_decidido_por,
+    mensagem as mensagem_da_conferencia,
     normaliza_cnpj,
     reais,
 )
@@ -360,7 +361,8 @@ def _confere_casais(valores: dict, vendedor=None):
       conferência. O navegador dizer que o Conecta estava fora não basta: é a
       pergunta DAQUI que tem de ficar sem resposta. E a validação do n8n
       pergunta outra vez (`validar`);
-    - a pergunta não saiu pelo teto da própria pessoa: o cheio, sem conferência
+    - sem resposta por um motivo que não é o Conecta fora (o teto da própria
+      pessoa, a integração errada): o cheio, sem conferência
       (`Conferencia.consultor_decide`).
 
     Na PF não há o que perguntar: "paga o valor do Elite Empresarial" é do
@@ -391,6 +393,14 @@ def _confere_casais(valores: dict, vendedor=None):
             return
     elif tela == ("cheio", False):
         return
+    if conferencia.cliente_ativo is True and tela == ("elite", False):
+        # A caixa marcada à mão, e o Conecta respondeu agora: o valor é o mesmo,
+        # mas o que se assina é de onde ele veio.
+        raise VendaRecusada(
+            "O Conecta respondeu agora: este CNPJ é cliente ativo do Elite Empresarial. "
+            f"O valor segue {reais(VALOR_DO_CASAIS['elite'])}, mas conferido por ele, e "
+            "não marcado à mão. Finalize de novo."
+        )
     if conferencia.cliente_ativo is True:
         raise VendaRecusada(
             "O Conecta confirmou que este CNPJ é cliente ativo do Elite Empresarial: o "
@@ -409,11 +419,9 @@ def _confere_casais(valores: dict, vendedor=None):
             "o que você marcar em \"paga o valor do Elite Empresarial\". Confira o valor "
             "e finalize de novo."
         )
-    raise VendaRecusada(
-        "Você fez muitas consultas ao Conecta nesta hora, e sem a conferência o valor "
-        "do Elite Empresarial não sai numa empresa. A venda fica no preço cheio, "
-        f"{reais(VALOR_DO_CASAIS['cheio'])}: confira o valor e finalize de novo."
-    )
+    # Sem resposta por um motivo que não é o Conecta fora (o teto da pessoa, a
+    # integração errada): o cheio, sem conferência, e a frase diz por quê.
+    raise VendaRecusada(f"{mensagem_da_conferencia(conferencia)} Confira o valor e finalize de novo.")
 
 
 def emitir(dados: dict, *, usuario=None, ip=None, vendedor=None) -> ComprovanteVenda:
@@ -623,17 +631,17 @@ def _validar_na_transacao(token, valores, invalidos, ativo_agora) -> dict:
     # fluxo confere o contratante antes de faturar (deploy/N8N-VALIDACAO.md). Um
     # comprovante legítimo da PF a R$ 35.000 não pode virar a venda de uma PJ.
     # O `elite_decidido_por` (TSK-1640) não é guardado: sai do que foi assinado.
+    # Vai ao lado do `casais`, e não dentro: o bloco devolvido segue igual ao
+    # assinado, chave a chave, para quem o compara inteiro.
     casais = {}
     if comprovante.fluxo == ComprovanteVenda.Fluxo.CASAIS:
         assinado = comprovante.valores["casais"]
         casais = {
             "valor_total": comprovante.valores["valor_total"],
-            "casais": {
-                **assinado,
-                "elite_decidido_por": elite_decidido_por(
-                    assinado["tipo_pessoa"], assinado["elite_conferido_no_conecta"]
-                ),
-            },
+            "casais": assinado,
+            "elite_decidido_por": elite_decidido_por(
+                assinado["tipo_pessoa"], assinado["elite_conferido_no_conecta"]
+            ),
         }
 
     return {

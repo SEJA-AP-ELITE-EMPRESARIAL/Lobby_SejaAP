@@ -94,8 +94,6 @@ class RespostaTest(Base):
             ("indisponivel", "Não foi possível conferir"),
             ("manutencao", "em manutenção"),
             ("limite", "consultas demais"),
-            ("nao_autorizado", "Não foi possível conferir"),
-            ("resposta_inesperada", "Não foi possível conferir"),
         ):
             with self.subTest(motivo=motivo):
                 cache.clear()
@@ -113,15 +111,37 @@ class RespostaTest(Base):
                 self.assertIn("R$ 35.000,00", corpo["mensagem"])
                 self.assertIn("preço cheio, R$ 39.997,00", corpo["mensagem"])
 
+    def test_a_integracao_errada_nao_abre_a_caixa(self):
+        """Chave recusada, rota ausente, resposta fora do contrato: não é o Conecta fora.
+
+        Liberar a caixa por eles abriria o Elite para toda PJ até alguém ler o log.
+        """
+        for motivo in ("nao_autorizado", "rota_ausente", "resposta_inesperada", "redirecionado",
+                       "nao_configurado", "dados_invalidos"):
+            with self.subTest(motivo=motivo):
+                cache.clear()
+                self.conecta.side_effect = SemResposta(motivo)
+                corpo = self.pergunta(OUTRO).json()
+                self.assertEqual((corpo["cliente_ativo"], corpo["tabela"], corpo["motivo"]), (None, "cheio", motivo))
+                self.assertIs(corpo["consultor_decide"], False)
+                self.assertIn("fica no preço cheio, R$ 39.997,00", corpo["mensagem"])
+                # E quem chega durante a pausa que ela deixou também não decide.
+                if corpo["tentar_em"]:
+                    self.conecta.side_effect = conecta_falso
+                    self.assertIs(self.pergunta(ATIVO).json()["consultor_decide"], False)
+
     def test_defeito_inesperado_tambem_fica_no_cheio_e_pausa(self):
-        """Um defeito que se repete depois do POST não vira uma pergunta por venda."""
+        """Um defeito que se repete depois do POST não vira uma pergunta por venda.
+
+        E é defeito daqui, não o Conecta fora: a caixa do consultor não abre.
+        """
         self.conecta.side_effect = RuntimeError("bug")
         with self.assertLogs("apps.casais.servicos", "ERROR"):
             corpo = self.pergunta(OUTRO).json()
         self.assertEqual((corpo["cliente_ativo"], corpo["tabela"]), (None, "cheio"))
-        self.assertIs(corpo["consultor_decide"], True)
+        self.assertIs(corpo["consultor_decide"], False)
         self.assertEqual(corpo["tentar_em"], servicos.PAUSA_DEPOIS_DE_FALHA)
-        self.pergunta(ATIVO)
+        self.assertIs(self.pergunta(ATIVO).json()["consultor_decide"], False)
         self.conecta.assert_called_once()
 
 
@@ -315,12 +335,51 @@ class UmaPerguntaPorCnpjTest(Base):
         self.assertGreater(conferencia.tentar_em, 25)
         self.conecta.assert_not_called()
 
+    def test_a_outra_soltou_sem_resposta_nem_pausa_esta_pergunta(self):
+        """O teto da outra pessoa (ou um 400 deste CNPJ) não diz nada do Conecta."""
+        import threading
+
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        cache.add(chave + ":perguntando", 1, 10)
+        threading.Timer(0.3, lambda: cache.delete(chave + ":perguntando")).start()
+        self.assertIs(servicos.conferir_cnpj(self.CNPJ).cliente_ativo, True)
+        self.conecta.assert_called_once_with(self.CNPJ)
+
+    @override_settings(LOBBY_CASAIS_CONSULTAS_POR_HORA=1)
+    def test_no_teto_duas_ao_mesmo_tempo_nao_abrem_a_caixa(self):
+        """A pessoa no teto: a outra requisição dela solta a trava, e esta para no teto também.
+
+        Sem isto, a segunda saía "indisponivel" e a caixa do consultor abria sem o
+        Conecta ter sido perguntado.
+        """
+        import threading
+
+        pessoa = consultor()
+        servicos.conferir_cnpj("37598418000152", pessoa=pessoa)  # gasta o teto
+        chave = servicos._chave_da_resposta(self.CNPJ)
+        cache.add(chave + ":perguntando", 1, 10)
+        threading.Timer(0.3, lambda: cache.delete(chave + ":perguntando")).start()
+        conferencia = servicos.conferir_cnpj(self.CNPJ, pessoa=pessoa)
+        self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "limite_da_pessoa"))
+        self.assertIs(conferencia.consultor_decide, False)
+        self.assertEqual(self.conecta.call_count, 1)
+
+    def test_a_vez_tomada_de_novo_nao_abre_a_caixa(self):
+        with patch.object(servicos, "_pega_a_trava", return_value=False), \
+                patch.object(servicos, "_espera_a_outra", return_value=None):
+            conferencia = servicos.conferir_cnpj(self.CNPJ)
+        self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "ocupado"))
+        self.assertIs(conferencia.consultor_decide, False)
+        self.conecta.assert_not_called()
+
     def test_a_outra_pendurada_nao_prende_esta_para_sempre(self):
         chave = servicos._chave_da_resposta(self.CNPJ)
         cache.add(chave + ":perguntando", 1, 10)
         with patch.object(servicos, "ESPERA_MAXIMA", 0.5), patch.object(servicos, "ESPERA_INTERVALO", 0.05):
             conferencia = servicos.conferir_cnpj(self.CNPJ)
         self.assertEqual((conferencia.cliente_ativo, conferencia.motivo), (None, "indisponivel"))
+        # Pendurada é o Conecta lento: o consultor decide.
+        self.assertIs(conferencia.consultor_decide, True)
         self.conecta.assert_not_called()
 
     def test_quem_pega_a_trava_depois_de_a_outra_responder_nao_pergunta_de_novo(self):

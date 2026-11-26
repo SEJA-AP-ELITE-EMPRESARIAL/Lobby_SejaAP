@@ -2702,7 +2702,9 @@ function App({ motivoAoAbrir }) {
     else if (k === 'cep') v = maskCEP(v);
     else if (k === 'estado') v = maskUF(v);
     const extra = {};
-    if (k === 'cnpj') { extra.cnpjStatus = 'idle'; extra.cnpjErr = ''; }
+    // Trocar o CNPJ desfaz a caixa do Elite marcada à mão (TSK-1640): voltar ao
+    // de antes não a traz marcada de volta.
+    if (k === 'cnpj') { extra.cnpjStatus = 'idle'; extra.cnpjErr = ''; extra.casEliteAMao = ''; }
     if (k === 'cep') extra.cepStatus = 'idle';
     patch({ [k]: v, ...extra });
   };
@@ -3211,14 +3213,16 @@ function App({ motivoAoAbrir }) {
     }
     if (!aindaVale(marca, atendimento)) { solta(); return null; }
     const nova = { cnpj, ...resposta };
-    const respondeu = nova.estado === 'ativo' || nova.estado === 'inativo';
+    // A caixa sumiu (o Conecta respondeu, ou o backend não deixa mais): a marca
+    // sai, e se a caixa voltar depois, volta desmarcada.
+    const semCaixa = !(nova.estado === 'sem_resposta' && nova.consultorDecide);
     patch((d) => {
       if (d.casElite.cnpj !== cnpj) return {};
-      const depois = { ...d, casElite: nova, ...(respondeu ? { casEliteAMao: '' } : {}) };
+      const depois = { ...d, casElite: nova, ...(semCaixa ? { casEliteAMao: '' } : {}) };
       const vale = tabelaDoCasais(depois);
       return {
         casElite: nova,
-        ...(respondeu ? { casEliteAMao: '' } : {}),
+        ...(semCaixa ? { casEliteAMao: '' } : {}),
         ...(mostrava && mostrava !== vale ? { casAviso: `O valor mudou para ${fmt(valorDoCasais(vale))}. ${nova.mensagem}` } : {}),
       };
     });
