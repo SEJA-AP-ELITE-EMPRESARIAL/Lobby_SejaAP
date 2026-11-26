@@ -281,15 +281,15 @@ test('enviado_por vai ao n8n com nome e e-mail, sem tirar campo nenhum, e o toke
   assert.equal(envio.headers.Authorization, undefined);
 });
 
-test('os quatro fluxos passam pelo enviaEsta → enviaVenda, e só ele chama o postCadastro', () => {
-  for (const url of ['SEND_WEBHOOK_URL', 'APN_SEND_WEBHOOK_URL', 'DH_SEND_WEBHOOK_URL', 'DH_AVALIACAO_SEND_WEBHOOK_URL']) {
+test('os cinco fluxos passam pelo enviaEsta → enviaVenda, e só ele chama o postCadastro', () => {
+  for (const url of ['SEND_WEBHOOK_URL', 'APN_SEND_WEBHOOK_URL', 'DH_SEND_WEBHOOK_URL', 'DH_AVALIACAO_SEND_WEBHOOK_URL', 'CASAIS_SEND_WEBHOOK_URL']) {
     assert.match(html, new RegExp(`enviaEsta\\(\\{\\s*url: ${url},`), url);
   }
   assert.equal(html.match(/enviaVenda\(/g).length, 2, 'a definição e a chamada no enviaEsta');
   assert.equal(html.match(/postCadastro\(/g).length, 2, 'a definição e a chamada no enviaVenda');
   assert.equal(html.match(/pedeComprovante\(/g).length, 2, 'a definição e a chamada no enviaVenda');
   // Resultado de outro atendimento (saiu, ou entrou outra pessoa) não mexe na tela.
-  assert.equal(html.match(/if \(!enviada\) return;/g).length, 4);
+  assert.equal(html.match(/if \(!enviada\) return;/g).length, 5);
   assert.match(entre('const restart = () =>', 'patch({'), /atendimento\.current \+= 1/);
 });
 

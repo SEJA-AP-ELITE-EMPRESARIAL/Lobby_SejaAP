@@ -238,7 +238,9 @@ Confira o `desfazer` antes: algumas se recusam a reverter de propósito — a
 A `vendas/0003` (TSK-1056) alarga a coluna `fluxo` do comprovante para caber
 `dh_avaliacao`; o desfazer a estreita de volta e o Postgres recusa enquanto
 houver comprovante do DH - Avaliação — de propósito, não apague comprovante para
-reverter.
+reverter. A `catalogo/0018` (TSK-1622) apaga o Casais de Alta Performance no
+desfazer, mas para se ele tiver venda emitida; a `vendas/0004` só mexe nas
+`choices` e desce sem tocar no banco.
 
 **Migration que confere dado antes de mexer no schema** é comum aqui, e é
 deliberado: ela para com a mensagem em português em vez de deixar o Postgres
@@ -252,6 +254,10 @@ reclamar de um índice sem dizer qual linha é o problema. Nada fica pela metade
   e para se a sigla LBA já estiver em uso, se houver dois produtos `avaliacoes`,
   ou se ele não for o avulso esperado (com outro fluxo, ou recorrente). Banco sem
   o produto: não faz nada.
+- `catalogo/0018` (TSK-1622) cria o Casais de Alta Performance e para se a sigla
+  CAP já estiver em uso (produto ou categoria), se já houver outro produto
+  `casais-alta-performance` em Produtos que não seja o formulário, ou se a
+  categoria `produtos` não existir. Já criado com o fluxo certo: não faz nada.
 
 Nesses casos: corrija o dado (pelo `/django-admin/`) e rode o `migrate` de novo.
 
@@ -287,6 +293,68 @@ publicar.**
 4. Quando o n8n tiver o fluxo: preencha `DH_AVALIACAO_SEND_WEBHOOK_URL` e publique
    [Só o front](#só-o-front). Os valores de Relatório e Devolutiva (R$ 150 e
    R$ 450, livres, até alguém salvar) ficam na aba **DH - Avaliação** do `/admin`.
+
+### Casais de Alta Performance (TSK-1622)
+
+Produto novo em Produtos, de formulário próprio (`fluxo='casais'`), com o valor
+num de dois fixos: R$ 39.997,00 ou R$ 35.000,00 (Elite Empresarial). Na PJ, quem
+diz qual vale é o Conecta, pela rota `POST /api/v1/clientes/ativo` (TSK-1621);
+ver o README, *Casais de Alta Performance*.
+
+**Antes, fora daqui** (sem isso não publique):
+
+- o ConectaAP com a TSK-1621 no ar. Sem a rota, a pergunta dá 404, e toda PJ
+  fica no preço cheio com o aviso (nada quebra, mas o Elite nunca sai);
+- o IP do servidor do Lobby na lista da aplicação `lobby` do Conecta (é o mesmo
+  do login e da presença: se o login funciona, já está);
+- o fluxo do n8n ativo em `onboarding-cliente-casais`, em POST e com CORS para
+  `https://lobby.sejaap.com.br`. Em 25/11/2026 ele ainda **não existia** (a
+  preflight dava 500 e o GET, "not registered"). Confira sem mandar venda:
+
+  ```bash
+  curl -s -i -X OPTIONS https://n8n.sejaap.com.br/webhook/onboarding-cliente-casais \
+    -H 'Origin: https://lobby.sejaap.com.br' \
+    -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type' | head -8
+  # HTTP/2 204, com access-control-allow-origin: https://lobby.sejaap.com.br
+  ```
+
+  Sem o 204, o consultor preenche tudo e a venda para no "Falha de conexão ao
+  enviar o cadastro".
+
+**O deploy:**
+
+1. Roteiro [Com migration](#com-migration-a-ordem-importa): ele aplica
+   `vendas/0004` e `catalogo/0018` antes de trocar os containers. Front e
+   backend sobem juntos: um front antigo mostra o produto sem preço e não sabe
+   abri-lo, e um front novo sem a migration recusa a venda no comprovante.
+   Nenhuma variável nova obrigatória: a pergunta ao Conecta usa o
+   `IDENTIDADE_URL` e a `IDENTIDADE_APP_KEY` de sempre. Opcionais:
+   `LOBBY_RATE_CASAIS_ELITE` (60/h) e `LOBBY_CASAIS_CONSULTAS_POR_HORA` (20).
+2. Confira o produto:
+
+   ```bash
+   sudo docker compose exec backend python manage.py shell -c \
+     "from apps.catalogo.models import Produto as P; p=P.objects.get(slug='casais-alta-performance'); print(p.nome, p.sigla, p.fluxo, p.valor, p.ordem)"
+   # Casais de Alta Performance CAP casais None <a última ordem de Produtos>
+   ```
+
+3. Confira a pergunta ao Conecta de dentro do backend, com um CNPJ que se sabe
+   cliente ativo (sem venda nenhuma: só lê):
+
+   ```bash
+   sudo docker compose exec backend python manage.py shell -c \
+     "from apps.casais import conecta; print(conecta.cliente_ativo('<CNPJ de um cliente ativo>'))"
+   # True. SemResposta('nao_autorizado') = IP ou chave; SemResposta('indisponivel') com 404 no log = Conecta sem a TSK-1621
+   ```
+
+4. O `CATS` embutido traz o Casais como a migration o cria; se a diretoria mudar
+   o texto, gere o bloco com `exportar_cats_do_front` num deploy só de front.
+
+**Caminho de volta:** a imagem anterior (o passo 1 do roteiro) e, se for o caso,
+`migrate catalogo 0017` (apaga o produto; para se ele tiver venda — e apaga
+também o que alguém tenha criado à mão com o mesmo identificador e o fluxo
+`casais`, caso em que a ida não fez nada) e `migrate vendas 0003`. Só o front de volta, com a migration aplicada, deixa o
+produto na lista sem abrir: volte os dois.
 
 ### Redis do Lobby (TSK-1068)
 

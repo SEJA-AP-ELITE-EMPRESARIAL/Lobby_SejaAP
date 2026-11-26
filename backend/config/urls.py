@@ -33,6 +33,7 @@ urlpatterns = [
     path("api/", include("apps.departamentos.urls")),
     path("api/", include("apps.categorias_financeiras.urls")),
     path("api/", include("apps.dh_avaliacao.urls")),
+    path("api/", include("apps.casais.urls")),
     path("api/", include("apps.integracao.urls")),
     path(
         "api/diagnostico/erro-de-teste",

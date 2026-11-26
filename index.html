@@ -217,6 +217,20 @@ const DH_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/lobby-dh';
 const DH_AVALIACAO_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/2a894c98-b3f1-465f-8719-45706cad8f30';
 // Parcelamento do DH - Avaliação: só no cartão, até 12×. Pix e boleto à vista.
 const DH_AVALIACAO_MAX_PARCELAS_CARTAO = 12;
+// Venda Casais de Alta Performance (TSK-1622) — contratante PJ ou PF, os dois
+// participantes e um de dois valores fixos. Webhook próprio, pelo motivo dos
+// demais: o payload é outro, e segue o JSON combinado com o n8n (ver
+// `payloadDoCasais` e o README). Mesma exigência de CORS dos demais.
+//
+// Endereço passado pelo dono em 25/11/2026. A preflight do mesmo dia NÃO passou:
+// o n8n respondeu 500 ao OPTIONS e 404 "not registered" ao GET, igual a um
+// caminho que não existe — o fluxo ainda não estava ativo. Antes de publicar
+// este arquivo, a preflight tem de dar 204 com POST e a origem do lobby (o
+// comando está no README). Vazia, o "Finalizar" trava no resumo com aviso, a
+// mesma regra da APN, do DH e do DH - Avaliação.
+const CASAIS_SEND_WEBHOOK_URL = 'https://n8n.sejaap.com.br/webhook/onboarding-cliente-casais';
+// Parcelamento do Casais: o do DH - Avaliação, só no cartão, até 12×.
+const CASAIS_MAX_PARCELAS_CARTAO = 12;
 // Cobrança Pix da entrada (EasyFlow), em 2 endpoints:
 //  - CRIAR  : POST PIX_CREATE_URL  -> { orderId, ... }
 //  - STATUS : GET  PIX_STATUS_URL + orderId  -> { status: pending|qr_ready|paid, qrCodeBase64, copyAndPasteCode, expireAt }
@@ -613,7 +627,7 @@ function enviadoPor(sessao) {
   return { nome: sessao.nome, email: sessao.email };
 }
 
-// O fim comum dos quatro envios (Elite, APN, DH e DH - Avaliação), nesta ordem:
+// O fim comum dos cinco envios (Elite, APN, DH, DH - Avaliação e Casais), nesta ordem:
 // o comprovante, a sessão ainda é a mesma?, o webhook. `geracao` é a da sessão
 // em que se clicou em Finalizar. O 401 do comprovante sobe daqui como
 // `SessaoDerrubada` e a venda NÃO vai ao n8n. `aoPartir` é chamado logo antes do
@@ -628,7 +642,7 @@ async function enviaVenda({ url, payload, valores, tokenDeQuemAutoriza, geracao,
   return postCadastro(url, payload, geracao, aoPartir);
 }
 
-// O que os quatro envios do App fazem em volta do `enviaVenda`, com as duas refs
+// O que os cinco envios do App fazem em volta do `enviaVenda`, com as duas refs
 // do App: `atendimento` (o `restart` a troca) e `vendaNoAr` (o protocolo cujo
 // POST partiu e não respondeu). Devolve `{ resposta }`, ou `null` para "não
 // mexa na tela": a sessão acabou antes de a venda sair (nada foi ao n8n; quem
@@ -1266,7 +1280,7 @@ function extractWebhookError(body) {
 // fluxos: erro de negócio volta em `faultstring` e é mostrado ao consultor
 // (err.handled); o resto vira mensagem genérica.
 //
-// Comum aos quatro fluxos, e por isso é aqui que entra o `enviado_por` (quem
+// Comum aos cinco fluxos, e por isso é aqui que entra o `enviado_por` (quem
 // estava logado, TSK-1513). Só sai na sessão em que a venda foi finalizada
 // (`geracao`): depois de sair ou cair, nada vai ao webhook. O token da sessão
 // NUNCA vai: o webhook é público.
@@ -1374,17 +1388,18 @@ function normalizePixResponse(raw) {
  *  de produtos, e só depois pede os dados de quem contrata (ver
  *  `stepsDoFluxo`).
  *
- *  `flow` num PRODUTO ('dh' e 'dh_avaliacao') quer dizer que ele não tem preço:
- *  o consultor cai num formulário próprio e os valores saem de lá. É por isso
- *  que o Recrutamento e Seleção e o DH - Avaliação aparecem aqui sem `price` — a
- *  ausência é o contrato, não esquecimento.
+ *  `flow` num PRODUTO ('dh', 'dh_avaliacao' e 'casais') quer dizer que ele não
+ *  tem preço de tabela: o consultor cai num formulário próprio e os valores
+ *  saem de lá. É por isso que o Recrutamento e Seleção, o DH - Avaliação e o
+ *  Casais de Alta Performance aparecem aqui sem `price` — a ausência é o
+ *  contrato, não esquecimento.
  * ========================================================================== */
 let CATS = [
   // Gerado por `manage.py exportar_cats_do_front`. Ativas: Elite (planos de
   // tabela), APN (fluxo próprio de categoria) e Produtos (com o Recrutamento e
-  // Seleção e o DH - Avaliação, os dois de fluxo próprio de produto, e
-  // começando pela escolha do produto). Treinamentos fica "Em implementação"
-  // (locked) e sem produtos.
+  // Seleção, o DH - Avaliação e o Casais de Alta Performance, os três de fluxo
+  // próprio de produto, e começando pela escolha do produto). Treinamentos fica
+  // "Em implementação" (locked) e sem produtos.
   { id: 'elite', name: 'Elite', icon: 'diamond', color: 'purple',
     desc: 'Consultoria individual contínua — os planos Elite da Seja AP.',
     products: [
@@ -1406,6 +1421,7 @@ let CATS = [
     products: [
       { id: 'recrutamento-selecao', name: 'Recrutamento e Seleção', sigla: 'RES', desc: 'Processo seletivo conduzido pela Seja AP, vaga a vaga', duration: 'por vaga', flow: 'dh', icon: 'person_search' },
       { id: 'avaliacoes', name: 'DH - Avaliação', sigla: 'LBA', desc: 'Avaliação de perfil e chaves para recrutamento', duration: '1', flow: 'dh_avaliacao', icon: 'workspace_premium' },
+      { id: 'casais-alta-performance', name: 'Casais de Alta Performance', sigla: 'CAP', desc: 'Programa para o casal — um contrato, dois participantes', duration: 'por casal', flow: 'casais', icon: 'diversity_1' },
     ] },
 ];
 const COLORS = {
@@ -1433,12 +1449,17 @@ const STEPS_DH = ['Produto', 'Contratante', 'Quadro comercial', 'Resumo'];
 // de Relatório e Devolutiva) fazem o papel do quadro de vagas, e o Pagamento é
 // uma forma só para a venda inteira.
 const STEPS_DH_AVALIACAO = ['Produto', 'Contratante', 'Itens', 'Pagamento', 'Resumo'];
+// O Casais de Alta Performance (TSK-1622), outro fluxo do PRODUTO, no molde do
+// DH - Avaliação: o Casal (os dois participantes) faz o papel dos Itens, e o
+// valor, um de dois fixos, aparece no Pagamento.
+const STEPS_CASAIS = ['Produto', 'Contratante', 'Casal', 'Pagamento', 'Resumo'];
 
 /* O fluxo de uma venda vem de dois lugares, nesta ordem:
  *
  *   1. a CATEGORIA (`cat.flow`), como na APN: nem chega a haver produto;
  *   2. o PRODUTO escolhido (`product.flow`), como no Recrutamento e Seleção
- *      (`dh`) e no DH - Avaliação (`dh_avaliacao`).
+ *      (`dh`), no DH - Avaliação (`dh_avaliacao`) e no Casais de Alta
+ *      Performance (`casais`).
  *
  * Enquanto nada foi escolhido, vale o fluxo dos produtos da categoria QUANDO
  * TODOS concordam — é o que mantém o stepper honesto na primeira tela de uma
@@ -1461,11 +1482,12 @@ const stepsDoFluxo = (fluxo, c) => (
   fluxo === 'apn' ? STEPS_APN
     : fluxo === 'dh' ? STEPS_DH
       : fluxo === 'dh_avaliacao' ? STEPS_DH_AVALIACAO
-        : comecaPeloProduto(c) ? STEPS_PRODUTO_PRIMEIRO : STEPS
+        : fluxo === 'casais' ? STEPS_CASAIS
+          : comecaPeloProduto(c) ? STEPS_PRODUTO_PRIMEIRO : STEPS
 );
 // Em que etapa fica a lista de produtos, no fluxo de cada um. É por ela que
 // `onProduct` reposiciona quando a escolha do produto muda o próprio fluxo.
-const etapaDoProduto = (fluxo, c) => (fluxo === 'dh' || fluxo === 'dh_avaliacao' || comecaPeloProduto(c) ? 0 : 1);
+const etapaDoProduto = (fluxo, c) => (fluxo === 'dh' || fluxo === 'dh_avaliacao' || fluxo === 'casais' || comecaPeloProduto(c) ? 0 : 1);
 // E a da empresa, no fluxo padrão: a outra das duas primeiras.
 const etapaDaEmpresa = (c) => (comecaPeloProduto(c) ? 1 : 0);
 
@@ -1593,6 +1615,210 @@ const avisoDosValores = (mudaram, valores) => mudaram
     : `A diretoria mudou o valor sugerido ${DA_MODALIDADE[m.id]} para ${fmtBRL(valores[m.id].valor)}.`))
   .join(' ') + ' Confira o total antes de seguir.';
 
+/* ============================================================================
+ * CASAIS DE ALTA PERFORMANCE (TSK-1622, 25/11/2026) — um contrato, dois
+ * participantes, um de dois valores FIXOS.
+ *
+ * Os valores são decisão do dono, os mesmos de `apps/casais/servicos.py`: o
+ * CHEIO ou o do ELITE EMPRESARIAL. Quem escolhe entre os dois:
+ *
+ * - PJ: o Conecta, pelo CNPJ. A tela pergunta ao backend do Lobby
+ *   (`POST /api/casais/elite`; o navegador nunca fala com o Conecta) uma vez por
+ *   CNPJ por venda, e mostra o valor que vale, travado. Sem resposta (Conecta
+ *   fora, lento, 429, 503), fica no cheio, com o aviso: o valor do Elite numa PJ
+ *   nunca sai sem a conferência.
+ * - PF: o consultor, marcando "paga o valor do Elite Empresarial".
+ *
+ * O que a tela mostra é só o que ela mostra: quem segura é o comprovante, que
+ * pergunta de novo no servidor e só assina o Elite numa PJ que o Conecta disse
+ * ser ativa. O pagamento é o do DH - Avaliação (`FORMAS_AVALIACAO`).
+ *
+ * O NÚMERO DO CONTRATO é o protocolo da venda (`buildProtocol`, CAP-AAMMDDPRRRRR).
+ * Ele nasce ao chegar ao Resumo, para aparecer lá, e é o mesmo que vai ao n8n e
+ * à tela de sucesso (`numeroDoContratoCasais`).
+ * ========================================================================== */
+const CASAIS_ELITE_URL = '/api/casais/elite';
+const CASAIS_VALOR_CHEIO = 39997;
+const CASAIS_VALOR_ELITE = 35000;
+// O `produto` do payload do n8n, como o 'PROFILER' do DH - Avaliação: um código
+// fixo, e não o nome do catálogo, que a diretoria pode reescrever.
+const CASAIS_PRODUTO = 'CASAIS_DE_ALTA_PERFORMANCE';
+const msgCasaisSemConferencia = (motivo = 'Não foi possível conferir o CNPJ no Conecta agora') => (
+  `${motivo}. Sem a conferência, a venda fica no preço cheio, ${fmtBRL(CASAIS_VALOR_CHEIO)}.`
+);
+
+const novoParticipanteCasais = () => ({ nome: '', cpf: '' });
+// A conferência de um CNPJ no Conecta: `cnpj` (só dígitos) e `estado` —
+// 'idle' (nada perguntado), 'conferindo', 'ativo', 'inativo' ou 'sem_resposta'.
+const conferenciaVaziaCasais = () => ({ cnpj: '', estado: 'idle', mensagem: '', tentarEm: null });
+// A conferência que vale para o CNPJ de agora: a de outro CNPJ não vale nada.
+const conferenciaDoCnpj = (conferencia, cnpj) => (
+  conferencia && conferencia.cnpj && conferencia.cnpj === onlyDigits(cnpj) ? conferencia : conferenciaVaziaCasais()
+);
+
+// 'elite' ou 'cheio'. Na PF, a escolha do consultor; na PJ, só o Conecta dizendo
+// "ativo" para ESTE CNPJ dá o Elite — conferindo, sem resposta ou outro CNPJ é
+// cheio.
+function tabelaDoCasais(d) {
+  if (d.casTipoPessoa === 'PF') return d.casEliteMarcado ? 'elite' : 'cheio';
+  return conferenciaDoCnpj(d.casElite, d.cnpj).estado === 'ativo' ? 'elite' : 'cheio';
+}
+const valorDoCasais = (tabela) => (tabela === 'elite' ? CASAIS_VALOR_ELITE : CASAIS_VALOR_CHEIO);
+// O Conecta respondeu (sim ou não) para este CNPJ. Na PF, nunca: lá ele não é
+// perguntado. É o `elite_conferido_no_conecta` do payload.
+function conferidoNoConecta(d) {
+  if (d.casTipoPessoa === 'PF') return false;
+  const estado = conferenciaDoCnpj(d.casElite, d.cnpj).estado;
+  return estado === 'ativo' || estado === 'inativo';
+}
+const parcelasDoCasais = (d) => (d.casForma === 'cartao'
+  ? Math.min(CASAIS_MAX_PARCELAS_CARTAO, Math.max(1, Math.round(Number(d.casParcelas) || 1)))
+  : 1);
+
+// O que falta em cada etapa, na frase que a tela mostra ("Para continuar,
+// falta: …"). Vazio = a etapa avança.
+function faltasDoContratanteCasais(d) {
+  const faltas = [];
+  if (d.casTipoPessoa === 'PF') {
+    if ((d.casNome || '').trim().length <= 3) faltas.push('o nome completo do contratante');
+    if (!isCPF(d.casCpf)) faltas.push(onlyDigits(d.casCpf).length === 11 ? 'um CPF válido do contratante' : 'o CPF do contratante');
+  } else {
+    if (!isCNPJ(d.cnpj)) faltas.push(onlyDigits(d.cnpj).length === 14 ? 'um CNPJ válido' : 'o CNPJ');
+    if ((d.razaoSocial || '').trim().length <= 2) faltas.push('a razão social');
+  }
+  if (!isEmail(d.casEmail)) faltas.push((d.casEmail || '').trim() ? 'um e-mail válido' : 'o e-mail');
+  if (!isPhone(d.casTelefone)) faltas.push(onlyDigits(d.casTelefone) ? 'um telefone válido, com DDD' : 'o telefone');
+  if (!isCEP(d.cep)) faltas.push('o CEP');
+  if ((d.endereco || '').trim().length <= 2) faltas.push('o endereço (logradouro)');
+  if (!(d.numero || '').trim()) faltas.push('o número do endereço');
+  if ((d.bairro || '').trim().length <= 1) faltas.push('o bairro');
+  if ((d.cidade || '').trim().length <= 1) faltas.push('a cidade');
+  if (!isUF(d.estado)) faltas.push('o estado (UF)');
+  return faltas;
+}
+function faltasDoCasal(participantes) {
+  const lista = [0, 1].map((i) => (participantes && participantes[i]) || novoParticipanteCasais());
+  const faltas = [];
+  lista.forEach((p, i) => {
+    if ((p.nome || '').trim().length <= 3) faltas.push(`o nome do participante ${i + 1}`);
+    if (!isCPF(p.cpf)) faltas.push(onlyDigits(p.cpf).length === 11 ? `um CPF válido do participante ${i + 1}` : `o CPF do participante ${i + 1}`);
+  });
+  if (isCPF(lista[0].cpf) && onlyDigits(lista[0].cpf) === onlyDigits(lista[1].cpf)) {
+    faltas.push('um CPF diferente para cada participante (os dois estão com o mesmo)');
+  }
+  return faltas;
+}
+function faltasDoPagamentoCasais(d) {
+  const faltas = [];
+  if (d.casTipoPessoa !== 'PF' && conferenciaDoCnpj(d.casElite, d.cnpj).estado === 'conferindo') {
+    faltas.push('a conferência do CNPJ no Conecta terminar');
+  }
+  if (!formaAvaliacao(d.casForma)) faltas.push('a forma de pagamento');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.casData || '')) faltas.push('a data de vencimento');
+  return faltas;
+}
+
+// O número do contrato: o protocolo da venda. Fica o que já está na tela, a não
+// ser que a forma de pagamento (o dígito P) tenha mudado ou ele seja de outro dia.
+function numeroDoContratoCasais(atual, product, formaId, date = new Date()) {
+  const forma = formaAvaliacao(formaId);
+  const novo = buildProtocol(product, forma ? forma.protocolo : formaId, date);
+  // CAP-AAMMDDP: igual até o dígito da forma, o atual continua valendo.
+  return atual && atual.slice(0, 11) === novo.slice(0, 11) ? atual : novo;
+}
+
+// O payload do n8n, o JSON combinado (README, "Venda Casais de Alta
+// Performance") — não renomeie nem tire chave. Documento, CPF, telefone e CEP
+// vão MASCARADOS, como nos outros fluxos. O comprovante e o `enviado_por` entram
+// depois, no envio (`enviaVenda`, `postCadastro`).
+function payloadDoCasais(d, protocolo) {
+  const pf = d.casTipoPessoa === 'PF';
+  const tabela = tabelaDoCasais(d);
+  return {
+    id_venda: protocolo,
+    numero_contrato: protocolo,
+    produto: CASAIS_PRODUTO,
+    contratante: {
+      tipo_pessoa: pf ? 'PF' : 'PJ',
+      nome: ((pf ? d.casNome : d.razaoSocial) || '').trim(),
+      documento: (pf ? d.casCpf : d.cnpj) || '',
+      email: (d.casEmail || '').trim(),
+      telefone: d.casTelefone || '',
+      endereco: {
+        logradouro: (d.endereco || '').trim(),
+        numero: (d.numero || '').trim(),
+        complemento: (d.complemento || '').trim(),
+        bairro: (d.bairro || '').trim(),
+        cidade: (d.cidade || '').trim(),
+        uf: (d.estado || '').toUpperCase(),
+        cep: d.cep || '',
+      },
+    },
+    participantes: [0, 1].map((i) => {
+      const p = (d.casParticipantes && d.casParticipantes[i]) || novoParticipanteCasais();
+      return { nome: (p.nome || '').trim(), cpf: p.cpf || '' };
+    }),
+    valor: valorDoCasais(tabela),
+    tabela,
+    elite_conferido_no_conecta: conferidoNoConecta(d),
+    pagamento: { forma: d.casForma, parcelas: parcelasDoCasais(d), data: d.casData },
+  };
+}
+
+// O que o servidor assina: o valor e, com ele, o que decide o valor — quem
+// contrata (na PJ, o CNPJ que o Conecta conferiu; na PF o CPF não vai, porque
+// não decide o valor e o servidor não o guarda), a tabela e a conferência. Mesma
+// forma do DH - Avaliação: o total inteiro na entrada, sem cronograma.
+function valoresDoCasais(payload, categoriaId, produtoId) {
+  return {
+    fluxo: 'casais',
+    categoria_id: categoriaId,
+    produto_id: produtoId,
+    negociado: false,
+    valor_total: payload.valor,
+    valor_mensal: null,
+    entrada: payload.valor,
+    cronograma: [],
+    protocolo: payload.id_venda,
+    casais: {
+      tipo_pessoa: payload.contratante.tipo_pessoa,
+      documento: payload.contratante.tipo_pessoa === 'PJ' ? payload.contratante.documento : '',
+      tabela: payload.tabela,
+      elite_conferido_no_conecta: payload.elite_conferido_no_conecta,
+    },
+  };
+}
+
+// Pergunta ao backend se o CNPJ é cliente ativo do Elite. Devolve
+// { estado, mensagem, tentarEm }; só o fim da sessão lança (quem cuida é o
+// login). Qualquer outra falha é 'sem_resposta': o cheio, com o aviso.
+async function perguntaEliteCasais(cnpj) {
+  let r;
+  try {
+    r = await apiFetch(CASAIS_ELITE_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cnpj }), cache: 'no-store',
+    });
+  } catch (e) {
+    if (fimDeSessao(e)) throw e;
+    return { estado: 'sem_resposta', mensagem: msgCasaisSemConferencia(), tentarEm: null };
+  }
+  if (r.status === 429) {
+    return {
+      estado: 'sem_resposta',
+      mensagem: msgCasaisSemConferencia('Muitas consultas seguidas'),
+      tentarEm: Number(r.headers.get('Retry-After')) || null,
+    };
+  }
+  const d = r.ok ? await r.json().catch(() => null) : null;
+  if (!d || typeof d !== 'object') return { estado: 'sem_resposta', mensagem: msgCasaisSemConferencia(), tentarEm: null };
+  return {
+    estado: d.cliente_ativo === true ? 'ativo' : d.cliente_ativo === false ? 'inativo' : 'sem_resposta',
+    mensagem: String(d.mensagem || msgCasaisSemConferencia()),
+    tentarEm: Number.isFinite(d.tentar_em) ? d.tentar_em : null,
+  };
+}
+
 const fmt = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
 
@@ -1660,16 +1886,18 @@ function MoneyInput({ value, onChangeNumber, onCommit, disabled, placeholder, cl
 }
 
 /* ===== Campo de texto estruturado ===== */
-function Field({ label, value, onChange, placeholder, mask, type, inputMode, required, optional, disabled, span, action }) {
+// `id` (opcional) liga o rótulo ao campo: o leitor de tela lê o rótulo, e o
+// clique nele põe o cursor no campo.
+function Field({ id, label, value, onChange, placeholder, mask, type, inputMode, required, optional, disabled, span, action }) {
   return (
     <div style={{ gridColumn: span ? `span ${span}` : undefined }}>
-      <label className="lbl">
+      <label className="lbl" htmlFor={id}>
         {label}{required && <span style={{ color: 'var(--primary)' }}> *</span>}
         {optional && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> (opcional)</span>}
       </label>
       <div style={{ position: 'relative' }}>
         <input
-          className="inp" type={type || 'text'} inputMode={inputMode} placeholder={placeholder} value={value || ''} disabled={disabled}
+          id={id} className="inp" type={type || 'text'} inputMode={inputMode} placeholder={placeholder} value={value || ''} disabled={disabled}
           autoComplete="off"
           style={action ? { paddingRight: 44 } : undefined}
           onChange={(e) => onChange(mask ? mask(e.target.value) : e.target.value)}
@@ -2184,6 +2412,19 @@ function App({ motivoAoAbrir }) {
     // Retrato do que saiu no envio, para a tela de sucesso: a reconsulta segue
     // rodando depois da venda e poderia mudar os itens que ela mostraria.
     avalEnviado: null,
+    // ----- Fluxo Casais de Alta Performance (produto de fluxo próprio, TSK-1622) -----
+    // Na PJ, CNPJ, razão social e endereço reaproveitam os campos do Elite e do
+    // DH, pelo motivo de lá. O que é só daqui: o tipo de pessoa, nome e CPF da
+    // PF, e-mail e telefone do contratante, os dois participantes, o "paga o
+    // valor do Elite Empresarial" da PF (`casEliteMarcado`), a conferência do
+    // CNPJ no Conecta (`casElite`), o pagamento, o número do contrato
+    // (`casProtocolo`, que nasce no Resumo) e em que etapa o "Continuar" foi
+    // clicado com algo faltando (`casFaltaNa`).
+    casTipoPessoa: 'PJ', casNome: '', casCpf: '', casEmail: '', casTelefone: '',
+    casParticipantes: [novoParticipanteCasais(), novoParticipanteCasais()],
+    casEliteMarcado: false, casElite: conferenciaVaziaCasais(), casAviso: '',
+    casForma: 'pix', casParcelas: 1, casData: '', casProtocolo: '', casFaltaNa: null,
+    casEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
     // Negociação: `autorizacao` é { token, nome, email, papel } de quem liberou,
@@ -2356,6 +2597,8 @@ function App({ motivoAoAbrir }) {
   const isDh = fluxo === 'dh';
   // Fluxo DH - Avaliação: produto → contratante → itens → pagamento → resumo.
   const isDhAval = fluxo === 'dh_avaliacao';
+  // Fluxo Casais de Alta Performance: produto → contratante → casal → pagamento → resumo.
+  const isCasais = fluxo === 'casais';
   const steps = stepsDoFluxo(fluxo, cat);
   const ultimoStep = steps.length - 1;
   // Fluxo padrão: Empresa e Produto trocam de lugar em categoria `produtoPrimeiro`.
@@ -2409,13 +2652,17 @@ function App({ motivoAoAbrir }) {
   });
   const next = () => patch((d) => ({ step: Math.min(ultimoStep, d.step + 1) }));
   const back = () => { if (s.step === 0) patch({ screen: 'lobby' }); else patch((d) => ({ step: d.step - 1 })); };
-  const goStep = (i) => patch({ step: i });
+  // Com a venda a caminho (o comprovante, ou a reconsulta do Casais), a etapa
+  // não troca: o envio leva o estado do clique em Finalizar, e uma edição no
+  // meio não iria junto (o "Voltar" já fica desabilitado; isto vale para o
+  // stepper e os "Editar" do Resumo).
+  const goStep = (i) => patch((d) => (d.sendState === 'sending' ? {} : { step: i }));
 
   // ----- Campos -----
   const onField = (k, v) => {
     if (k === 'cnpj') v = maskCNPJ(v);
-    else if (k === 'repCpf' || k === 'apnCpf' || k === 'avalCpf') v = maskCPF(v);
-    else if (k === 'repTelefone') v = maskPhone(v);
+    else if (k === 'repCpf' || k === 'apnCpf' || k === 'avalCpf' || k === 'casCpf') v = maskCPF(v);
+    else if (k === 'repTelefone' || k === 'casTelefone') v = maskPhone(v);
     else if (k === 'cep') v = maskCEP(v);
     else if (k === 'estado') v = maskUF(v);
     const extra = {};
@@ -2864,6 +3111,94 @@ function App({ motivoAoAbrir }) {
     avalParcelas: forma === 'cartao' ? Math.max(1, Number(d.avalParcelas) || 1) : 1,
   }));
 
+  /* ----- Casais de Alta Performance: contratante, casal, valor e pagamento -----
+   *
+   * O valor é um de dois fixos (`tabelaDoCasais`): na PJ, o que o Conecta disse
+   * do CNPJ; na PF, o "paga o valor do Elite Empresarial" do consultor. O que
+   * falta em cada etapa sai das `faltasDo*`, e o "Continuar" com algo faltando
+   * não avança: diz o que falta.
+   */
+  const casPf = s.casTipoPessoa === 'PF';
+  const casCnpj = onlyDigits(s.cnpj);
+  const casConferencia = conferenciaDoCnpj(s.casElite, s.cnpj);
+  const casTabela = tabelaDoCasais(s);
+  const casValor = valorDoCasais(casTabela);
+  const casParcelas = parcelasDoCasais(s);
+  const casValorParcela = round2(casValor / casParcelas);
+  const casNomeContratante = ((casPf ? s.casNome : s.razaoSocial) || '').trim();
+  const casFaltasContratante = faltasDoContratanteCasais(s);
+  const casFaltasCasal = faltasDoCasal(s.casParticipantes);
+  const casFaltasPagamento = faltasDoPagamentoCasais(s);
+  const casContratanteValid = casFaltasContratante.length === 0;
+  const casCasalValid = casFaltasCasal.length === 0;
+  const casPagamentoValid = casFaltasPagamento.length === 0;
+  const casaisEnvioConfigurado = !!CASAIS_SEND_WEBHOOK_URL;
+
+  const setCasParticipante = (i, campo, valor) => patch((d) => ({
+    casParticipantes: [0, 1].map((j) => {
+      const p = (d.casParticipantes && d.casParticipantes[j]) || novoParticipanteCasais();
+      return j === i ? { ...p, [campo]: campo === 'cpf' ? maskCPF(valor) : valor } : p;
+    }),
+  }));
+  const setCasForma = (forma) => patch((d) => ({
+    casForma: forma,
+    casParcelas: forma === 'cartao' ? Math.max(1, Number(d.casParcelas) || 1) : 1,
+  }));
+
+  // Pergunta ao backend se o CNPJ é cliente ativo do Elite e leva a resposta à
+  // tela. A resposta de um CNPJ que já não é o da tela (o consultor trocou no
+  // meio), de outra sessão ou de outro atendimento é descartada. Se ela muda o
+  // valor que a tela já mostrava (uma conferência de novo), fica o aviso.
+  // Devolve a conferência nova, ou null.
+  //
+  // Sem resposta por causa da sessão (caiu, ou trocou no meio), a conferência
+  // volta ao começo, e não fica presa em "conferindo": quem entrar de novo no
+  // mesmo atendimento tem a pergunta refeita pelo `useEffect` abaixo.
+  const conferirEliteCasais = async (cnpj) => {
+    const marca = marcaDoMomento(atendimento);
+    const antes = conferenciaDoCnpj(s.casElite, cnpj);
+    const solta = () => patch((d) => (d.casElite.cnpj === cnpj && d.casElite.estado === 'conferindo'
+      ? { casElite: conferenciaVaziaCasais() } : {}));
+    patch({ casElite: { cnpj, estado: 'conferindo', mensagem: '', tentarEm: null } });
+    let resposta;
+    try {
+      resposta = await perguntaEliteCasais(cnpj);
+    } catch (e) {
+      solta();  // a sessão acabou: quem cuida da tela é o login
+      return null;
+    }
+    if (!aindaVale(marca, atendimento)) { solta(); return null; }
+    const nova = { cnpj, ...resposta };
+    const mostrava = antes.estado === 'ativo' ? 'elite'
+      : (antes.estado === 'inativo' || antes.estado === 'sem_resposta') ? 'cheio' : null;
+    const vale = nova.estado === 'ativo' ? 'elite' : 'cheio';
+    patch((d) => (d.casElite.cnpj !== cnpj ? {} : {
+      casElite: nova,
+      ...(mostrava && mostrava !== vale ? { casAviso: `O valor mudou para ${fmt(valorDoCasais(vale))}. ${nova.mensagem}` } : {}),
+    }));
+    return nova;
+  };
+  // Uma pergunta por CNPJ por venda: quando o CNPJ da PJ fica completo e válido,
+  // ou troca — não a cada render. O "Conferir de novo" e a recusa do comprovante
+  // perguntam de novo, à mão; o balde do Conecta é um só para o Lobby inteiro.
+  // Só com a pessoa logada: sem sessão a pergunta nem sai (e não vira laço).
+  useEffect(() => {
+    if (!logado || !isCasais || casPf || !isCNPJ(s.cnpj) || s.casElite.cnpj === casCnpj) return;
+    conferirEliteCasais(casCnpj);
+  }, [logado, isCasais, casPf, casCnpj, s.casElite.cnpj]);
+  // O número do contrato nasce ao chegar ao Resumo, para aparecer lá, e muda se
+  // a forma de pagamento (o dígito P do protocolo) mudar.
+  useEffect(() => {
+    if (!isCasais || s.screen !== 'flow' || s.step !== ultimoStep || !product) return;
+    const numero = numeroDoContratoCasais(s.casProtocolo, product, s.casForma);
+    if (numero !== s.casProtocolo) patch({ casProtocolo: numero });
+  }, [isCasais, s.screen, s.step, s.casForma, product]);
+  // "Continuar" no Casais: com algo faltando, não avança e diz o quê.
+  const avancaCasais = (faltas) => () => {
+    if (faltas.length) { patch({ casFaltaNa: s.step }); return; }
+    patch((d) => ({ casFaltaNa: null, step: Math.min(ultimoStep, d.step + 1) }));
+  };
+
   // ----- Payload + envio (`enviaVenda` → SEND_WEBHOOK_URL) -----
   const buildPayload = (departamento) => {
     const nowIso = new Date().toISOString();
@@ -2924,7 +3259,7 @@ function App({ motivoAoAbrir }) {
     };
   };
 
-  // O envio dos quatro fluxos, preso ao atendimento (ver `criaEnviaEsta`).
+  // O envio dos cinco fluxos, preso ao atendimento (ver `criaEnviaEsta`).
   const enviaEsta = criaEnviaEsta(atendimento, vendaNoAr);
 
   /* ----- Payload + envio da APN (webhook próprio) -----
@@ -3242,6 +3577,65 @@ function App({ motivoAoAbrir }) {
     }
   };
 
+  /* ----- Envio do Casais de Alta Performance (webhook próprio) -----
+   * O payload é o JSON combinado com o n8n (`payloadDoCasais`), e o que o
+   * servidor assina sai dele (`valoresDoCasais`), mais as três chaves do
+   * comprovante, como no DH - Avaliação. O número do contrato é o que o Resumo
+   * mostrou.
+   */
+  const finalizeCasais = async () => {
+    if (!casContratanteValid || !casCasalValid || !casPagamentoValid || !casaisEnvioConfigurado || s.sendState === 'sending') return;
+    const geracao = sessaoLobby.geracao;
+    patch({ sendState: 'sending', sendErr: '', sendErrHandled: false, casAviso: '' });
+    // PJ sem resposta do Conecta: pergunta de novo antes de enviar, ele pode ter
+    // voltado. Se a resposta muda o valor, o envio para e a tela mostra o novo,
+    // com o aviso: não sai um valor que o consultor não viu.
+    let dados = s;
+    if (!casPf && casConferencia.estado === 'sem_resposta') {
+      const nova = await conferirEliteCasais(casCnpj);
+      if (geracao !== sessaoLobby.geracao) return;
+      if (nova) {
+        dados = { ...s, casElite: nova };
+        if (tabelaDoCasais(dados) !== casTabela) { patch({ sendState: 'idle' }); return; }
+      }
+    }
+    // O número que o Resumo mostrou. Se o dia virou com o Resumo aberto, ele
+    // muda (o AAMMDD é a data da venda): o envio para e mostra o novo.
+    const protocolo = numeroDoContratoCasais(dados.casProtocolo, product, dados.casForma);
+    if (dados.casProtocolo && protocolo !== dados.casProtocolo) {
+      patch({
+        sendState: 'idle', casProtocolo: protocolo,
+        casAviso: `O dia virou desde que o Resumo abriu, e o número do contrato passou a ser ${protocolo}. Confira e finalize de novo.`,
+      });
+      return;
+    }
+    try {
+      const payload = payloadDoCasais(dados, protocolo);
+      const valores = valoresDoCasais(payload, cat ? cat.id : '', product ? product.id : '');
+      const enviada = await enviaEsta({ url: CASAIS_SEND_WEBHOOK_URL, payload, valores, geracao }, protocolo);
+      if (!enviada) return;
+      const forma = formaAvaliacao(dados.casForma);
+      patch({
+        screen: 'success', response: enviada.resposta || {}, protocol: protocolo, sendState: 'idle', autorizacao: null,
+        // Retrato do que saiu, para a tela de sucesso.
+        casEnviado: {
+          nome: payload.contratante.nome,
+          participantes: payload.participantes.map((p) => p.nome),
+          valor: payload.valor,
+          tabela: payload.tabela,
+          forma: forma ? forma.label : '',
+          parcelas: payload.pagamento.parcelas,
+        },
+      });
+    } catch (e) {
+      patch({ sendState: 'error', sendErr: e && e.message ? e.message : 'Erro ao enviar. Tente novamente.', sendErrHandled: !!(e && e.handled) });
+      // O servidor recusou numa PJ (o Conecta disse outra coisa desde a
+      // conferência da tela): pergunta de novo, para a tela mostrar o valor que
+      // vale. A resposta está guardada no servidor; não gasta o Conecta.
+      if (e && e.handled && !casPf && isCNPJ(dados.cnpj)) conferirEliteCasais(casCnpj);
+    }
+  };
+
   const finalize = async () => {
     if (!pagamentoValid || !departamentoOk || s.sendState === 'sending') return;
     const geracao = sessaoLobby.geracao;
@@ -3298,6 +3692,10 @@ function App({ motivoAoAbrir }) {
     avalTipoPessoa: 'PJ', avalNome: '', avalCpf: '', avalEmail: '',
     avalItens: aplicaValoresAvaliacao(novosItensAvaliacao(), valsAval.valores), avalAviso: '',
     avalForma: 'pix', avalParcelas: 1, avalData: '', avalEnviado: null,
+    casTipoPessoa: 'PJ', casNome: '', casCpf: '', casEmail: '', casTelefone: '',
+    casParticipantes: [novoParticipanteCasais(), novoParticipanteCasais()],
+    casEliteMarcado: false, casElite: conferenciaVaziaCasais(), casAviso: '',
+    casForma: 'pix', casParcelas: 1, casData: '', casProtocolo: '', casFaltaNa: null, casEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
     // Atendimento novo não herda autorização (e o "sair" passa por aqui).
@@ -3592,7 +3990,7 @@ function App({ motivoAoAbrir }) {
                 {p.flow ? (
                   <>
                     <div style={{ font: '600 13px var(--font-primary)', color: 'var(--primary)', whiteSpace: 'nowrap' }}>Formulário próprio</div>
-                    <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{p.flow === 'dh_avaliacao' ? 'valores por item' : 'valores por vaga'}</div>
+                    <div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 2 }}>{p.flow === 'dh_avaliacao' ? 'valores por item' : p.flow === 'casais' ? 'cheio ou Elite Empresarial' : 'valores por vaga'}</div>
                   </>
                 ) : (
                   <>
@@ -4896,6 +5294,389 @@ function App({ motivoAoAbrir }) {
     );
   };
 
+  /* ===================================================================== */
+  /* ===  CASAIS DE ALTA PERFORMANCE — fluxo próprio do produto (5 etapas) === */
+  /* ===================================================================== */
+  /* Produto → Contratante → Casal → Pagamento → Resumo. A etapa Produto é a
+   * lista da categoria (`renderProduto`), como no DH - Avaliação.
+   */
+
+  // "Para continuar, falta: …" — só depois de o consultor clicar em Continuar
+  // nesta etapa, e some sozinho à medida que ele preenche.
+  const renderFaltasCasais = (faltas) => (s.casFaltaNa === s.step && faltas.length > 0 && (
+    <div role="alert" data-faltas style={{ marginTop: 18, display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)' }}>
+      <span className="ms-icon" style={{ fontSize: 20, color: 'var(--warning)' }}>error</span>
+      <div style={{ font: '400 13px/1.5 var(--font-secondary)', color: 'var(--text-secondary)' }}>
+        <strong style={{ color: 'var(--text)', display: 'block' }}>Para continuar, falta:</strong>
+        <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{faltas.map((f) => <li key={f}>{f}</li>)}</ul>
+      </div>
+    </div>
+  ));
+
+  // O que o Conecta disse do CNPJ da PJ: a origem do valor, que o consultor não
+  // troca. Sem resposta, o aviso e o "Conferir de novo".
+  const renderConferenciaCasais = () => {
+    const c = casConferencia;
+    const caixa = (cor, fundo, borda) => ({ display: 'flex', alignItems: 'flex-start', gap: 8, font: '500 12.5px/1.5 var(--font-secondary)', color: cor, background: fundo, border: '1px solid ' + borda, padding: '9px 12px', borderRadius: 8 });
+    if (c.estado === 'conferindo') {
+      return (
+        <div role="status" data-conferencia="conferindo" style={caixa('var(--text-secondary)', 'var(--surface-elevated)', 'var(--border-light)')}>
+          <span className="ms-icon rot" style={{ fontSize: 16 }}>progress_activity</span>Conferindo o CNPJ no Conecta…
+        </div>
+      );
+    }
+    if (c.estado === 'ativo') {
+      return (
+        <div role="status" data-conferencia="ativo" style={caixa('#4ADE80', 'rgba(40,167,69,.12)', 'rgba(40,167,69,.3)')}>
+          <span className="ms-icon" style={{ fontSize: 16 }}>verified</span>{c.mensagem}
+        </div>
+      );
+    }
+    if (c.estado === 'inativo') {
+      return (
+        <div role="status" data-conferencia="inativo" style={caixa('var(--text-secondary)', 'var(--surface-elevated)', 'var(--border-light)')}>
+          <span className="ms-icon" style={{ fontSize: 16 }}>info</span>{c.mensagem}
+        </div>
+      );
+    }
+    if (c.estado === 'sem_resposta') {
+      return (
+        <div role="alert" data-conferencia="sem_resposta" style={{ ...caixa('var(--warning)', 'rgba(255,193,7,.1)', 'rgba(255,193,7,.35)'), flexWrap: 'wrap' }}>
+          <span className="ms-icon" style={{ fontSize: 16 }}>cloud_off</span>
+          <span style={{ flex: 1, minWidth: 200 }}>{c.mensagem}</span>
+          <button type="button" className="linkbtn" onClick={() => conferirEliteCasais(casCnpj)}>Conferir de novo</button>
+        </div>
+      );
+    }
+    return (
+      <div data-conferencia="idle" style={caixa('var(--text-muted)', 'var(--surface-elevated)', 'var(--border-light)')}>
+        <span className="ms-icon" style={{ fontSize: 16 }}>info</span>O valor sai da conferência do CNPJ no Conecta: informe o CNPJ na etapa Contratante.
+      </div>
+    );
+  };
+
+  // Etapa 2 — Contratante: PJ (CNPJ com a busca na Receita e a conferência no
+  // Conecta) ou PF (nome e CPF). E-mail, telefone e endereço completo nos dois.
+  const renderCasaisContratante = () => {
+    const cnpjBtnLabel = s.cnpjStatus === 'loading' ? 'Buscando…' : s.cnpjStatus === 'done' ? 'Revalidar' : 'Validar CNPJ';
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <span style={{ font: '600 11px var(--font-primary)', letterSpacing: '.1em', textTransform: 'uppercase', color: colors.iconFg }}>{product ? product.name : cat.name}</span>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '6px 0 6px', color: 'var(--text)' }}>Dados do contratante</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>{casPf ? 'Contratação no CPF.' : 'Informe o CNPJ para trazer os dados da empresa da Receita e conferir no Conecta se ela é cliente do Elite Empresarial.'}</p>
+        </div>
+
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="sec-title" style={{ marginBottom: 12 }}>Identificação</div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+            {[{ k: 'PJ', t: 'Empresa', d: 'CNPJ', i: 'apartment' }, { k: 'PF', t: 'Pessoa física', d: 'CPF', i: 'person' }].map((o) => {
+              const on = s.casTipoPessoa === o.k;
+              return (
+                <button key={o.k} type="button" onClick={() => patch({ casTipoPessoa: o.k })} aria-pressed={on}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 10, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (on ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
+                  <span className="ms-icon" style={{ fontSize: 19, color: on ? 'var(--primary)' : 'var(--text-muted)' }}>{o.i}</span>
+                  <span style={{ font: '600 13.5px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{o.t}</span>
+                  <span style={{ font: '600 10.5px var(--font-primary)', letterSpacing: '.05em', color: 'var(--text-muted)', background: 'var(--surface-light)', padding: '3px 7px', borderRadius: 5 }}>{o.d}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {casPf ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+                <Field id="cas-nome" label="Nome completo" required value={s.casNome} onChange={(v) => onField('casNome', v)} placeholder="Nome de quem está contratando" />
+                <Field id="cas-cpf" label="CPF" required value={s.casCpf} onChange={(v) => onField('casCpf', v)} mask={maskCPF} placeholder="000.000.000-00" inputMode="numeric" />
+              </div>
+              {avisoCpfInvalido(s.casCpf)}
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <label className="lbl" htmlFor="cas-cnpj">CNPJ<span style={{ color: 'var(--primary)' }}> *</span></label>
+                  <input id="cas-cnpj" className="inp lg" value={s.cnpj} placeholder="00.000.000/0000-00" inputMode="numeric"
+                    onChange={(e) => onField('cnpj', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') validateCnpj(); }} />
+                </div>
+                <button className="btn-prim" onClick={validateCnpj} disabled={s.cnpjStatus === 'loading'} style={{ height: 46 }}>
+                  {s.cnpjStatus === 'loading' ? <span className="spin" /> : <span className="ms-icon" style={{ fontSize: 18 }}>search</span>}
+                  {cnpjBtnLabel}
+                </button>
+              </div>
+              {s.cnpjStatus === 'done' && (
+                <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: '#4ADE80', background: 'rgba(40,167,69,.12)', border: '1px solid rgba(40,167,69,.3)', padding: '7px 12px', borderRadius: 8 }}>
+                  <span className="ms-icon" style={{ fontSize: 16 }}>verified</span>Dados encontrados na Receita Federal e preenchidos abaixo.
+                </div>
+              )}
+              {(s.cnpjStatus === 'manual' || s.cnpjStatus === 'error') && (
+                <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+                  <span className="ms-icon" style={{ fontSize: 16 }}>error</span>{s.cnpjErr}
+                </div>
+              )}
+              {isCNPJ(s.cnpj) && <div style={{ marginTop: 12 }}>{renderConferenciaCasais()}</div>}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14, marginTop: 16 }}>
+                <Field id="cas-razao" label="Razão social" required value={s.razaoSocial} onChange={(v) => onField('razaoSocial', v)} placeholder="Nome registrado da empresa" />
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="sec-title" style={{ marginBottom: 16 }}>Contato</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+            <Field id="cas-email" label="E-mail" required type="email" value={s.casEmail} onChange={(v) => onField('casEmail', v)} placeholder={casPf ? 'email@exemplo.com.br' : 'financeiro@empresa.com.br'} />
+            <Field id="cas-telefone" label="Telefone" required value={s.casTelefone} onChange={(v) => onField('casTelefone', v)} mask={maskPhone} placeholder="(00) 00000-0000" inputMode="tel" />
+          </div>
+        </div>
+
+        {/* Endereço — nos dois tipos. A Receita preenche o da empresa; tudo
+            continua editável, porque o do contrato às vezes é outro. */}
+        <div className="card">
+          <div className="sec-title" style={{ marginBottom: 16 }}>Endereço</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+            <Field id="cas-cep" label="CEP" required value={s.cep} onChange={(v) => onField('cep', v)} mask={maskCEP} placeholder="00000-000" inputMode="numeric"
+              action={{ icon: 'search', label: 'Buscar endereço pelo CEP', onClick: validateCep, loading: s.cepStatus === 'loading', disabled: !isCEP(s.cep) || s.cepStatus === 'loading' }} />
+            <div />
+            <Field id="cas-logradouro" label="Endereço (logradouro)" required value={s.endereco} onChange={(v) => onField('endereco', v)} placeholder="Rua, avenida, etc." />
+            <Field id="cas-numero" label="Número" required value={s.numero} onChange={(v) => onField('numero', v)} placeholder="123" />
+            <Field id="cas-complemento" label="Complemento" optional value={s.complemento} onChange={(v) => onField('complemento', v)} placeholder="Sala, andar…" />
+            <Field id="cas-bairro" label="Bairro" required value={s.bairro} onChange={(v) => onField('bairro', v)} placeholder="Bairro" />
+            <Field id="cas-cidade" label="Cidade" required value={s.cidade} onChange={(v) => onField('cidade', v)} placeholder="Cidade" />
+            <Field id="cas-uf" label="Estado (UF)" required value={s.estado} onChange={(v) => onField('estado', v)} mask={maskUF} placeholder="SP" />
+          </div>
+          {s.cepStatus === 'error' && (
+            <div style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 7, font: '500 12.5px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '7px 12px', borderRadius: 8 }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>error</span>Não foi possível consultar o CEP. Preencha o endereço manualmente.
+            </div>
+          )}
+        </div>
+        {renderFaltasCasais(casFaltasContratante)}
+      </>
+    );
+  };
+
+  // Etapa 3 — Casal: nome e CPF dos dois participantes, que não podem ser a
+  // mesma pessoa.
+  const renderCasaisCasal = () => {
+    const [p1, p2] = [0, 1].map((i) => (s.casParticipantes && s.casParticipantes[i]) || novoParticipanteCasais());
+    const mesmoCpf = isCPF(p1.cpf) && onlyDigits(p1.cpf) === onlyDigits(p2.cpf);
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Casal</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Nome e CPF dos dois participantes do programa.</p>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {[p1, p2].map((p, i) => (
+            <div className="card" key={i} style={{ padding: '20px 22px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>person</span>
+                <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Participante {i + 1}</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+                <Field id={`cas-p${i + 1}-nome`} label="Nome completo" required value={p.nome} onChange={(v) => setCasParticipante(i, 'nome', v)} placeholder={`Nome do participante ${i + 1}`} />
+                <Field id={`cas-p${i + 1}-cpf`} label="CPF" required value={p.cpf} onChange={(v) => setCasParticipante(i, 'cpf', v)} mask={maskCPF} placeholder="000.000.000-00" inputMode="numeric" />
+              </div>
+              {avisoCpfInvalido(p.cpf)}
+            </div>
+          ))}
+        </div>
+        {mesmoCpf && (
+          <div role="status" style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, font: '500 13px var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '10px 14px', borderRadius: 10 }}>
+            <span className="ms-icon" style={{ fontSize: 18 }}>group_off</span>Os dois participantes estão com o mesmo CPF: confira.
+          </div>
+        )}
+        {renderFaltasCasais(casFaltasCasal)}
+      </>
+    );
+  };
+
+  // Etapa 4 — Pagamento: o valor (um de dois fixos) e a forma, como no DH -
+  // Avaliação. Na PJ o valor vem do Conecta e não tem controle nenhum; na PF, a
+  // caixa "paga o valor do Elite Empresarial".
+  const renderCasaisPagamento = () => (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Pagamento</h2>
+        <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Valor do contrato, forma de pagamento e vencimento. Pix e boleto são à vista; o cartão parcela em até {CASAIS_MAX_PARCELAS_CARTAO}×.</p>
+      </div>
+
+      <div className="card" style={{ padding: '20px 22px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>sell</span>
+            <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Valor do contrato</span>
+          </div>
+          <span className="chip">{!casPf && <span className="ms-icon" style={{ fontSize: 13 }}>lock</span>}{casTabela === 'elite' ? 'Elite Empresarial' : 'Preço cheio'}</span>
+        </div>
+        <div data-valor-casais style={{ font: '700 28px var(--font-primary)', color: 'var(--primary)', letterSpacing: '-.01em', marginBottom: 14 }}>{fmt(casValor)}</div>
+        {casPf ? (
+          <>
+            <label htmlFor="cas-elite" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10, cursor: 'pointer', background: s.casEliteMarcado ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (s.casEliteMarcado ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
+              <input id="cas-elite" type="checkbox" checked={!!s.casEliteMarcado} onChange={(e) => patch({ casEliteMarcado: e.target.checked })} style={{ width: 18, height: 18, accentColor: '#C7A444' }} />
+              <span style={{ font: '600 13.5px var(--font-primary)', color: 'var(--text)' }}>Paga o valor do Elite Empresarial ({fmt(CASAIS_VALOR_ELITE)})</span>
+            </label>
+            <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 8 }}>Pessoa física: quem decide é você. Desmarcado, vale o preço cheio, {fmt(CASAIS_VALOR_CHEIO)}.</div>
+          </>
+        ) : renderConferenciaCasais()}
+      </div>
+
+      <div className="card" style={{ padding: '20px 22px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>payments</span>
+          <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Forma de pagamento</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {FORMAS_AVALIACAO.map((f) => {
+            const on = s.casForma === f.id;
+            return (
+              <button key={f.id} type="button" onClick={() => setCasForma(f.id)} aria-pressed={on}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: 12, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (on ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
+                <span className="ms-icon" style={{ fontSize: 20, color: on ? 'var(--primary)' : 'var(--text-muted)' }}>{f.icone}</span>
+                <span style={{ font: '600 14px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{f.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 18, alignItems: 'end' }}>
+          {s.casForma === 'cartao' ? (
+            <div>
+              <label className="lbl" htmlFor="cas-parcelas">Parcelas</label>
+              <select id="cas-parcelas" className="inp" style={{ height: 46 }} value={casParcelas} onChange={(e) => patch({ casParcelas: Math.min(CASAIS_MAX_PARCELAS_CARTAO, Math.max(1, Math.round(Number(e.target.value) || 1))) })}>
+                {Array.from({ length: CASAIS_MAX_PARCELAS_CARTAO }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>{n}× {n === 1 ? '(à vista)' : `de ${fmt(round2(casValor / n))}`}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div style={{ height: 46, display: 'flex', alignItems: 'center', gap: 7, font: '400 12.5px var(--font-secondary)', color: 'var(--text-muted)' }}>
+              <span className="ms-icon" style={{ fontSize: 16 }}>info</span>
+              À vista — o parcelamento vale só para cartão de crédito.
+            </div>
+          )}
+          <div>
+            <label className="lbl" htmlFor="cas-data">{casParcelas > 1 ? 'Vencimento da 1ª parcela' : 'Data de vencimento'}<span style={{ color: 'var(--primary)' }}> *</span></label>
+            <input id="cas-data" className="inp" type="date" value={s.casData} onChange={(e) => patch({ casData: e.target.value })} />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)' }}>
+          <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+            {casParcelas > 1 ? `${casParcelas}× de ${fmt(casValorParcela)}` : 'Pagamento único'}
+          </span>
+          <span style={{ font: "700 15px 'Roboto'", color: 'var(--primary)' }}>{fmt(casValor)}</span>
+        </div>
+      </div>
+      {renderFaltasCasais(casFaltasPagamento)}
+    </>
+  );
+
+  // Etapa 5 — Resumo do Casais, com o número do contrato.
+  const renderCasaisResumo = () => {
+    const forma = formaAvaliacao(s.casForma);
+    const enderecoTexto = [
+      [(s.endereco || '').trim(), (s.numero || '').trim()].filter(Boolean).join(', '),
+      (s.complemento || '').trim(),
+      (s.bairro || '').trim(),
+      [(s.cidade || '').trim(), (s.estado || '').toUpperCase()].filter(Boolean).join('/'),
+      s.cep,
+    ].filter(Boolean).join(' - ') || '—';
+    const linhas = [
+      ['Tipo', casPf ? 'Pessoa física' : 'Empresa'],
+      [casPf ? 'Nome' : 'Razão social', casNomeContratante || '—'],
+      [casPf ? 'CPF' : 'CNPJ', (casPf ? s.casCpf : s.cnpj) || '—'],
+      ['E-mail', s.casEmail || '—'],
+      ['Telefone', s.casTelefone || '—'],
+      ['Endereço', enderecoTexto],
+    ];
+    const participantes = [0, 1].map((i) => (s.casParticipantes && s.casParticipantes[i]) || novoParticipanteCasais());
+    const linha = (k, v, ultima) => (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderBottom: ultima ? 'none' : '1px solid var(--border-light)' }}>
+        <span style={{ font: '500 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>{k}</span>
+        <span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', textAlign: 'right' }}>{v}</span>
+      </div>
+    );
+    return (
+      <>
+        <div style={{ marginBottom: 22 }}>
+          <h2 style={{ font: '700 26px var(--font-primary)', letterSpacing: '-.02em', margin: '0 0 6px', color: 'var(--text)' }}>Confirme o pedido</h2>
+          <p style={{ font: '400 14px var(--font-secondary)', color: 'var(--text-muted)', margin: 0 }}>Revise as informações antes de finalizar o cadastro.</p>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Uma conferência nova mudou o valor com a venda aberta: o valor
+              abaixo já é o novo. */}
+          {s.casAviso && (
+            <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, font: '500 13px/1.5 var(--font-secondary)', color: 'var(--warning)', background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)', padding: '10px 14px', borderRadius: 10 }}>
+              <span className="ms-icon" style={{ fontSize: 18 }}>sync_problem</span>{s.casAviso}
+            </div>
+          )}
+          <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span className="sec-title" style={{ fontSize: 12 }}>Número do contrato</span>
+            <span data-numero-contrato style={{ font: "700 16px 'Roboto'", color: 'var(--primary)', letterSpacing: '.04em' }}>{s.casProtocolo || '—'}</span>
+          </div>
+
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span className="sec-title" style={{ fontSize: 12 }}>Contratante</span>
+              <button className="linkbtn" onClick={() => goStep(1)}>Editar</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
+              {linhas.map(([k, v]) => (
+                <div key={k} style={{ gridColumn: k === 'Endereço' ? 'span 2' : undefined }}><div style={{ font: '400 11px var(--font-secondary)', color: 'var(--text-muted)' }}>{k}</div><div style={{ font: '500 13.5px var(--font-secondary)', color: 'var(--text)', marginTop: 2, overflowWrap: 'anywhere' }}>{v}</div></div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span className="sec-title" style={{ fontSize: 12 }}>Casal</span>
+              <button className="linkbtn" onClick={() => goStep(2)}>Editar</button>
+            </div>
+            {participantes.map((p, i) => (
+              <div key={i}>{linha(`Participante ${i + 1}`, `${(p.nome || '').trim() || '—'} · ${p.cpf || '—'}`, i === 1)}</div>
+            ))}
+          </div>
+
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span className="sec-title" style={{ fontSize: 12 }}>Valor e pagamento</span>
+              <button className="linkbtn" onClick={() => goStep(3)}>Editar</button>
+            </div>
+            {linha('Valor do contrato', <span data-valor-resumo>{fmt(casValor)}</span>)}
+            {linha('Tabela', casTabela === 'elite'
+              ? (casPf ? 'Elite Empresarial (marcado pelo consultor)' : 'Elite Empresarial (conferido no Conecta)')
+              : (casPf || casConferencia.estado === 'inativo' ? 'Preço cheio' : 'Preço cheio (sem conferência do Conecta)'))}
+            {linha('Forma', `${forma ? forma.label : '—'}${casParcelas > 1 ? ` · ${casParcelas}× de ${fmt(casValorParcela)}` : ' · à vista'}`)}
+            {linha(casParcelas > 1 ? 'Vencimento da 1ª parcela' : 'Vencimento', dmy(s.casData), true)}
+          </div>
+
+          {/* Envio bloqueado: a URL do webhook do Casais ainda não foi definida. */}
+          {!casaisEnvioConfigurado && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.35)' }} role="alert">
+              <span className="ms-icon" style={{ fontSize: 20, color: 'var(--warning)' }}>warning</span>
+              <div style={{ font: '400 13px/1.5 var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text)', display: 'block' }}>Envio do Casais de Alta Performance ainda não configurado.</strong>
+                O webhook deste fluxo não foi definido nesta versão. Avise a equipe técnica — a venda não pode ser enviada até lá.
+              </div>
+            </div>
+          )}
+
+          {s.sendState === 'error' && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: 'rgba(220,53,69,.1)', border: '1px solid rgba(220,53,69,.35)' }} role="alert">
+              <span className="ms-icon" style={{ fontSize: 20, color: 'var(--danger)' }}>error</span>
+              <div style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text)', display: 'block' }}>{s.sendErrHandled ? 'Não foi possível enviar.' : 'Não conseguimos enviar.'}</strong>
+                {s.sendErrHandled ? s.sendErr : `${s.sendErr} Verifique a conexão e tente novamente.`}
+              </div>
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+
   const renderResumo = () => {
     const parcelasLabel = s.parcelas.length === 0 ? 'Sem parcelas (à vista)' : s.parcelas.length + (parcelasUniformes ? ('× de ' + fmt(s.parcelas[0] ? s.parcelas[0].valor : 0)) : ' parcelas personalizadas');
     return (
@@ -5077,6 +5858,23 @@ function App({ motivoAoAbrir }) {
                 <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', flexShrink: 0 }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>
               ))}
             </>
+          ) : (isCasais && product) ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: colors.iconBg, color: colors.iconFg }}><span className="ms-icon" style={{ fontSize: 22 }}>{product.icon}</span></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ font: '600 14.5px var(--font-primary)', color: 'var(--text)', lineHeight: 1.3 }}>{product.name}</div>
+                  <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{casNomeContratante || 'Contratante a definir'}</div>
+                </div>
+              </div>
+              {[
+                ['Participantes', (s.casParticipantes || []).map((x) => (x.nome || '').trim().split(/\s+/)[0]).filter(Boolean).join(' e ') || '—'],
+                ['Valor', `${fmt(casValor)}${casTabela === 'elite' ? ' (Elite)' : ''}`],
+                ['Pagamento', `${(formaAvaliacao(s.casForma) || {}).label || '—'}${casParcelas > 1 ? ` · ${casParcelas}×` : ''}`],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--border-light)' }}><span style={{ font: '400 13px var(--font-secondary)', color: 'var(--text-secondary)', flexShrink: 0 }}>{k}</span><span style={{ font: "600 13.5px 'Roboto'", color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>
+              ))}
+            </>
           ) : (isDh && product) ? (
             <>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
@@ -5156,6 +5954,20 @@ function App({ motivoAoAbrir }) {
       primaryAction = finalizeDhAvaliacao;
       enabled = avalContratanteValid && avalItensValid && avalPagamentoValid && dhAvaliacaoEnvioConfigurado && !sending;
     }
+  } else if (isCasais) {
+    // Casais: Produto → Contratante → Casal → Pagamento → Resumo. Sem Pix in-app,
+    // sem cronograma e sem autorização: o valor é um de dois fixos. O
+    // "Continuar" com algo faltando não avança e diz o que falta.
+    if (s.step === 0) enabled = !!product;
+    else if (s.step === 1) primaryAction = avancaCasais(casFaltasContratante);
+    else if (s.step === 2) primaryAction = avancaCasais(casFaltasCasal);
+    else if (s.step === 3) primaryAction = avancaCasais(casFaltasPagamento);
+    else {
+      primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro';
+      primaryIcon = 'check';
+      primaryAction = finalizeCasais;
+      enabled = casContratanteValid && casCasalValid && casPagamentoValid && casaisEnvioConfigurado && !sending;
+    }
   } else if (s.step === etapaEmpresa) enabled = empresaValid && departamentoOk;
   else if (s.step === etapaProduto) enabled = !!product;
   else if (s.step === 2) { primaryLabel = 'Revisar pedido'; enabled = pagamentoValid; primaryAction = () => { if (exceeded) patch({ showDivergencia: true }); else next(); }; }
@@ -5173,7 +5985,7 @@ function App({ motivoAoAbrir }) {
       primaryLabel = sending ? 'Enviando…' : 'Finalizar cadastro'; primaryIcon = 'check'; primaryAction = finalize; enabled = pagamentoValid && departamentoOk && !sending;
     }
   }
-  const primaryBusy = (isApn || isDh || isDhAval)
+  const primaryBusy = (isApn || isDh || isDhAval || isCasais)
     ? (s.step === ultimoStep && sending)
     : (s.step === 3 && (sending || s.pixState === 'generating' || s.pixState === 'awaiting'));
 
@@ -5221,6 +6033,14 @@ function App({ motivoAoAbrir }) {
                   {s.step === 3 && renderDhAvalPagamento()}
                   {s.step === 4 && renderDhAvalResumo()}
                 </>
+              ) : isCasais ? (
+                <>
+                  {s.step === 0 && renderProduto()}
+                  {s.step === 1 && renderCasaisContratante()}
+                  {s.step === 2 && renderCasaisCasal()}
+                  {s.step === 3 && renderCasaisPagamento()}
+                  {s.step === 4 && renderCasaisResumo()}
+                </>
               ) : (
                 <>
                   {s.step === etapaEmpresa && renderEmpresa()}
@@ -5263,6 +6083,14 @@ function App({ motivoAoAbrir }) {
                     {s.avalEnviado.itens.map((i) => `${i.quantidade} ${i.quantidade === 1 ? i.nome.toLowerCase() : i.plural.toLowerCase()}`).join(' e ')} · total de {fmt(s.avalEnviado.total)} em {s.avalEnviado.forma.toLowerCase()}{s.avalEnviado.parcelas > 1 ? ` em ${s.avalEnviado.parcelas}×` : ''}.
                   </>
                 )
+              ) : isCasais ? (
+                // O que foi ENVIADO, e não o estado atual da tela.
+                s.casEnviado && (
+                  <>
+                    {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{s.casEnviado.nome}</strong>.<br />
+                    Participantes: {s.casEnviado.participantes.join(' e ')} · {fmt(s.casEnviado.valor)} ({s.casEnviado.tabela === 'elite' ? 'valor do Elite Empresarial' : 'preço cheio'}) em {s.casEnviado.forma.toLowerCase()}{s.casEnviado.parcelas > 1 ? ` em ${s.casEnviado.parcelas}×` : ''}.
+                  </>
+                )
               ) : isDh ? (
                 <>
                   {product ? product.name : ''} contratado por <strong style={{ color: 'var(--text)' }}>{s.razaoSocial}</strong>.<br />
@@ -5276,8 +6104,9 @@ function App({ motivoAoAbrir }) {
               )}
             </p>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '12px 20px', borderRadius: 12, background: 'var(--surface-elevated)', border: '1px solid var(--border-light)', marginBottom: 32 }}>
-              <span style={{ font: '400 12px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Protocolo</span>
-              <span style={{ font: "700 15px 'Roboto'", color: 'var(--primary)', letterSpacing: '.04em' }}>{s.protocol}</span>
+              {/* No Casais o protocolo é o número do contrato (o mesmo do Resumo). */}
+              <span style={{ font: '400 12px var(--font-primary)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>{isCasais ? 'Número do contrato' : 'Protocolo'}</span>
+              <span data-protocolo style={{ font: "700 15px 'Roboto'", color: 'var(--primary)', letterSpacing: '.04em' }}>{s.protocol}</span>
             </div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
               <button className="btn-prim" onClick={restart}>{isDh ? 'Novo formulário' : 'Novo cadastro'}<span className="ms-icon" style={{ fontSize: 18 }}>add</span></button>

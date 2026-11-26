@@ -172,3 +172,14 @@ jobs:
         # na volta à aba; nada sem login; o erro engolido (o 401 não derruba a
         # sessão); e a última interação de verdade.
         run: node --test tests/front/presenca.test.mjs
+
+      - name: Casais de Alta Performance (valor, o que falta, payload do n8n)
+        # TSK-1622: roda o trecho de JS puro do index.html. O valor é um de dois
+        # fixos — na PJ só o Conecta dizendo "ativo" para o CNPJ dá o do Elite,
+        # na PF é o consultor —; cada etapa diz o que falta (e-mail, telefone,
+        # os dois participantes, o mesmo CPF nos dois); o payload do n8n sai
+        # chave a chave como o README documenta; o número do contrato é o
+        # protocolo CAP-AAMMDDPRRRRR. Dois fusos, porque o protocolo sai do Date.
+        run: |
+          TZ=America/Sao_Paulo node --test tests/front/casais.test.mjs
+          TZ=UTC node --test tests/front/casais.test.mjs

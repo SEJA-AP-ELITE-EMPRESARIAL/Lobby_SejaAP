@@ -142,10 +142,16 @@ class FluxoProduto(models.TextChoices):
     `dh_avaliacao` (14/10/2026, TSK-1056) é o DH - Avaliação: contratante PJ ou
     PF, itens por modalidade (Relatório e Devolutiva) e pagamento. Os valores
     unitários são do consultor, salvo os que a diretoria fixar (`apps.dh_avaliacao`).
+
+    `casais` (25/11/2026, TSK-1622) é o Casais de Alta Performance: contratante
+    PJ ou PF, os dois participantes e pagamento. O valor é um de dois fixos, o
+    cheio ou o do Elite Empresarial; na PJ quem decide é o Conecta, na PF o
+    consultor (`apps.casais`).
     """
 
     DH = "dh", "Formulário DH (Recrutamento e Seleção)"
     DH_AVALIACAO = "dh_avaliacao", "Formulário DH - Avaliação (PROFILER)"
+    CASAIS = "casais", "Formulário Casais de Alta Performance"
 
 
 class Categoria(models.Model):
