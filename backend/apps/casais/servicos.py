@@ -13,10 +13,19 @@ números moram aqui e no `index.html` (`CASAIS_VALOR_*`). O comprovante
 QUEM ESCOLHE ENTRE OS DOIS
 
 - PJ: o Conecta, pelo CNPJ (`conecta.cliente_ativo`). Ativo → Elite; não ativo
-  → cheio. SEM RESPOSTA (fora do ar, lento, 429, 503, manutenção) → cheio: o
-  valor do Elite numa PJ nunca sai sem a conferência. É o que o dono decidiu, e
-  ele pode mudar no aceite.
+  → cheio. Respondeu, o valor fica no que ele disse.
+- PJ SEM RESPOSTA (fora do ar, lento, 429, 503, falha de rede): o consultor,
+  marcando à mão a mesma caixa da PF (TSK-1640, decisão do dono de 26/11/2026,
+  que substituiu o "sem resposta = cheio" da TSK-1622). O servidor não acredita
+  no navegador dizendo que o Conecta estava fora: o comprovante pergunta de novo
+  e só aceita a caixa se ele também ficar sem resposta, e a validação do n8n
+  pergunta outra vez (`apps.vendas.servicos`). A exceção é o teto da própria
+  pessoa (`Conferencia.consultor_decide`).
 - PF: o consultor, marcando "paga o valor do Elite Empresarial".
+
+`elite_decidido_por` diz qual dos três foi: "conecta", "consultor" (PF) ou
+"consultor_sem_conecta" (PJ sem a resposta). Sai do tipo de pessoa e da
+conferência, que já são assinados; não entra no hash.
 
 O BALDE DO CONECTA
 
@@ -146,7 +155,31 @@ class Conferencia:
 
     @property
     def tabela(self):
+        """A tabela que o Conecta deu; sem resposta, o cheio até o consultor marcar."""
         return "elite" if self.cliente_ativo else "cheio"
+
+    @property
+    def consultor_decide(self):
+        """Sem a resposta do Conecta, o consultor marca à mão se a PJ paga o Elite.
+
+        Menos quando quem barrou a pergunta foi o teto da própria pessoa
+        (`limite_da_pessoa`): o Conecta nem foi perguntado, e esgotar o próprio
+        teto não pode virar o jeito de abrir a caixa. Aí fica o cheio, como antes
+        da TSK-1640, até a hora virar.
+        """
+        return self.cliente_ativo is None and self.motivo != "limite_da_pessoa"
+
+
+def elite_decidido_por(tipo_pessoa, conferido_no_conecta):
+    """Quem decidiu entre o cheio e o Elite: "conecta", "consultor" ou "consultor_sem_conecta".
+
+    Sai do que já é assinado (o tipo de pessoa e se o Conecta respondeu), e por
+    isso não entra no hash: um comprovante emitido antes da TSK-1640 continua
+    valendo depois dela.
+    """
+    if tipo_pessoa == "PF":
+        return "consultor"
+    return "conecta" if conferido_no_conecta else "consultor_sem_conecta"
 
 
 def _chave_da_resposta(cnpj):
@@ -278,8 +311,8 @@ def conferir_cnpj(cnpj, *, pessoa=None):
         except conecta.SemResposta as falta:
             return Conferencia(None, falta.motivo, _pausa(falta))
         except Exception:
-            # Defeito daqui, e não do Conecta: a venda segue no preço cheio, e o
-            # log (e o GlitchTip) diz onde. Pausa como numa falha do Conecta: um
+            # Defeito daqui, e não do Conecta: a venda segue sem a conferência
+            # (o consultor decide), e o log (e o GlitchTip) diz onde. Pausa como numa falha do Conecta: um
             # defeito que se repete depois do POST faria cada pergunta ir até lá.
             logger.exception("casais: falha inesperada ao perguntar ao Conecta")
             return Conferencia(None, "indisponivel", _pausa(conecta.SemResposta("indisponivel")))
@@ -309,6 +342,12 @@ def mensagem(conferencia):
         motivo = "O Conecta está em manutenção"
     else:
         motivo = "Não foi possível conferir o CNPJ no Conecta agora"
+    if conferencia.consultor_decide:
+        return (
+            f"{motivo}, e ele não pôde conferir se a empresa é cliente do Elite "
+            "Empresarial. Quem decide é você: marque se ela paga o valor do Elite, "
+            f"{reais(VALOR_ELITE)}; desmarcado, vale o preço cheio, {reais(VALOR_CHEIO)}."
+        )
     return (
         f"{motivo}. Sem a conferência, a venda fica no preço cheio, {reais(VALOR_CHEIO)}."
     )

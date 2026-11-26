@@ -15,6 +15,7 @@ from django.utils import timezone
 from apps.casais.servicos import (
     VALOR_DA_TABELA as VALOR_DO_CASAIS,
     conferir_cnpj,
+    elite_decidido_por,
     normaliza_cnpj,
     reais,
 )
@@ -350,9 +351,17 @@ def _confere_casais(valores: dict, vendedor=None):
     A tela mostra o que o Conecta disse (`/api/casais/elite`), mas aquilo é só o
     que ela MOSTRA: o booleano vem do navegador. Aqui o servidor pergunta de novo
     — a resposta guardada há pouco, ou o próprio Conecta — e só assina se a tela
-    disser o mesmo que ele: Elite com o CNPJ ativo; cheio com o CNPJ não ativo;
-    cheio, sem conferência, quando o Conecta não responde. O valor do Elite numa
-    PJ nunca é assinado sem a resposta do Conecta (decisão do dono, 25/11/2026).
+    disser o mesmo que ele:
+
+    - o Conecta respondeu: Elite com o CNPJ ativo, cheio com o não ativo, os dois
+      conferidos. A caixa marcada à mão não vale aqui: na PJ, quem decide é ele;
+    - o Conecta não respondeu, nem para a tela nem agora para o servidor: o que o
+      consultor marcou (TSK-1640, decisão do dono de 26/11/2026), sem
+      conferência. O navegador dizer que o Conecta estava fora não basta: é a
+      pergunta DAQUI que tem de ficar sem resposta. E a validação do n8n
+      pergunta outra vez (`validar`);
+    - a pergunta não saiu pelo teto da própria pessoa: o cheio, sem conferência
+      (`Conferencia.consultor_decide`).
 
     Na PF não há o que perguntar: "paga o valor do Elite Empresarial" é do
     consultor, e os dois valores passam.
@@ -372,9 +381,15 @@ def _confere_casais(valores: dict, vendedor=None):
     if casais["tipo_pessoa"] != "PJ":
         return
     conferencia = conferir_cnpj(casais["documento"], pessoa=vendedor)
-    if (casais["tabela"], casais["elite_conferido_no_conecta"]) == (
-        conferencia.tabela, conferencia.conferido
-    ):
+    tela = (casais["tabela"], casais["elite_conferido_no_conecta"])
+    if conferencia.conferido:
+        if tela == (conferencia.tabela, True):
+            return
+    elif conferencia.consultor_decide:
+        # As duas tabelas passam: quem marcou foi o consultor.
+        if not casais["elite_conferido_no_conecta"]:
+            return
+    elif tela == ("cheio", False):
         return
     if conferencia.cliente_ativo is True:
         raise VendaRecusada(
@@ -388,9 +403,15 @@ def _confere_casais(valores: dict, vendedor=None):
             f"valor desta venda é {reais(VALOR_DO_CASAIS['cheio'])}. Confira o valor e "
             "finalize de novo."
         )
+    if conferencia.consultor_decide:
+        raise VendaRecusada(
+            "Não foi possível conferir o CNPJ no Conecta agora: o valor desta venda é "
+            "o que você marcar em \"paga o valor do Elite Empresarial\". Confira o valor "
+            "e finalize de novo."
+        )
     raise VendaRecusada(
-        "Não foi possível conferir o CNPJ no Conecta agora, e o valor do Elite "
-        "Empresarial só sai com a conferência. A venda fica no preço cheio, "
+        "Você fez muitas consultas ao Conecta nesta hora, e sem a conferência o valor "
+        "do Elite Empresarial não sai numa empresa. A venda fica no preço cheio, "
         f"{reais(VALOR_DO_CASAIS['cheio'])}: confira o valor e finalize de novo."
     )
 
@@ -518,12 +539,14 @@ def validar(token: str, dados: dict) -> dict:
     casais = valores.get("casais") if valores else None
     if (casais and casais["tipo_pessoa"] == "PJ" and casais["tabela"] == "elite"
             and _comprovante_que_passaria(token, valores)):
-        # O valor do Elite numa PJ: o servidor confere de novo. O comprovante já
-        # prova que o Conecta disse "ativo" na emissão (o servidor não o assina
-        # sem isso); aqui vale a resposta de agora — a guardada, quase sempre, já
-        # que a validação chega segundos depois. Se o Conecta disser que o CNPJ
-        # não é ativo, recusa. Sem resposta dele agora, vale a da emissão: o n8n
-        # não bloqueia uma venda conferida porque o Conecta piscou.
+        # O valor do Elite numa PJ: o servidor confere de novo. Na emissão, ou o
+        # Conecta disse "ativo", ou ficou sem resposta para o servidor e o
+        # consultor marcou à mão (TSK-1640); aqui vale a resposta de agora — a
+        # guardada, quase sempre, já que a validação chega segundos depois, e sem
+        # o teto de uma pessoa. Se o Conecta disser que o CNPJ não é ativo,
+        # recusa, inclusive o marcado à mão. Sem resposta dele agora, vale a
+        # emissão: o n8n não bloqueia uma venda porque o Conecta piscou (ou
+        # segue fora, no caso da caixa marcada à mão).
         ativo_agora = conferir_cnpj(casais["documento"]).cliente_ativo
     return _validar_na_transacao(token, valores, invalidos, ativo_agora)
 
@@ -599,11 +622,18 @@ def _validar_na_transacao(token, valores, invalidos, ativo_agora) -> dict:
     # o topo do payload é montado no navegador, e é contra ESTE bloco que o
     # fluxo confere o contratante antes de faturar (deploy/N8N-VALIDACAO.md). Um
     # comprovante legítimo da PF a R$ 35.000 não pode virar a venda de uma PJ.
+    # O `elite_decidido_por` (TSK-1640) não é guardado: sai do que foi assinado.
     casais = {}
     if comprovante.fluxo == ComprovanteVenda.Fluxo.CASAIS:
+        assinado = comprovante.valores["casais"]
         casais = {
             "valor_total": comprovante.valores["valor_total"],
-            "casais": comprovante.valores["casais"],
+            "casais": {
+                **assinado,
+                "elite_decidido_por": elite_decidido_por(
+                    assinado["tipo_pessoa"], assinado["elite_conferido_no_conecta"]
+                ),
+            },
         }
 
     return {

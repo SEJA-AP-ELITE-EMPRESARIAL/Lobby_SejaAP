@@ -2,8 +2,9 @@
 `POST /api/casais/elite` e a conferência por trás dela (TSK-1622).
 
 - a resposta do Conecta vira o valor que a tela mostra: ativo → Elite
-  (R$ 35.000,00); não ativo → cheio (R$ 39.997,00); sem resposta → cheio, com o
-  motivo — nunca o Elite sem a conferência;
+  (R$ 35.000,00); não ativo → cheio (R$ 39.997,00), os dois travados; sem
+  resposta → o cheio até o consultor marcar a caixa (`consultor_decide`, desde a
+  TSK-1640), com o motivo — menos no teto da própria pessoa, que fica no cheio;
 - o balde do Conecta é um só para o Lobby inteiro: a resposta fica guardada por
   CNPJ, uma falha pausa as perguntas de todos, e cada pessoa tem um teto das
   que vão de fato até lá;
@@ -67,6 +68,7 @@ class RespostaTest(Base):
             "conferido": True,
             "tabela": "elite",
             "valor": 35000,
+            "consultor_decide": False,
             "motivo": None,
             "tentar_em": None,
             "mensagem": "Cliente ativo do Elite Empresarial no Conecta: vale o valor do "
@@ -83,23 +85,32 @@ class RespostaTest(Base):
             (False, True, "cheio", 39997),
         )
         self.assertIn("R$ 39.997,00", corpo["mensagem"])
+        # O Conecta respondeu: o valor é o dele, sem caixa para o consultor.
+        self.assertIs(corpo["consultor_decide"], False)
 
-    def test_conecta_sem_resposta_fica_no_cheio_e_diz_por_que(self):
+    def test_conecta_sem_resposta_o_consultor_decide(self):
+        """TSK-1640: fora do ar, lento, 429, 503 ou falha de rede, a tela mostra a caixa."""
         for motivo, trecho in (
             ("indisponivel", "Não foi possível conferir"),
             ("manutencao", "em manutenção"),
             ("limite", "consultas demais"),
+            ("nao_autorizado", "Não foi possível conferir"),
+            ("resposta_inesperada", "Não foi possível conferir"),
         ):
             with self.subTest(motivo=motivo):
                 cache.clear()
                 self.conecta.side_effect = SemResposta(motivo)
                 corpo = self.pergunta(OUTRO).json()
+                # O valor de partida é o cheio: o Elite só com a caixa marcada.
                 self.assertEqual(
                     (corpo["cliente_ativo"], corpo["conferido"], corpo["tabela"], corpo["valor"]),
                     (None, False, "cheio", 39997),
                 )
+                self.assertIs(corpo["consultor_decide"], True)
                 self.assertEqual(corpo["motivo"], motivo)
                 self.assertIn(trecho, corpo["mensagem"])
+                self.assertIn("Quem decide é você", corpo["mensagem"])
+                self.assertIn("R$ 35.000,00", corpo["mensagem"])
                 self.assertIn("preço cheio, R$ 39.997,00", corpo["mensagem"])
 
     def test_defeito_inesperado_tambem_fica_no_cheio_e_pausa(self):
@@ -108,9 +119,19 @@ class RespostaTest(Base):
         with self.assertLogs("apps.casais.servicos", "ERROR"):
             corpo = self.pergunta(OUTRO).json()
         self.assertEqual((corpo["cliente_ativo"], corpo["tabela"]), (None, "cheio"))
+        self.assertIs(corpo["consultor_decide"], True)
         self.assertEqual(corpo["tentar_em"], servicos.PAUSA_DEPOIS_DE_FALHA)
         self.pergunta(ATIVO)
         self.conecta.assert_called_once()
+
+
+class EliteDecididoPorTest(Base):
+    """O campo do payload que diz quem decidiu entre o cheio e o Elite (TSK-1640)."""
+
+    def test_os_tres(self):
+        self.assertEqual(servicos.elite_decidido_por("PJ", True), "conecta")
+        self.assertEqual(servicos.elite_decidido_por("PJ", False), "consultor_sem_conecta")
+        self.assertEqual(servicos.elite_decidido_por("PF", False), "consultor")
 
 
 class CnpjTest(Base):
@@ -180,6 +201,7 @@ class BaldeDoConectaTest(Base):
         gerente = cliente_com_sessao(cria_pessoa("gerente@sejaap.com.br", Papel.GERENTE))
         segunda = self.pergunta(ATIVO, cliente=gerente).json()
         self.assertEqual((segunda["cliente_ativo"], segunda["motivo"]), (None, "indisponivel"))
+        self.assertIs(segunda["consultor_decide"], True)
         self.assertLessEqual(segunda["tentar_em"], servicos.PAUSA_DEPOIS_DE_FALHA)
         self.assertEqual(self.conecta.call_count, 1)
 
@@ -215,6 +237,9 @@ class BaldeDoConectaTest(Base):
         corpo = self.pergunta(OUTRO).json()
         self.assertEqual((corpo["cliente_ativo"], corpo["motivo"]), (None, "limite_da_pessoa"))
         self.assertIn("muitas consultas", corpo["mensagem"])
+        # O teto da própria pessoa não abre a caixa: o Conecta nem foi perguntado.
+        self.assertIs(corpo["consultor_decide"], False)
+        self.assertIn("fica no preço cheio, R$ 39.997,00", corpo["mensagem"])
         self.assertGreater(corpo["tentar_em"], 0)
         self.assertLessEqual(corpo["tentar_em"], 3601)
         self.assertEqual(self.conecta.call_count, 2)

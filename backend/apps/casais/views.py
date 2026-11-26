@@ -13,8 +13,11 @@ Resposta 200, sempre que o CNPJ vale — com o Conecta respondendo ou não:
 
     { "cliente_ativo": true | false | null,   null = o Conecta não respondeu
       "conferido": bool,                      a resposta veio do Conecta
-      "tabela": "elite" | "cheio",            o valor que vale
+      "tabela": "elite" | "cheio",            o valor que vale (sem resposta: o cheio,
+                                              até o consultor marcar a caixa)
       "valor": 35000 | 39997,
+      "consultor_decide": bool,               sem resposta, a tela mostra a caixa
+                                              "paga o valor do Elite Empresarial" (TSK-1640)
       "motivo": null | "indisponivel" | "limite" | "manutencao" | "limite_da_pessoa" | ...,
       "tentar_em": null | segundos,
       "mensagem": "a frase da tela" }
@@ -24,7 +27,8 @@ balde de lá); 401 sem a sessão; 429 do teto da rota, por pessoa.
 
 Esta resposta é só o que a tela MOSTRA. A conferência que vale é a do comprovante
 (`apps.vendas.servicos`), que pergunta de novo — pela resposta guardada aqui ou
-ao Conecta — e só assina o valor do Elite numa PJ que o Conecta disse ser ativa.
+ao Conecta — e só assina o valor do Elite numa PJ que o Conecta disse ser ativa
+ou, marcado à mão, se ele também ficar sem resposta para o servidor.
 """
 from rest_framework import status
 from rest_framework.decorators import (
@@ -61,6 +65,7 @@ def elite(request):
         "conferido": conferencia.conferido,
         "tabela": conferencia.tabela,
         "valor": numero(VALOR_DA_TABELA[conferencia.tabela]),
+        "consultor_decide": conferencia.consultor_decide,
         "motivo": conferencia.motivo or None,
         "tentar_em": conferencia.tentar_em,
         "mensagem": mensagem(conferencia),

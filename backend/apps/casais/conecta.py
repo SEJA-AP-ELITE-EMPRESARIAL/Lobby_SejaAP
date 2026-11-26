@@ -28,7 +28,7 @@ O QUE SAI DAQUI
 `cliente_ativo(cnpj)` devolve `True` ou `False` — só com o 200 do contrato — e
 levanta `SemResposta` em todo o resto, com um `motivo` curto. Nem o 429 nem o
 503 querem dizer `False`: o que fazer sem a resposta é decisão de quem chama
-(`apps.casais.servicos`: a venda fica no preço cheio). Nada é guardado aqui; a
+(`apps.casais.servicos`: desde a TSK-1640, o consultor marca à mão). Nada é guardado aqui; a
 resposta guardada, a pausa depois de uma falha e o teto por pessoa são do
 `servicos`.
 """
