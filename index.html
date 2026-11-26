@@ -1560,6 +1560,23 @@ const FORMAS_AVALIACAO = [
 ];
 const formaAvaliacao = (id) => FORMAS_AVALIACAO.find((f) => f.id === id) || null;
 
+// O símbolo do Pix (o losango do Banco Central), em SVG. O `pix` da Material
+// Symbols não sai como o símbolo oficial; cartão e boleto seguem na fonte.
+// Traço do simple-icons (icons/pix.svg); a cor vem do `color` de quem usa.
+const PIX_PATH = 'M5.283 18.36a3.505 3.505 0 0 0 2.493-1.032l3.6-3.6a.684.684 0 0 1 .946 0l3.613 3.613a3.504 3.504 0 0 0 2.493 1.032h.71l-4.56 4.56a3.647 3.647 0 0 1-5.156 0L4.85 18.36ZM18.428 5.627a3.505 3.505 0 0 0-2.493 1.032l-3.613 3.614a.67.67 0 0 1-.946 0l-3.6-3.6A3.505 3.505 0 0 0 5.283 5.64h-.434l4.573-4.572a3.646 3.646 0 0 1 5.156 0l4.559 4.559ZM1.068 9.422 3.79 6.699h1.492a2.483 2.483 0 0 1 1.744.722l3.6 3.6a1.73 1.73 0 0 0 2.443 0l3.614-3.613a2.482 2.482 0 0 1 1.744-.723h1.767l2.737 2.737a3.646 3.646 0 0 1 0 5.156l-2.736 2.736h-1.768a2.482 2.482 0 0 1-1.744-.722l-3.613-3.613a1.77 1.77 0 0 0-2.444 0l-3.6 3.6a2.483 2.483 0 0 1-1.744.722H3.791l-2.723-2.723a3.646 3.646 0 0 1 0-5.156';
+// Sem JSX de propósito: os testes do front carregam este trecho como JS puro.
+function IconePix({ size = 20, color = 'currentColor' }) {
+  return React.createElement('svg', {
+    viewBox: '0 0 24 24', width: size, height: size, fill: color,
+    'aria-hidden': 'true', focusable: 'false', style: { flexShrink: 0, display: 'block' },
+  }, React.createElement('path', { d: PIX_PATH }));
+}
+// Ícone de uma forma de pagamento: o Pix em SVG, o resto pela fonte.
+function IconeForma({ icone, size = 20, color }) {
+  if (icone === 'pix') return React.createElement(IconePix, { size: Math.round(size * 0.85), color });
+  return React.createElement('span', { className: 'ms-icon', style: { fontSize: size, color } }, icone);
+}
+
 // Devolve { versao, valores } ou lança. Modalidade ausente ou sem número cai no
 // padrão LIVRE: nunca se trava um campo num valor que não veio.
 async function buscaValoresAvaliacao() {
@@ -5147,7 +5164,7 @@ function App({ motivoAoAbrir }) {
             return (
               <button key={f.id} type="button" onClick={() => setAvalForma(f.id)} aria-pressed={on}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: 12, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (on ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
-                <span className="ms-icon" style={{ fontSize: 20, color: on ? 'var(--primary)' : 'var(--text-muted)' }}>{f.icone}</span>
+                <IconeForma icone={f.icone} size={20} color={on ? 'var(--primary)' : 'var(--text-muted)'} />
                 <span style={{ font: '600 14px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{f.label}</span>
               </button>
             );
@@ -5533,7 +5550,7 @@ function App({ motivoAoAbrir }) {
             return (
               <button key={f.id} type="button" onClick={() => setCasForma(f.id)} aria-pressed={on}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: 12, cursor: 'pointer', background: on ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (on ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
-                <span className="ms-icon" style={{ fontSize: 20, color: on ? 'var(--primary)' : 'var(--text-muted)' }}>{f.icone}</span>
+                <IconeForma icone={f.icone} size={20} color={on ? 'var(--primary)' : 'var(--text-muted)'} />
                 <span style={{ font: '600 14px var(--font-primary)', color: on ? 'var(--primary)' : 'var(--text-secondary)' }}>{f.label}</span>
               </button>
             );
@@ -5727,7 +5744,7 @@ function App({ motivoAoAbrir }) {
             <div className="card" style={{ padding: 22 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span className="ms-icon" style={{ fontSize: 20, color: 'var(--primary)' }}>pix</span>
+                  <IconePix size={18} color="var(--primary)" />
                   <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Pagamento da entrada · Pix</span>
                 </div>
                 <span style={{ font: "700 15px 'Roboto'", color: 'var(--text)' }}>{fmt(s.entradaValor)}</span>
