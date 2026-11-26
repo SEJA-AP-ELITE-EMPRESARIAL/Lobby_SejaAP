@@ -344,9 +344,9 @@ def mensagem(conferencia):
         motivo = "Não foi possível conferir o CNPJ no Conecta agora"
     if conferencia.consultor_decide:
         return (
-            f"{motivo}, e ele não pôde conferir se a empresa é cliente do Elite "
-            "Empresarial. Quem decide é você: marque se ela paga o valor do Elite, "
-            f"{reais(VALOR_ELITE)}; desmarcado, vale o preço cheio, {reais(VALOR_CHEIO)}."
+            f"{motivo}. Sem a conferência, quem decide é você: marque abaixo se a "
+            f"empresa paga o valor do Elite Empresarial ({reais(VALOR_ELITE)}); "
+            f"desmarcado, vale o preço cheio, {reais(VALOR_CHEIO)}."
         )
     return (
         f"{motivo}. Sem a conferência, a venda fica no preço cheio, {reais(VALOR_CHEIO)}."

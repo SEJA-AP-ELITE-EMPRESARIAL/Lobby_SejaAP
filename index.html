@@ -1624,14 +1624,18 @@ const avisoDosValores = (mudaram, valores) => mudaram
  *
  * - PJ: o Conecta, pelo CNPJ. A tela pergunta ao backend do Lobby
  *   (`POST /api/casais/elite`; o navegador nunca fala com o Conecta) uma vez por
- *   CNPJ por venda, e mostra o valor que vale, travado. Sem resposta (Conecta
- *   fora, lento, 429, 503), fica no cheio, com o aviso: o valor do Elite numa PJ
- *   nunca sai sem a conferência.
+ *   CNPJ por venda, e mostra o valor que vale, travado.
+ * - PJ com o Conecta sem resposta (fora, lento, 429, 503, falha de rede; o
+ *   backend diz `consultor_decide`): o consultor, na mesma caixa da PF, com o
+ *   aviso de que o Conecta não pôde conferir (TSK-1640, decisão do dono de
+ *   26/11/2026). A marca é do CNPJ (`casEliteAMao`): trocar o CNPJ, ou o Conecta
+ *   responder, a desfaz.
  * - PF: o consultor, marcando "paga o valor do Elite Empresarial".
  *
  * O que a tela mostra é só o que ela mostra: quem segura é o comprovante, que
  * pergunta de novo no servidor e só assina o Elite numa PJ que o Conecta disse
- * ser ativa. O pagamento é o do DH - Avaliação (`FORMAS_AVALIACAO`).
+ * ser ativa — ou o marcado à mão, se ele também ficar sem resposta lá. O
+ * pagamento é o do DH - Avaliação (`FORMAS_AVALIACAO`).
  *
  * O NÚMERO DO CONTRATO é o protocolo da venda (`buildProtocol`, CAP-AAMMDDPRRRRR).
  * Ele nasce ao chegar ao Resumo, para aparecer lá, e é o mesmo que vai ao n8n e
@@ -1650,18 +1654,32 @@ const msgCasaisSemConferencia = (motivo = 'Não foi possível conferir o CNPJ no
 const novoParticipanteCasais = () => ({ nome: '', cpf: '' });
 // A conferência de um CNPJ no Conecta: `cnpj` (só dígitos) e `estado` —
 // 'idle' (nada perguntado), 'conferindo', 'ativo', 'inativo' ou 'sem_resposta'.
-const conferenciaVaziaCasais = () => ({ cnpj: '', estado: 'idle', mensagem: '', tentarEm: null });
+// `consultorDecide`: sem resposta, o backend disse que a caixa aparece (o
+// Conecta não respondeu; não o teto do consultor nem o Lobby fora do ar).
+const conferenciaVaziaCasais = () => ({ cnpj: '', estado: 'idle', mensagem: '', tentarEm: null, consultorDecide: false });
 // A conferência que vale para o CNPJ de agora: a de outro CNPJ não vale nada.
 const conferenciaDoCnpj = (conferencia, cnpj) => (
   conferencia && conferencia.cnpj && conferencia.cnpj === onlyDigits(cnpj) ? conferencia : conferenciaVaziaCasais()
 );
 
-// 'elite' ou 'cheio'. Na PF, a escolha do consultor; na PJ, só o Conecta dizendo
-// "ativo" para ESTE CNPJ dá o Elite — conferindo, sem resposta ou outro CNPJ é
-// cheio.
+// PJ sem resposta do Conecta para ESTE CNPJ, e o backend deixou o consultor
+// decidir: a caixa "paga o valor do Elite Empresarial" aparece (TSK-1640).
+function consultorDecideNaPj(d) {
+  if (d.casTipoPessoa === 'PF') return false;
+  const c = conferenciaDoCnpj(d.casElite, d.cnpj);
+  return c.estado === 'sem_resposta' && c.consultorDecide === true;
+}
+// A caixa da PJ marcada para ESTE CNPJ (`casEliteAMao` guarda os dígitos dele).
+const eliteMarcadoNaPj = (d) => !!d.casEliteAMao && d.casEliteAMao === onlyDigits(d.cnpj);
+
+// 'elite' ou 'cheio'. Na PF, a escolha do consultor; na PJ, o Conecta dizendo
+// "ativo" para ESTE CNPJ, ou, sem resposta dele, a caixa marcada à mão para este
+// CNPJ. Conferindo, não ativo, outro CNPJ ou a caixa desmarcada é cheio — e a
+// caixa não conta com o Conecta respondendo.
 function tabelaDoCasais(d) {
   if (d.casTipoPessoa === 'PF') return d.casEliteMarcado ? 'elite' : 'cheio';
-  return conferenciaDoCnpj(d.casElite, d.cnpj).estado === 'ativo' ? 'elite' : 'cheio';
+  if (conferenciaDoCnpj(d.casElite, d.cnpj).estado === 'ativo') return 'elite';
+  return consultorDecideNaPj(d) && eliteMarcadoNaPj(d) ? 'elite' : 'cheio';
 }
 const valorDoCasais = (tabela) => (tabela === 'elite' ? CASAIS_VALOR_ELITE : CASAIS_VALOR_CHEIO);
 // O Conecta respondeu (sim ou não) para este CNPJ. Na PF, nunca: lá ele não é
@@ -1670,6 +1688,14 @@ function conferidoNoConecta(d) {
   if (d.casTipoPessoa === 'PF') return false;
   const estado = conferenciaDoCnpj(d.casElite, d.cnpj).estado;
   return estado === 'ativo' || estado === 'inativo';
+}
+// Quem decidiu entre o cheio e o Elite: 'conecta' (PJ, ele respondeu),
+// 'consultor' (PF) ou 'consultor_sem_conecta' (PJ sem a resposta). É o
+// `elite_decidido_por` do payload (TSK-1640), e sai do tipo de pessoa e da
+// conferência, como o servidor o devolve no `/api/venda/validar`.
+function eliteDecididoPor(d) {
+  if (d.casTipoPessoa === 'PF') return 'consultor';
+  return conferidoNoConecta(d) ? 'conecta' : 'consultor_sem_conecta';
 }
 const parcelasDoCasais = (d) => (d.casForma === 'cartao'
   ? Math.min(CASAIS_MAX_PARCELAS_CARTAO, Math.max(1, Math.round(Number(d.casParcelas) || 1)))
@@ -1761,6 +1787,7 @@ function payloadDoCasais(d, protocolo) {
     valor: valorDoCasais(tabela),
     tabela,
     elite_conferido_no_conecta: conferidoNoConecta(d),
+    elite_decidido_por: eliteDecididoPor(d),
     pagamento: { forma: d.casForma, parcelas: parcelasDoCasais(d), data: d.casData },
   };
 }
@@ -1768,7 +1795,8 @@ function payloadDoCasais(d, protocolo) {
 // O que o servidor assina: o valor e, com ele, o que decide o valor — quem
 // contrata (na PJ, o CNPJ que o Conecta conferiu; na PF o CPF não vai, porque
 // não decide o valor e o servidor não o guarda), a tabela e a conferência. Mesma
-// forma do DH - Avaliação: o total inteiro na entrada, sem cronograma.
+// forma do DH - Avaliação: o total inteiro na entrada, sem cronograma. O
+// `elite_decidido_por` não vai: sai do que já é assinado.
 function valoresDoCasais(payload, categoriaId, produtoId) {
   return {
     fluxo: 'casais',
@@ -1790,8 +1818,10 @@ function valoresDoCasais(payload, categoriaId, produtoId) {
 }
 
 // Pergunta ao backend se o CNPJ é cliente ativo do Elite. Devolve
-// { estado, mensagem, tentarEm }; só o fim da sessão lança (quem cuida é o
-// login). Qualquer outra falha é 'sem_resposta': o cheio, com o aviso.
+// { estado, mensagem, tentarEm, consultorDecide }; só o fim da sessão lança
+// (quem cuida é o login). Qualquer outra falha é 'sem_resposta': o cheio, com o
+// aviso. A caixa da PJ (`consultorDecide`) só com o backend dizendo que o
+// CONECTA não respondeu: o Lobby fora do ar, ou o teto da rota, não a abrem.
 async function perguntaEliteCasais(cnpj) {
   let r;
   try {
@@ -1801,21 +1831,26 @@ async function perguntaEliteCasais(cnpj) {
     });
   } catch (e) {
     if (fimDeSessao(e)) throw e;
-    return { estado: 'sem_resposta', mensagem: msgCasaisSemConferencia(), tentarEm: null };
+    return { estado: 'sem_resposta', mensagem: msgCasaisSemConferencia(), tentarEm: null, consultorDecide: false };
   }
   if (r.status === 429) {
     return {
       estado: 'sem_resposta',
       mensagem: msgCasaisSemConferencia('Muitas consultas seguidas'),
       tentarEm: Number(r.headers.get('Retry-After')) || null,
+      consultorDecide: false,
     };
   }
   const d = r.ok ? await r.json().catch(() => null) : null;
-  if (!d || typeof d !== 'object') return { estado: 'sem_resposta', mensagem: msgCasaisSemConferencia(), tentarEm: null };
+  if (!d || typeof d !== 'object') {
+    return { estado: 'sem_resposta', mensagem: msgCasaisSemConferencia(), tentarEm: null, consultorDecide: false };
+  }
+  const estado = d.cliente_ativo === true ? 'ativo' : d.cliente_ativo === false ? 'inativo' : 'sem_resposta';
   return {
-    estado: d.cliente_ativo === true ? 'ativo' : d.cliente_ativo === false ? 'inativo' : 'sem_resposta',
+    estado,
     mensagem: String(d.mensagem || msgCasaisSemConferencia()),
     tentarEm: Number.isFinite(d.tentar_em) ? d.tentar_em : null,
+    consultorDecide: estado === 'sem_resposta' && d.consultor_decide === true,
   };
 }
 
@@ -2417,12 +2452,13 @@ function App({ motivoAoAbrir }) {
     // DH, pelo motivo de lá. O que é só daqui: o tipo de pessoa, nome e CPF da
     // PF, e-mail e telefone do contratante, os dois participantes, o "paga o
     // valor do Elite Empresarial" da PF (`casEliteMarcado`), a conferência do
-    // CNPJ no Conecta (`casElite`), o pagamento, o número do contrato
-    // (`casProtocolo`, que nasce no Resumo) e em que etapa o "Continuar" foi
-    // clicado com algo faltando (`casFaltaNa`).
+    // CNPJ no Conecta (`casElite`), a mesma caixa na PJ com o Conecta sem
+    // resposta (`casEliteAMao`: os dígitos do CNPJ marcado, TSK-1640), o
+    // pagamento, o número do contrato (`casProtocolo`, que nasce no Resumo) e em
+    // que etapa o "Continuar" foi clicado com algo faltando (`casFaltaNa`).
     casTipoPessoa: 'PJ', casNome: '', casCpf: '', casEmail: '', casTelefone: '',
     casParticipantes: [novoParticipanteCasais(), novoParticipanteCasais()],
-    casEliteMarcado: false, casElite: conferenciaVaziaCasais(), casAviso: '',
+    casEliteMarcado: false, casElite: conferenciaVaziaCasais(), casEliteAMao: '', casAviso: '',
     casForma: 'pix', casParcelas: 1, casData: '', casProtocolo: '', casFaltaNa: null,
     casEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
@@ -3121,6 +3157,9 @@ function App({ motivoAoAbrir }) {
   const casPf = s.casTipoPessoa === 'PF';
   const casCnpj = onlyDigits(s.cnpj);
   const casConferencia = conferenciaDoCnpj(s.casElite, s.cnpj);
+  // PJ com o Conecta sem resposta: a caixa "paga o valor do Elite Empresarial"
+  // aparece, e quem decide é o consultor (TSK-1640).
+  const casConsultorDecide = consultorDecideNaPj(s);
   const casTabela = tabelaDoCasais(s);
   const casValor = valorDoCasais(casTabela);
   const casParcelas = parcelasDoCasais(s);
@@ -3148,8 +3187,10 @@ function App({ motivoAoAbrir }) {
   // Pergunta ao backend se o CNPJ é cliente ativo do Elite e leva a resposta à
   // tela. A resposta de um CNPJ que já não é o da tela (o consultor trocou no
   // meio), de outra sessão ou de outro atendimento é descartada. Se ela muda o
-  // valor que a tela já mostrava (uma conferência de novo), fica o aviso.
-  // Devolve a conferência nova, ou null.
+  // valor que a tela já mostrava (uma conferência de novo), fica o aviso —
+  // contando a caixa da PJ marcada à mão, que vale só enquanto o Conecta não
+  // responde: com a resposta dele, a marca sai. Devolve a conferência nova, ou
+  // null.
   //
   // Sem resposta por causa da sessão (caiu, ou trocou no meio), a conferência
   // volta ao começo, e não fica presa em "conferindo": quem entrar de novo no
@@ -3157,9 +3198,10 @@ function App({ motivoAoAbrir }) {
   const conferirEliteCasais = async (cnpj) => {
     const marca = marcaDoMomento(atendimento);
     const antes = conferenciaDoCnpj(s.casElite, cnpj);
+    const mostrava = antes.estado === 'idle' || antes.estado === 'conferindo' ? null : tabelaDoCasais(s);
     const solta = () => patch((d) => (d.casElite.cnpj === cnpj && d.casElite.estado === 'conferindo'
       ? { casElite: conferenciaVaziaCasais() } : {}));
-    patch({ casElite: { cnpj, estado: 'conferindo', mensagem: '', tentarEm: null } });
+    patch({ casElite: { ...conferenciaVaziaCasais(), cnpj, estado: 'conferindo' } });
     let resposta;
     try {
       resposta = await perguntaEliteCasais(cnpj);
@@ -3169,13 +3211,17 @@ function App({ motivoAoAbrir }) {
     }
     if (!aindaVale(marca, atendimento)) { solta(); return null; }
     const nova = { cnpj, ...resposta };
-    const mostrava = antes.estado === 'ativo' ? 'elite'
-      : (antes.estado === 'inativo' || antes.estado === 'sem_resposta') ? 'cheio' : null;
-    const vale = nova.estado === 'ativo' ? 'elite' : 'cheio';
-    patch((d) => (d.casElite.cnpj !== cnpj ? {} : {
-      casElite: nova,
-      ...(mostrava && mostrava !== vale ? { casAviso: `O valor mudou para ${fmt(valorDoCasais(vale))}. ${nova.mensagem}` } : {}),
-    }));
+    const respondeu = nova.estado === 'ativo' || nova.estado === 'inativo';
+    patch((d) => {
+      if (d.casElite.cnpj !== cnpj) return {};
+      const depois = { ...d, casElite: nova, ...(respondeu ? { casEliteAMao: '' } : {}) };
+      const vale = tabelaDoCasais(depois);
+      return {
+        casElite: nova,
+        ...(respondeu ? { casEliteAMao: '' } : {}),
+        ...(mostrava && mostrava !== vale ? { casAviso: `O valor mudou para ${fmt(valorDoCasais(vale))}. ${nova.mensagem}` } : {}),
+      };
+    });
     return nova;
   };
   // Uma pergunta por CNPJ por venda: quando o CNPJ da PJ fica completo e válido,
@@ -3694,7 +3740,7 @@ function App({ motivoAoAbrir }) {
     avalForma: 'pix', avalParcelas: 1, avalData: '', avalEnviado: null,
     casTipoPessoa: 'PJ', casNome: '', casCpf: '', casEmail: '', casTelefone: '',
     casParticipantes: [novoParticipanteCasais(), novoParticipanteCasais()],
-    casEliteMarcado: false, casElite: conferenciaVaziaCasais(), casAviso: '',
+    casEliteMarcado: false, casElite: conferenciaVaziaCasais(), casEliteAMao: '', casAviso: '',
     casForma: 'pix', casParcelas: 1, casData: '', casProtocolo: '', casFaltaNa: null, casEnviado: null,
     sendState: 'idle', sendErr: '', sendErrHandled: false, protocol: '', response: null,
     pixState: 'idle', pixQrImg: '', pixCopiaCola: '', pixTxid: '', pixExpireAt: '', pixErr: '', pixCopied: false,
@@ -5313,8 +5359,21 @@ function App({ motivoAoAbrir }) {
     </div>
   ));
 
+  // A caixa "paga o valor do Elite Empresarial": a da PF e, com o Conecta sem
+  // resposta, a da PJ (TSK-1640) — a mesma caixa, com a nota de cada caso.
+  const renderCaixaDoEliteCasais = (marcado, aoMarcar, nota) => (
+    <>
+      <label htmlFor="cas-elite" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10, cursor: 'pointer', background: marcado ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (marcado ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
+        <input id="cas-elite" type="checkbox" checked={marcado} onChange={(e) => aoMarcar(e.target.checked)} style={{ width: 18, height: 18, accentColor: '#C7A444' }} />
+        <span style={{ font: '600 13.5px var(--font-primary)', color: 'var(--text)' }}>Paga o valor do Elite Empresarial ({fmt(CASAIS_VALOR_ELITE)})</span>
+      </label>
+      <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 8 }}>{nota}</div>
+    </>
+  );
+
   // O que o Conecta disse do CNPJ da PJ: a origem do valor, que o consultor não
-  // troca. Sem resposta, o aviso e o "Conferir de novo".
+  // troca. Sem resposta, o aviso e o "Conferir de novo" — e, se o backend disse
+  // que foi o Conecta que não respondeu, a caixa para o consultor decidir.
   const renderConferenciaCasais = () => {
     const c = casConferencia;
     const caixa = (cor, fundo, borda) => ({ display: 'flex', alignItems: 'flex-start', gap: 8, font: '500 12.5px/1.5 var(--font-secondary)', color: cor, background: fundo, border: '1px solid ' + borda, padding: '9px 12px', borderRadius: 8 });
@@ -5341,11 +5400,19 @@ function App({ motivoAoAbrir }) {
     }
     if (c.estado === 'sem_resposta') {
       return (
-        <div role="alert" data-conferencia="sem_resposta" style={{ ...caixa('var(--warning)', 'rgba(255,193,7,.1)', 'rgba(255,193,7,.35)'), flexWrap: 'wrap' }}>
-          <span className="ms-icon" style={{ fontSize: 16 }}>cloud_off</span>
-          <span style={{ flex: 1, minWidth: 200 }}>{c.mensagem}</span>
-          <button type="button" className="linkbtn" onClick={() => conferirEliteCasais(casCnpj)}>Conferir de novo</button>
-        </div>
+        <>
+          <div role="alert" data-conferencia="sem_resposta" style={{ ...caixa('var(--warning)', 'rgba(255,193,7,.1)', 'rgba(255,193,7,.35)'), flexWrap: 'wrap' }}>
+            <span className="ms-icon" style={{ fontSize: 16 }}>cloud_off</span>
+            <span style={{ flex: 1, minWidth: 200 }}>{c.mensagem}</span>
+            <button type="button" className="linkbtn" onClick={() => conferirEliteCasais(casCnpj)}>Conferir de novo</button>
+          </div>
+          {casConsultorDecide && (
+            <div data-elite-a-mao style={{ marginTop: 10 }}>
+              {renderCaixaDoEliteCasais(eliteMarcadoNaPj(s), (marcado) => patch({ casEliteAMao: marcado ? casCnpj : '' }),
+                'Sem a conferência do Conecta, quem decide é você. No envio o Lobby pergunta a ele de novo: se ele responder, vale o que ele disser.')}
+            </div>
+          )}
+        </>
       );
     }
     return (
@@ -5508,18 +5575,13 @@ function App({ motivoAoAbrir }) {
             <span className="ms-icon" style={{ fontSize: 18, color: 'var(--primary)' }}>sell</span>
             <span className="sec-title" style={{ fontSize: 13, letterSpacing: '.06em' }}>Valor do contrato</span>
           </div>
-          <span className="chip">{!casPf && <span className="ms-icon" style={{ fontSize: 13 }}>lock</span>}{casTabela === 'elite' ? 'Elite Empresarial' : 'Preço cheio'}</span>
+          <span className="chip">{!casPf && !casConsultorDecide && <span className="ms-icon" style={{ fontSize: 13 }}>lock</span>}{casTabela === 'elite' ? 'Elite Empresarial' : 'Preço cheio'}</span>
         </div>
         <div data-valor-casais style={{ font: '700 28px var(--font-primary)', color: 'var(--primary)', letterSpacing: '-.01em', marginBottom: 14 }}>{fmt(casValor)}</div>
-        {casPf ? (
-          <>
-            <label htmlFor="cas-elite" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10, cursor: 'pointer', background: s.casEliteMarcado ? 'var(--primary-subtle)' : 'var(--surface-elevated)', border: '1.5px solid ' + (s.casEliteMarcado ? 'rgba(199,164,68,.45)' : 'var(--border-light)') }}>
-              <input id="cas-elite" type="checkbox" checked={!!s.casEliteMarcado} onChange={(e) => patch({ casEliteMarcado: e.target.checked })} style={{ width: 18, height: 18, accentColor: '#C7A444' }} />
-              <span style={{ font: '600 13.5px var(--font-primary)', color: 'var(--text)' }}>Paga o valor do Elite Empresarial ({fmt(CASAIS_VALOR_ELITE)})</span>
-            </label>
-            <div style={{ font: '400 12px var(--font-secondary)', color: 'var(--text-muted)', marginTop: 8 }}>Pessoa física: quem decide é você. Desmarcado, vale o preço cheio, {fmt(CASAIS_VALOR_CHEIO)}.</div>
-          </>
-        ) : renderConferenciaCasais()}
+        {casPf
+          ? renderCaixaDoEliteCasais(!!s.casEliteMarcado, (marcado) => patch({ casEliteMarcado: marcado }),
+            `Pessoa física: quem decide é você. Desmarcado, vale o preço cheio, ${fmt(CASAIS_VALOR_CHEIO)}.`)
+          : renderConferenciaCasais()}
       </div>
 
       <div className="card" style={{ padding: '20px 22px' }}>
@@ -5646,7 +5708,9 @@ function App({ motivoAoAbrir }) {
             </div>
             {linha('Valor do contrato', <span data-valor-resumo>{fmt(casValor)}</span>)}
             {linha('Tabela', casTabela === 'elite'
-              ? (casPf ? 'Elite Empresarial (marcado pelo consultor)' : 'Elite Empresarial (conferido no Conecta)')
+              ? (casPf ? 'Elite Empresarial (marcado pelo consultor)'
+                : casConferencia.estado === 'ativo' ? 'Elite Empresarial (conferido no Conecta)'
+                  : 'Elite Empresarial (marcado pelo consultor, sem o Conecta)')
               : (casPf || casConferencia.estado === 'inativo' ? 'Preço cheio' : 'Preço cheio (sem conferência do Conecta)'))}
             {linha('Forma', `${forma ? forma.label : '—'}${casParcelas > 1 ? ` · ${casParcelas}× de ${fmt(casValorParcela)}` : ' · à vista'}`)}
             {linha(casParcelas > 1 ? 'Vencimento da 1ª parcela' : 'Vencimento', dmy(s.casData), true)}

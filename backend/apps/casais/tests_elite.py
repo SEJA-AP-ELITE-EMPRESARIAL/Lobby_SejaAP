@@ -109,7 +109,7 @@ class RespostaTest(Base):
                 self.assertIs(corpo["consultor_decide"], True)
                 self.assertEqual(corpo["motivo"], motivo)
                 self.assertIn(trecho, corpo["mensagem"])
-                self.assertIn("Quem decide é você", corpo["mensagem"])
+                self.assertIn("quem decide é você: marque abaixo", corpo["mensagem"])
                 self.assertIn("R$ 35.000,00", corpo["mensagem"])
                 self.assertIn("preço cheio, R$ 39.997,00", corpo["mensagem"])
 
