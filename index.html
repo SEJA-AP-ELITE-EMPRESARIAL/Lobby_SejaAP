@@ -2703,8 +2703,9 @@ function App({ motivoAoAbrir }) {
     else if (k === 'estado') v = maskUF(v);
     const extra = {};
     // Trocar o CNPJ desfaz a caixa do Elite marcada à mão (TSK-1640): voltar ao
-    // de antes não a traz marcada de volta.
-    if (k === 'cnpj') { extra.cnpjStatus = 'idle'; extra.cnpjErr = ''; extra.casEliteAMao = ''; }
+    // de antes não a traz marcada de volta. E o aviso de valor mudado era do
+    // CNPJ anterior.
+    if (k === 'cnpj') { extra.cnpjStatus = 'idle'; extra.cnpjErr = ''; extra.casEliteAMao = ''; extra.casAviso = ''; }
     if (k === 'cep') extra.cepStatus = 'idle';
     patch({ [k]: v, ...extra });
   };

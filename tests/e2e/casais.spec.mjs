@@ -552,6 +552,39 @@ test('a caixa que some volta desmarcada: a marca não sobrevive a uma conferênc
   await expect(page.getByText(/O valor mudou/)).toHaveCount(0);
 });
 
+test('trocar o CNPJ tira o aviso de valor mudado do CNPJ anterior', async ({ page }) => {
+  // Forjadas: o Conecta fora (com a caixa), o teto do consultor (sem ela, e o
+  // aviso "O valor mudou"), e o Conecta fora para o CNPJ novo.
+  const respostas = [
+    SEM_RESPOSTA,
+    { ...SEM_RESPOSTA, consultor_decide: false, motivo: 'limite_da_pessoa', tentar_em: 600,
+      mensagem: 'Você fez muitas consultas ao Conecta nesta hora. Sem a conferência, a venda fica no preço cheio, R$ 39.997,00.' },
+  ];
+  await page.route('**/api/casais/elite', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(respostas.shift() || SEM_RESPOSTA),
+  }));
+  await n8nFalso(page);
+  await entrar(page);
+  await abrirCasais(page);
+  await contratantePJ(page, INATIVO);
+  await caixaDoElite(page).check();
+  await page.locator('[data-conferencia="sem_resposta"]').getByRole('button', { name: 'Conferir de novo' }).click();
+  await expect(page.locator('[data-conferencia="sem_resposta"]')).toContainText('muitas consultas');
+  // O aviso "O valor mudou para R$ 39.997,00" ficou; o CNPJ muda.
+  await page.locator('#cas-cnpj').fill(OUTRO_SEM_RESPOSTA);
+  await expect(caixaDoElite(page)).toBeVisible();
+  await contato(page);
+  await continuar(page);
+  await casal(page);
+  await continuar(page);
+  await etapa(page, 'Pagamento');
+  await pagamento(page, { forma: 'Pix' });
+  await continuar(page);
+  await etapa(page, 'Confirme o pedido');
+  await expect(page.locator('[data-valor-resumo]')).toHaveText('R$ 39.997,00');
+  await expect(page.getByText(/O valor mudou/)).toHaveCount(0);
+});
+
 test('marcado à mão, o Conecta volta na validação dizendo "não": o servidor recusa', async ({ page, request }) => {
   // 503 de manutenção com Retry-After de 1 s: a pausa do backend é curta, e o
   // Conecta pode "voltar" dentro do teste.
