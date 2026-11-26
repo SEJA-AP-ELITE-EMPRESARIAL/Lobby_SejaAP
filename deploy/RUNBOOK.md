@@ -304,7 +304,10 @@ ver o README, *Casais de Alta Performance*.
 **Antes, fora daqui** (sem isso não publique):
 
 - o ConectaAP com a TSK-1621 no ar. Sem a rota, a pergunta dá 404, e toda PJ
-  fica no preço cheio com o aviso (nada quebra, mas o Elite nunca sai);
+  fica no preço cheio com o aviso (nada quebra, mas o Elite nunca sai). Desde a
+  TSK-1640 o 404 é "sem resposta" como os outros: toda PJ cai na caixa do
+  consultor, sem conferência nenhuma — mais um motivo para não publicar sem a
+  rota;
 - o IP do servidor do Lobby na lista da aplicação `lobby` do Conecta (é o mesmo
   do login e da presença: se o login funciona, já está);
 - o fluxo do n8n ativo em `onboarding-cliente-casais`, em POST e com CORS para
@@ -355,6 +358,41 @@ ver o README, *Casais de Alta Performance*.
 também o que alguém tenha criado à mão com o mesmo identificador e o fluxo
 `casais`, caso em que a ida não fez nada) e `migrate vendas 0003`. Só o front de volta, com a migration aplicada, deixa o
 produto na lista sem abrir: volte os dois.
+
+#### O Elite marcado à mão com o Conecta fora (TSK-1640)
+
+Desde 26/11/2026 (decisão do dono), a PJ com o Conecta sem resposta não fica
+mais presa no preço cheio: a tela mostra a caixa "paga o valor do Elite
+Empresarial", e o consultor decide. O servidor confere de novo no comprovante
+e na validação do n8n (o Conecta respondendo "não" recusa, com
+`elite_nao_confirmado`), e o payload diz quem decidiu em `elite_decidido_por`.
+README, *Casais de Alta Performance*, e `deploy/N8N-VALIDACAO.md`.
+
+- **Deploy:** roteiro [Front + backend](#front--backend), os dois juntos. Sem
+  migration e sem variável nova. Antes, nomeie as imagens no ar para a volta
+  (como no passo 1 do [Com migration](#com-migration-a-ordem-importa)). Um
+  comprovante emitido antes vale depois (o que é assinado não mudou), e uma aba
+  aberta com o front de antes segue vendendo como antes (sem a caixa; a frase do
+  aviso já fala da caixa, até a pessoa recarregar).
+- **O n8n:** nada a mudar para a venda passar; a chave nova só se acrescenta.
+  Recomendado: um aviso (não bloqueio) para `tabela: "elite"` com
+  `elite_decidido_por: "consultor_sem_conecta"`, para alguém conferir o CNPJ
+  depois (`deploy/N8N-VALIDACAO.md`, Casais, item 3).
+- **Conferir depois do deploy**, sem venda (só lê; a resposta fica guardada 10
+  minutos, como a da tela):
+
+  ```bash
+  sudo docker compose exec backend python manage.py shell -c \
+    "from apps.casais import servicos; c=servicos.conferir_cnpj('<CNPJ de um cliente ativo, só dígitos>'); print(c.cliente_ativo, c.consultor_decide)"
+  # True False   ← com o Conecta respondendo, a caixa não aparece
+  # None True    ← o Conecta sem resposta: a tela mostraria a caixa (veja o log)
+  ```
+- **Caminho de volta:** as imagens de antes, ou o commit anterior com
+  `sudo GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build`.
+  Sem migration para desfazer. Um comprovante do Elite marcado à mão emitido
+  antes da volta segue sendo validado pelo código de antes (que também
+  reconsulta o Conecta na validação); emitir um novo assim, o código de antes
+  recusa.
 
 ### Redis do Lobby (TSK-1068)
 
